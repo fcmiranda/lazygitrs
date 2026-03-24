@@ -32,6 +32,23 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) 
         return ignore_file(gui);
     }
 
+    // Amend last commit
+    if matches_key(key, &keybindings.files.amend_last_commit) {
+        return amend_commit(gui);
+    }
+
+    // Commit with editor
+    if matches_key(key, &keybindings.files.commit_changes_with_editor) {
+        return commit_with_editor(gui);
+    }
+
+    // Fetch
+    if matches_key(key, &keybindings.files.fetch) {
+        gui.git.fetch_all()?;
+        gui.needs_refresh = true;
+        return Ok(());
+    }
+
     Ok(())
 }
 
@@ -130,6 +147,39 @@ fn ignore_file(gui: &mut Gui) -> Result<()> {
         gui.git.ignore_file(&name)?;
         gui.needs_refresh = true;
     }
+    Ok(())
+}
+
+fn amend_commit(gui: &mut Gui) -> Result<()> {
+    gui.popup = PopupState::Confirm {
+        title: "Amend".to_string(),
+        message: "Amend last commit with staged changes?".to_string(),
+        on_confirm: Box::new(|gui| {
+            gui.git.amend_commit()?;
+            gui.needs_refresh = true;
+            Ok(())
+        }),
+    };
+    Ok(())
+}
+
+fn commit_with_editor(gui: &mut Gui) -> Result<()> {
+    // Run git commit which opens $EDITOR
+    // This requires suspending the TUI temporarily
+    gui.popup = PopupState::Input {
+        title: "Commit message (or leave empty to open editor)".to_string(),
+        buffer: String::new(),
+        on_confirm: Box::new(|gui, message| {
+            if message.is_empty() {
+                // For now, just create an empty commit message prompt
+                // Full editor integration requires Phase 4 (subprocess management)
+            } else {
+                gui.git.create_commit(message, false)?;
+            }
+            gui.needs_refresh = true;
+            Ok(())
+        }),
+    };
     Ok(())
 }
 

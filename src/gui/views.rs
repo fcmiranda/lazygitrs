@@ -6,6 +6,7 @@ use ratatui::Frame;
 
 use crate::config::AppConfig;
 use crate::model::Model;
+use crate::pager::side_by_side::{self, DiffViewState};
 
 use super::context::{ContextId, ContextManager};
 use super::layout::{self, LayoutState};
@@ -20,7 +21,8 @@ pub fn render(
     layout_state: &LayoutState,
     popup: &PopupState,
     config: &AppConfig,
-    screen_mode: ScreenMode,
+    diff_view: &DiffViewState,
+    _screen_mode: ScreenMode,
 ) {
     let area = frame.area();
     let theme = config.user_config.theme();
@@ -83,20 +85,23 @@ pub fn render(
         }
     }
 
-    // Render main panel (diff view placeholder)
-    {
+    // Render main panel — side-by-side diff view
+    if !diff_view.is_empty() {
+        side_by_side::render_diff(frame, fl.main_panel, diff_view, &theme);
+    } else {
+        // Fallback: show info about selected item
         let block = Block::default()
-            .title(" Main ")
+            .title(" Diff ")
             .borders(Borders::ALL)
             .border_style(theme.inactive_border);
 
-        let diff_text = get_main_panel_content(model, ctx_mgr);
-        let widget = Paragraph::new(diff_text).block(block);
+        let info = get_info_content(model, ctx_mgr);
+        let widget = Paragraph::new(info).block(block);
         frame.render_widget(widget, fl.main_panel);
     }
 
     // Render status bar
-    render_status_bar(frame, fl.status_bar, ctx_mgr, &theme);
+    render_status_bar(frame, fl.status_bar, ctx_mgr, diff_view, &theme);
 
     // Render popup overlay
     if *popup != PopupState::None {
@@ -137,11 +142,9 @@ fn render_list(
         return;
     }
 
-    // Compute visible area inside the block
     let inner = block.inner(rect);
     let visible_height = inner.height as usize;
 
-    // Determine scroll offset
     let offset = if selected >= visible_height {
         selected - visible_height + 1
     } else {
@@ -165,31 +168,27 @@ fn render_list(
     frame.render_widget(list, rect);
 }
 
-fn get_main_panel_content<'a>(model: &Model, ctx_mgr: &ContextManager) -> Vec<Line<'a>> {
+fn get_info_content<'a>(model: &Model, ctx_mgr: &ContextManager) -> Vec<Line<'a>> {
     let active = ctx_mgr.active();
     let selected = ctx_mgr.selected_active();
 
     match active {
         ContextId::Files => {
-            if let Some(file) = model.files.get(selected) {
-                vec![
-                    Line::from(format!(" File: {}", file.name)),
-                    Line::from(format!(" Status: {}", file.short_status)),
-                    Line::from(""),
-                    Line::from(" (diff view coming in Phase 2)"),
-                ]
+            if model.files.is_empty() {
+                vec![Line::from(" No modified files")]
             } else {
-                vec![Line::from(" No files selected")]
+                vec![Line::from(" Select a file to view diff")]
             }
         }
         ContextId::Commits => {
             if let Some(commit) = model.commits.get(selected) {
                 vec![
                     Line::from(format!(" Commit: {}", commit.short_hash())),
-                    Line::from(format!(" Author: {} <{}>", commit.author_name, commit.author_email)),
+                    Line::from(format!(
+                        " Author: {} <{}>",
+                        commit.author_name, commit.author_email
+                    )),
                     Line::from(format!(" Message: {}", commit.name)),
-                    Line::from(""),
-                    Line::from(" (diff view coming in Phase 2)"),
                 ]
             } else {
                 vec![Line::from(" No commit selected")]
@@ -203,9 +202,6 @@ fn get_main_panel_content<'a>(model: &Model, ctx_mgr: &ContextManager) -> Vec<Li
                 ];
                 if let Some(ref upstream) = branch.upstream {
                     lines.push(Line::from(format!(" Upstream: {}", upstream)));
-                }
-                if let Some((ahead, behind)) = branch.ahead_behind() {
-                    lines.push(Line::from(format!(" Ahead: {}, Behind: {}", ahead, behind)));
                 }
                 lines
             } else {
@@ -230,18 +226,29 @@ fn render_status_bar(
     frame: &mut Frame,
     rect: Rect,
     ctx_mgr: &ContextManager,
+    diff_view: &DiffViewState,
     theme: &crate::config::Theme,
 ) {
-    let hints = match ctx_mgr.active() {
-        ContextId::Files => "c: commit | a: stage all | <space>: toggle stage | d: discard | q: quit",
-        ContextId::Branches => "<space>: checkout | n: new | d: delete | M: merge | r: rebase | q: quit",
-        ContextId::Commits => "s: squash | r: reword | <space>: checkout | t: revert | q: quit",
-        ContextId::Stash => "g: pop | <space>: apply | d: drop | q: quit",
-        _ => "q: quit | tab: switch panel | j/k: navigate",
+    let context_hints = match ctx_mgr.active() {
+        ContextId::Files => "c: commit | a: stage all | <space>: toggle | d: discard",
+        ContextId::Branches => "<space>: checkout | n: new | d: delete | M: merge | r: rebase",
+        ContextId::Commits => "r: reword | g: reset | t: revert | C: cherry-pick | T: tag",
+        ContextId::Stash => "g: pop | <space>: apply | d: drop",
+        _ => "",
+    };
+
+    let scroll_info = if !diff_view.is_empty() {
+        format!(
+            " | J/K: scroll diff | {{}}/}}: hunks | L{}/{}",
+            diff_view.scroll_offset + 1,
+            diff_view.lines.len()
+        )
+    } else {
+        String::new()
     };
 
     let bar = Paragraph::new(Span::styled(
-        format!(" {}", hints),
+        format!(" {} | q: quit | tab: panels | j/k: nav{}", context_hints, scroll_info),
         theme.status_bar,
     ));
     frame.render_widget(bar, rect);

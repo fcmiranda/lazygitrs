@@ -4,6 +4,7 @@ pub mod diff;
 pub mod file;
 pub mod loader;
 pub mod remote;
+pub mod staging;
 pub mod stash;
 pub mod status;
 pub mod tag;

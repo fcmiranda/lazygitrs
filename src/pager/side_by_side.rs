@@ -1,0 +1,340 @@
+use ratatui::layout::Rect;
+use ratatui::style::{Color, Modifier, Style};
+use ratatui::text::{Line, Span};
+use ratatui::widgets::{Block, Borders, Paragraph};
+use ratatui::Frame;
+
+use crate::config::Theme;
+
+use super::highlight::FileHighlighter;
+use super::{ChangeType, DiffLine, InlineSegment};
+
+/// State for the diff view panel.
+#[derive(Debug, Default)]
+pub struct DiffViewState {
+    pub scroll_offset: usize,
+    pub lines: Vec<DiffLine>,
+    pub hunk_starts: Vec<usize>,
+    pub filename: String,
+    pub old_content: String,
+    pub new_content: String,
+    pub tab_width: usize,
+}
+
+impl DiffViewState {
+    pub fn new() -> Self {
+        Self {
+            tab_width: 4,
+            ..Default::default()
+        }
+    }
+
+    /// Load a diff from old/new content.
+    pub fn load(&mut self, filename: &str, old: &str, new: &str) {
+        self.filename = filename.to_string();
+        self.old_content = old.to_string();
+        self.new_content = new.to_string();
+        self.lines = super::diff_algo::compute_side_by_side(old, new, self.tab_width);
+        self.hunk_starts = super::diff_algo::find_hunk_starts(&self.lines);
+        self.scroll_offset = 0;
+    }
+
+    /// Load from raw diff output (git diff).
+    pub fn load_from_diff_output(&mut self, filename: &str, diff_output: &str) {
+        let (old, new) = parse_unified_diff(diff_output);
+        self.load(filename, &old, &new);
+    }
+
+    pub fn scroll_up(&mut self, amount: usize) {
+        self.scroll_offset = self.scroll_offset.saturating_sub(amount);
+    }
+
+    pub fn scroll_down(&mut self, amount: usize) {
+        let max = self.lines.len().saturating_sub(1);
+        self.scroll_offset = (self.scroll_offset + amount).min(max);
+    }
+
+    pub fn next_hunk(&mut self) {
+        if let Some(next) = self
+            .hunk_starts
+            .iter()
+            .find(|&&h| h > self.scroll_offset)
+        {
+            self.scroll_offset = *next;
+        }
+    }
+
+    pub fn prev_hunk(&mut self) {
+        if let Some(prev) = self
+            .hunk_starts
+            .iter()
+            .rev()
+            .find(|&&h| h < self.scroll_offset)
+        {
+            self.scroll_offset = *prev;
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.lines.is_empty()
+    }
+}
+
+/// Render a side-by-side diff view into the given area.
+pub fn render_diff(
+    frame: &mut Frame,
+    area: Rect,
+    state: &DiffViewState,
+    theme: &Theme,
+) {
+    if state.is_empty() {
+        let block = Block::default()
+            .title(" Diff ")
+            .borders(Borders::ALL)
+            .border_style(theme.inactive_border);
+        let widget = Paragraph::new(" No changes to display");
+        frame.render_widget(widget.block(block), area);
+        return;
+    }
+
+    let block = Block::default()
+        .title(format!(" {} ", state.filename))
+        .borders(Borders::ALL)
+        .border_style(theme.inactive_border);
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    if inner.width < 10 || inner.height < 2 {
+        return;
+    }
+
+    // Build highlighters for syntax coloring
+    let old_highlighter = FileHighlighter::new(&state.old_content, &state.filename);
+    let new_highlighter = FileHighlighter::new(&state.new_content, &state.filename);
+
+    // Split inner area into two panels: left (old) and right (new)
+    let gutter_width = 5u16; // line number width
+    let divider_width = 1u16; // │ divider between panels
+    let total_chrome = gutter_width * 2 + divider_width;
+
+    let content_width = if inner.width > total_chrome {
+        inner.width - total_chrome
+    } else {
+        inner.width
+    };
+    let panel_width = content_width / 2;
+
+    let visible_height = inner.height as usize;
+    let visible_lines = &state.lines[state.scroll_offset..]
+        .iter()
+        .take(visible_height)
+        .collect::<Vec<_>>();
+
+    for (row, diff_line) in visible_lines.iter().enumerate() {
+        let y = inner.y + row as u16;
+        if y >= inner.y + inner.height {
+            break;
+        }
+
+        let (left_bg, right_bg) = line_bg_colors(diff_line.change_type, theme);
+
+        // Left gutter (line number)
+        let left_num = diff_line
+            .old_line
+            .as_ref()
+            .map(|(n, _)| format!("{:>4} ", n))
+            .unwrap_or_else(|| "     ".to_string());
+
+        let gutter_style = Style::default().fg(Color::DarkGray).bg(left_bg);
+        let left_gutter = Span::styled(left_num, gutter_style);
+        frame.render_widget(
+            Paragraph::new(Line::from(left_gutter)),
+            Rect::new(inner.x, y, gutter_width, 1),
+        );
+
+        // Left content
+        let left_spans = build_content_spans(
+            diff_line.old_line.as_ref().map(|(n, t)| (*n, t.as_str())),
+            &diff_line.old_segments,
+            diff_line.change_type,
+            true,
+            &old_highlighter,
+            left_bg,
+            theme,
+            panel_width as usize,
+        );
+        frame.render_widget(
+            Paragraph::new(Line::from(left_spans)),
+            Rect::new(inner.x + gutter_width, y, panel_width, 1),
+        );
+
+        // Divider
+        let div_x = inner.x + gutter_width + panel_width;
+        frame.render_widget(
+            Paragraph::new(Line::from(Span::styled(
+                "│",
+                Style::default().fg(Color::DarkGray),
+            ))),
+            Rect::new(div_x, y, divider_width, 1),
+        );
+
+        // Right gutter
+        let right_num = diff_line
+            .new_line
+            .as_ref()
+            .map(|(n, _)| format!("{:>4} ", n))
+            .unwrap_or_else(|| "     ".to_string());
+
+        let right_gutter_style = Style::default().fg(Color::DarkGray).bg(right_bg);
+        let right_gutter = Span::styled(right_num, right_gutter_style);
+        let right_gutter_x = div_x + divider_width;
+        frame.render_widget(
+            Paragraph::new(Line::from(right_gutter)),
+            Rect::new(right_gutter_x, y, gutter_width, 1),
+        );
+
+        // Right content
+        let right_spans = build_content_spans(
+            diff_line.new_line.as_ref().map(|(n, t)| (*n, t.as_str())),
+            &diff_line.new_segments,
+            diff_line.change_type,
+            false,
+            &new_highlighter,
+            right_bg,
+            theme,
+            panel_width as usize,
+        );
+        let right_content_x = right_gutter_x + gutter_width;
+        let right_content_width = inner
+            .width
+            .saturating_sub(gutter_width * 2 + panel_width + divider_width);
+        frame.render_widget(
+            Paragraph::new(Line::from(right_spans)),
+            Rect::new(right_content_x, y, right_content_width, 1),
+        );
+    }
+}
+
+/// Get background colors for a diff line based on change type.
+fn line_bg_colors(change_type: ChangeType, theme: &Theme) -> (Color, Color) {
+    match change_type {
+        ChangeType::Equal => (Color::Reset, Color::Reset),
+        ChangeType::Delete => (theme.diff_remove_bg, Color::Reset),
+        ChangeType::Insert => (Color::Reset, theme.diff_add_bg),
+        ChangeType::Modified => (theme.diff_remove_bg, theme.diff_add_bg),
+    }
+}
+
+/// Build styled spans for one side of a diff line.
+#[allow(clippy::too_many_arguments)]
+fn build_content_spans<'a>(
+    line_data: Option<(usize, &str)>,
+    segments: &Option<Vec<InlineSegment>>,
+    change_type: ChangeType,
+    is_old_side: bool,
+    highlighter: &FileHighlighter,
+    bg: Color,
+    theme: &Theme,
+    max_width: usize,
+) -> Vec<Span<'a>> {
+    let Some((line_num, text)) = line_data else {
+        // Empty side — fill with background
+        let fill = " ".repeat(max_width);
+        return vec![Span::styled(fill, Style::default().bg(bg))];
+    };
+
+    // If we have word-level segments, use those
+    if let Some(segs) = segments {
+        return build_word_diff_spans(segs, is_old_side, bg, theme, max_width);
+    }
+
+    // Otherwise, try syntax highlighting
+    let highlighted = highlighter.get_line_spans(line_num, Some(bg));
+    if !highlighted.is_empty() {
+        return highlighted;
+    }
+
+    // Fallback: plain text with background
+    let fg = match change_type {
+        ChangeType::Delete => theme.diff_remove.fg.unwrap_or(Color::Red),
+        ChangeType::Insert => theme.diff_add.fg.unwrap_or(Color::Green),
+        _ => Color::White,
+    };
+
+    let display = if text.len() > max_width {
+        &text[..max_width]
+    } else {
+        text
+    };
+
+    vec![Span::styled(
+        display.to_string(),
+        Style::default().fg(fg).bg(bg),
+    )]
+}
+
+/// Build spans with word-level diff emphasis.
+fn build_word_diff_spans<'a>(
+    segments: &[InlineSegment],
+    is_old_side: bool,
+    bg: Color,
+    theme: &Theme,
+    _max_width: usize,
+) -> Vec<Span<'a>> {
+    segments
+        .iter()
+        .map(|seg| {
+            if seg.emphasized {
+                let emphasis_bg = if is_old_side {
+                    theme.diff_remove_word
+                } else {
+                    theme.diff_add_word
+                };
+                Span::styled(
+                    seg.text.clone(),
+                    Style::default()
+                        .bg(emphasis_bg)
+                        .fg(Color::White)
+                        .add_modifier(Modifier::BOLD),
+                )
+            } else {
+                Span::styled(seg.text.clone(), Style::default().bg(bg).fg(Color::White))
+            }
+        })
+        .collect()
+}
+
+/// Parse a unified diff into old/new content for side-by-side display.
+/// This handles `git diff` output format.
+fn parse_unified_diff(diff: &str) -> (String, String) {
+    let mut old_lines = Vec::new();
+    let mut new_lines = Vec::new();
+    let mut in_hunk = false;
+
+    for line in diff.lines() {
+        if line.starts_with("@@") {
+            in_hunk = true;
+            continue;
+        }
+
+        if !in_hunk {
+            continue;
+        }
+
+        if line.starts_with('-') {
+            old_lines.push(&line[1..]);
+        } else if line.starts_with('+') {
+            new_lines.push(&line[1..]);
+        } else if let Some(ctx) = line.strip_prefix(' ') {
+            old_lines.push(ctx);
+            new_lines.push(ctx);
+        } else {
+            // Could be "\ No newline at end of file" or other metadata
+            old_lines.push(line);
+            new_lines.push(line);
+        }
+    }
+
+    (old_lines.join("\n"), new_lines.join("\n"))
+}

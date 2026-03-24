@@ -19,6 +19,7 @@ use crate::config::AppConfig;
 use crate::config::keybindings::parse_key;
 use crate::git::GitCommands;
 use crate::model::Model;
+use crate::pager::side_by_side::DiffViewState;
 
 use self::context::{ContextId, ContextManager};
 use self::layout::LayoutState;
@@ -33,11 +34,15 @@ pub struct Gui {
     pub context_mgr: ContextManager,
     pub layout: LayoutState,
     pub popup: PopupState,
+    pub diff_view: DiffViewState,
     pub command_log: Vec<String>,
     pub should_quit: bool,
     pub needs_refresh: bool,
+    pub needs_diff_refresh: bool,
     pub search_query: String,
     pub screen_mode: ScreenMode,
+    /// Track what we last loaded a diff for, to avoid reloading on every frame.
+    last_diff_key: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -58,11 +63,14 @@ impl Gui {
             context_mgr: ContextManager::new(),
             layout: LayoutState::default(),
             popup: PopupState::None,
+            diff_view: DiffViewState::new(),
             command_log: Vec::new(),
             should_quit: false,
             needs_refresh: false,
+            needs_diff_refresh: true,
             search_query: String::new(),
             screen_mode: ScreenMode::Normal,
+            last_diff_key: String::new(),
         })
     }
 
@@ -77,6 +85,9 @@ impl Gui {
 
     fn main_loop(&mut self, terminal: &mut Term) -> Result<()> {
         loop {
+            // Load diff if selection changed
+            self.maybe_load_diff();
+
             // Render
             terminal.draw(|frame| {
                 let model = self.model.lock().unwrap();
@@ -87,6 +98,7 @@ impl Gui {
                     &self.layout,
                     &self.popup,
                     &self.config,
+                    &self.diff_view,
                     self.screen_mode,
                 );
             })?;
@@ -107,6 +119,7 @@ impl Gui {
             if self.needs_refresh {
                 self.refresh()?;
                 self.needs_refresh = false;
+                self.needs_diff_refresh = true;
             }
 
             if self.should_quit {
@@ -115,6 +128,71 @@ impl Gui {
         }
 
         Ok(())
+    }
+
+    /// Load diff content for the currently selected item if it changed.
+    fn maybe_load_diff(&mut self) {
+        let active = self.context_mgr.active();
+        let selected = self.context_mgr.selected_active();
+        let diff_key = format!("{:?}:{}", active, selected);
+
+        if diff_key == self.last_diff_key && !self.needs_diff_refresh {
+            return;
+        }
+        self.last_diff_key = diff_key;
+        self.needs_diff_refresh = false;
+
+        let model = self.model.lock().unwrap();
+        match active {
+            ContextId::Files => {
+                if let Some(file) = model.files.get(selected) {
+                    let name = file.name.clone();
+                    let has_staged = file.has_staged_changes;
+                    let has_unstaged = file.has_unstaged_changes;
+                    let tracked = file.tracked;
+                    drop(model);
+
+                    let diff_result = if has_unstaged {
+                        self.git.diff_file(&name)
+                    } else if has_staged {
+                        self.git.diff_file_staged(&name)
+                    } else {
+                        Ok(String::new())
+                    };
+
+                    if let Ok(diff) = diff_result {
+                        if diff.is_empty() && !tracked {
+                            // Untracked files: show full content as all-insertions
+                            if let Ok(content) = self.git.file_content(&name) {
+                                if !content.is_empty() {
+                                    self.diff_view.load(&name, "", &content);
+                                } else {
+                                    self.diff_view = DiffViewState::new();
+                                }
+                            }
+                        } else if diff.is_empty() {
+                            self.diff_view = DiffViewState::new();
+                        } else {
+                            self.diff_view.load_from_diff_output(&name, &diff);
+                        }
+                    }
+                }
+            }
+            ContextId::Commits => {
+                if let Some(commit) = model.commits.get(selected) {
+                    let hash = commit.hash.clone();
+                    drop(model);
+
+                    if let Ok(diff) = self.git.diff_commit(&hash) {
+                        let filename = format!("commit:{}", &hash[..7.min(hash.len())]);
+                        self.diff_view.load_from_diff_output(&filename, &diff);
+                    }
+                }
+            }
+            _ => {
+                drop(model);
+            }
+        }
     }
 
     fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
@@ -183,13 +261,41 @@ impl Gui {
             return Ok(());
         }
 
+        // Main panel scroll (J/K or shift+arrows for diff scrolling)
+        if matches_key(key, &keybindings.universal.scroll_down_main_alt1) {
+            self.diff_view.scroll_down(1);
+            return Ok(());
+        }
+        if matches_key(key, &keybindings.universal.scroll_up_main_alt1) {
+            self.diff_view.scroll_up(1);
+            return Ok(());
+        }
+        if key.code == KeyCode::PageDown {
+            self.diff_view.scroll_down(20);
+            return Ok(());
+        }
+        if key.code == KeyCode::PageUp {
+            self.diff_view.scroll_up(20);
+            return Ok(());
+        }
+
+        // Next/prev hunk with { and }
+        if key.code == KeyCode::Char('{') {
+            self.diff_view.prev_hunk();
+            return Ok(());
+        }
+        if key.code == KeyCode::Char('}') {
+            self.diff_view.next_hunk();
+            return Ok(());
+        }
+
         // Refresh
         if matches_key(key, &keybindings.universal.refresh) {
             self.needs_refresh = true;
             return Ok(());
         }
 
-        // Screen mode toggle ([ and ] or + and _)
+        // Screen mode toggle
         if key.code == KeyCode::Enter {
             self.cycle_screen_mode();
             return Ok(());

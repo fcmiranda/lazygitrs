@@ -350,7 +350,25 @@ src/
 
 ---
 
-### Phase 5: Testing & Hardening
+### Phase 5: Commits View Ergonomics
+
+**Goal:** Better UX for the commits panel — richer graph, filtering, and search.
+
+1. **Better Graph View** (on by default)
+   - Enhanced commit graph visualization in the commits panel
+   - Clear branch/merge topology rendering
+
+2. **Filter by Branch**
+   - Filter commit list to show only commits from a specific branch
+   - Quick branch selector for filtering
+
+3. **Filter by Commit Message**
+   - Search/filter commits by message text
+   - Useful for conventional commit workflows (e.g., filter by ticket name/ID)
+
+---
+
+### Phase 6: Testing & Hardening
 
 1. **Unit Tests**
    - Git operation wrappers

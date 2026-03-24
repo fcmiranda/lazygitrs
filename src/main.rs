@@ -4,6 +4,7 @@ mod git;
 mod gui;
 mod model;
 mod os;
+mod pager;
 
 use std::path::PathBuf;
 
