@@ -6,3 +6,9 @@ ref-pull:
 
 ref-clone:
     bun scripts/fetch-references.ts clone
+
+preview:
+    ./target/debug/lazygitrs
+
+rpreview:
+    ./target/release/lazygitrs

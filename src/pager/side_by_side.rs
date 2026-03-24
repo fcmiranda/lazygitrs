@@ -1,3 +1,4 @@
+use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
@@ -10,7 +11,6 @@ use super::highlight::FileHighlighter;
 use super::{ChangeType, DiffLine, InlineSegment};
 
 /// State for the diff view panel.
-#[derive(Debug, Default)]
 pub struct DiffViewState {
     pub scroll_offset: usize,
     pub lines: Vec<DiffLine>,
@@ -19,6 +19,25 @@ pub struct DiffViewState {
     pub old_content: String,
     pub new_content: String,
     pub tab_width: usize,
+    /// Cached syntax highlighters — rebuilt only when content changes.
+    cached_old_highlighter: Option<FileHighlighter>,
+    cached_new_highlighter: Option<FileHighlighter>,
+}
+
+impl Default for DiffViewState {
+    fn default() -> Self {
+        Self {
+            scroll_offset: 0,
+            lines: Vec::new(),
+            hunk_starts: Vec::new(),
+            filename: String::new(),
+            old_content: String::new(),
+            new_content: String::new(),
+            tab_width: 4,
+            cached_old_highlighter: None,
+            cached_new_highlighter: None,
+        }
+    }
 }
 
 impl DiffViewState {
@@ -37,6 +56,9 @@ impl DiffViewState {
         self.lines = super::diff_algo::compute_side_by_side(old, new, self.tab_width);
         self.hunk_starts = super::diff_algo::find_hunk_starts(&self.lines);
         self.scroll_offset = 0;
+        // Pre-compute syntax highlighters once on load, not every frame
+        self.cached_old_highlighter = Some(FileHighlighter::new(&self.old_content, &self.filename));
+        self.cached_new_highlighter = Some(FileHighlighter::new(&self.new_content, &self.filename));
     }
 
     /// Load from raw diff output (git diff).
@@ -81,6 +103,7 @@ impl DiffViewState {
 }
 
 /// Render a side-by-side diff view into the given area.
+/// Uses direct buffer writes instead of per-cell Paragraph widgets for performance.
 pub fn render_diff(
     frame: &mut Frame,
     area: Rect,
@@ -109,13 +132,13 @@ pub fn render_diff(
         return;
     }
 
-    // Build highlighters for syntax coloring
-    let old_highlighter = FileHighlighter::new(&state.old_content, &state.filename);
-    let new_highlighter = FileHighlighter::new(&state.new_content, &state.filename);
+    // Use cached highlighters (built once on load, not every frame)
+    let default_highlighter = FileHighlighter::default();
+    let old_highlighter = state.cached_old_highlighter.as_ref().unwrap_or(&default_highlighter);
+    let new_highlighter = state.cached_new_highlighter.as_ref().unwrap_or(&default_highlighter);
 
-    // Split inner area into two panels: left (old) and right (new)
-    let gutter_width = 5u16; // line number width
-    let divider_width = 1u16; // │ divider between panels
+    let gutter_width = 5u16;
+    let divider_width = 1u16;
     let total_chrome = gutter_width * 2 + divider_width;
 
     let content_width = if inner.width > total_chrome {
@@ -126,12 +149,13 @@ pub fn render_diff(
     let panel_width = content_width / 2;
 
     let visible_height = inner.height as usize;
-    let visible_lines = &state.lines[state.scroll_offset..]
+    let buf = frame.buffer_mut();
+
+    for (row, diff_line) in state.lines[state.scroll_offset..]
         .iter()
         .take(visible_height)
-        .collect::<Vec<_>>();
-
-    for (row, diff_line) in visible_lines.iter().enumerate() {
+        .enumerate()
+    {
         let y = inner.y + row as u16;
         if y >= inner.y + inner.height {
             break;
@@ -139,19 +163,14 @@ pub fn render_diff(
 
         let (left_bg, right_bg) = line_bg_colors(diff_line.change_type, theme);
 
-        // Left gutter (line number)
+        // Left gutter
         let left_num = diff_line
             .old_line
             .as_ref()
             .map(|(n, _)| format!("{:>4} ", n))
             .unwrap_or_else(|| "     ".to_string());
-
         let gutter_style = Style::default().fg(Color::DarkGray).bg(left_bg);
-        let left_gutter = Span::styled(left_num, gutter_style);
-        frame.render_widget(
-            Paragraph::new(Line::from(left_gutter)),
-            Rect::new(inner.x, y, gutter_width, 1),
-        );
+        buf_write_str(buf, inner.x, y, &left_num, gutter_style, gutter_width);
 
         // Left content
         let left_spans = build_content_spans(
@@ -159,25 +178,17 @@ pub fn render_diff(
             &diff_line.old_segments,
             diff_line.change_type,
             true,
-            &old_highlighter,
+            old_highlighter,
             left_bg,
             theme,
             panel_width as usize,
         );
-        frame.render_widget(
-            Paragraph::new(Line::from(left_spans)),
-            Rect::new(inner.x + gutter_width, y, panel_width, 1),
-        );
+        buf_write_spans(buf, inner.x + gutter_width, y, &left_spans, panel_width);
 
         // Divider
         let div_x = inner.x + gutter_width + panel_width;
-        frame.render_widget(
-            Paragraph::new(Line::from(Span::styled(
-                "│",
-                Style::default().fg(Color::DarkGray),
-            ))),
-            Rect::new(div_x, y, divider_width, 1),
-        );
+        let divider_style = Style::default().fg(Color::DarkGray);
+        buf_write_str(buf, div_x, y, "│", divider_style, divider_width);
 
         // Right gutter
         let right_num = diff_line
@@ -185,14 +196,9 @@ pub fn render_diff(
             .as_ref()
             .map(|(n, _)| format!("{:>4} ", n))
             .unwrap_or_else(|| "     ".to_string());
-
         let right_gutter_style = Style::default().fg(Color::DarkGray).bg(right_bg);
-        let right_gutter = Span::styled(right_num, right_gutter_style);
         let right_gutter_x = div_x + divider_width;
-        frame.render_widget(
-            Paragraph::new(Line::from(right_gutter)),
-            Rect::new(right_gutter_x, y, gutter_width, 1),
-        );
+        buf_write_str(buf, right_gutter_x, y, &right_num, right_gutter_style, gutter_width);
 
         // Right content
         let right_spans = build_content_spans(
@@ -200,7 +206,7 @@ pub fn render_diff(
             &diff_line.new_segments,
             diff_line.change_type,
             false,
-            &new_highlighter,
+            new_highlighter,
             right_bg,
             theme,
             panel_width as usize,
@@ -209,11 +215,69 @@ pub fn render_diff(
         let right_content_width = inner
             .width
             .saturating_sub(gutter_width * 2 + panel_width + divider_width);
-        frame.render_widget(
-            Paragraph::new(Line::from(right_spans)),
-            Rect::new(right_content_x, y, right_content_width, 1),
-        );
+        buf_write_spans(buf, right_content_x, y, &right_spans, right_content_width);
     }
+}
+
+/// Write a string directly to the buffer at (x, y) with the given style, clamped to max_width.
+#[inline]
+fn buf_write_str(buf: &mut Buffer, x: u16, y: u16, text: &str, style: Style, max_width: u16) {
+    let buf_area = buf.area();
+    if y < buf_area.y || y >= buf_area.y + buf_area.height {
+        return;
+    }
+    let mut col = x;
+    let end_col = x.saturating_add(max_width).min(buf_area.x + buf_area.width);
+    for ch in text.chars() {
+        if col >= end_col {
+            break;
+        }
+        let width = unicode_display_width(ch);
+        if width == 0 {
+            continue;
+        }
+        if let Some(cell) = buf.cell_mut((col, y)) {
+            cell.set_char(ch);
+            cell.set_style(style);
+        }
+        col += width as u16;
+    }
+}
+
+/// Write styled spans directly to the buffer at (x, y), clamped to max_width.
+#[inline]
+fn buf_write_spans(buf: &mut Buffer, x: u16, y: u16, spans: &[Span<'_>], max_width: u16) {
+    let buf_area = buf.area();
+    if y < buf_area.y || y >= buf_area.y + buf_area.height {
+        return;
+    }
+    let mut col = x;
+    let end_col = x.saturating_add(max_width).min(buf_area.x + buf_area.width);
+    for span in spans {
+        for ch in span.content.chars() {
+            if col >= end_col {
+                return;
+            }
+            let width = unicode_display_width(ch);
+            if width == 0 {
+                continue;
+            }
+            if let Some(cell) = buf.cell_mut((col, y)) {
+                cell.set_char(ch);
+                cell.set_style(span.style);
+            }
+            col += width as u16;
+        }
+    }
+}
+
+/// Get the display width of a character (1 for most, 2 for CJK wide chars).
+#[inline]
+fn unicode_display_width(ch: char) -> usize {
+    if ch == '\t' || ch == '\n' || ch == '\r' {
+        return 0;
+    }
+    unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1)
 }
 
 /// Get background colors for a diff line based on change type.

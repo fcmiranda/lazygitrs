@@ -6,7 +6,8 @@ pub mod presentation;
 pub mod views;
 
 use std::io::{self, Stdout};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{mpsc, Arc, Mutex};
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, MouseEvent};
@@ -27,6 +28,25 @@ use self::popup::PopupState;
 
 pub type Term = Terminal<CrosstermBackend<Stdout>>;
 
+/// A completed diff result from the background thread.
+struct DiffResult {
+    /// Generation counter to discard stale results.
+    generation: u64,
+    /// The diff key this result corresponds to.
+    diff_key: String,
+    /// The computed diff data: (filename, old_content, new_content) or None for empty.
+    payload: DiffPayload,
+}
+
+enum DiffPayload {
+    /// Side-by-side diff from old/new content.
+    Content { filename: String, old: String, new: String },
+    /// Unified diff output from git.
+    UnifiedDiff { filename: String, diff_output: String },
+    /// No diff to show.
+    Empty,
+}
+
 pub struct Gui {
     pub config: Arc<AppConfig>,
     pub git: Arc<GitCommands>,
@@ -43,6 +63,12 @@ pub struct Gui {
     pub screen_mode: ScreenMode,
     /// Track what we last loaded a diff for, to avoid reloading on every frame.
     last_diff_key: String,
+    /// Generation counter — incremented on each diff request, used to discard stale results.
+    diff_generation: Arc<AtomicU64>,
+    /// Sender for background diff loading.
+    diff_rx: mpsc::Receiver<DiffResult>,
+    /// Keep sender around so we can clone it for background threads.
+    diff_tx: mpsc::Sender<DiffResult>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -55,6 +81,7 @@ pub enum ScreenMode {
 impl Gui {
     pub fn new(config: AppConfig, git: GitCommands) -> Result<Self> {
         let model = git.load_model()?;
+        let (diff_tx, diff_rx) = mpsc::channel();
 
         Ok(Self {
             config: Arc::new(config),
@@ -71,6 +98,9 @@ impl Gui {
             search_query: String::new(),
             screen_mode: ScreenMode::Normal,
             last_diff_key: String::new(),
+            diff_generation: Arc::new(AtomicU64::new(0)),
+            diff_rx,
+            diff_tx,
         })
     }
 
@@ -85,8 +115,11 @@ impl Gui {
 
     fn main_loop(&mut self, terminal: &mut Term) -> Result<()> {
         loop {
-            // Load diff if selection changed
-            self.maybe_load_diff();
+            // Request diff loading on background thread if selection changed
+            self.maybe_request_diff();
+
+            // Check for completed background diff results
+            self.receive_diff_results();
 
             // Render
             terminal.draw(|frame| {
@@ -104,7 +137,7 @@ impl Gui {
             })?;
 
             // Handle events
-            if event::poll(std::time::Duration::from_millis(50))? {
+            if event::poll(std::time::Duration::from_millis(16))? {
                 match event::read()? {
                     Event::Key(key) => self.handle_key(key)?,
                     Event::Mouse(mouse) => self.handle_mouse(mouse),
@@ -130,8 +163,31 @@ impl Gui {
         Ok(())
     }
 
-    /// Load diff content for the currently selected item if it changed.
-    fn maybe_load_diff(&mut self) {
+    /// Receive completed diff results from the background thread (non-blocking).
+    fn receive_diff_results(&mut self) {
+        // Drain all available results, keeping only the latest valid one
+        let current_gen = self.diff_generation.load(Ordering::Relaxed);
+        while let Ok(result) = self.diff_rx.try_recv() {
+            // Discard stale results from older generations
+            if result.generation != current_gen {
+                continue;
+            }
+            match result.payload {
+                DiffPayload::Content { filename, old, new } => {
+                    self.diff_view.load(&filename, &old, &new);
+                }
+                DiffPayload::UnifiedDiff { filename, diff_output } => {
+                    self.diff_view.load_from_diff_output(&filename, &diff_output);
+                }
+                DiffPayload::Empty => {
+                    self.diff_view = DiffViewState::new();
+                }
+            }
+        }
+    }
+
+    /// Request diff loading on a background thread if selection changed.
+    fn maybe_request_diff(&mut self) {
         let active = self.context_mgr.active();
         let selected = self.context_mgr.selected_active();
         let diff_key = format!("{:?}:{}", active, selected);
@@ -139,12 +195,16 @@ impl Gui {
         if diff_key == self.last_diff_key && !self.needs_diff_refresh {
             return;
         }
-        self.last_diff_key = diff_key;
+        self.last_diff_key = diff_key.clone();
         self.needs_diff_refresh = false;
+
+        // Bump generation to invalidate any in-flight results
+        let generation = self.diff_generation.fetch_add(1, Ordering::Relaxed) + 1;
 
         let model = self.model.lock().unwrap();
         match active {
             ContextId::Files => {
+                // Files panel: load synchronously (usually fast, small diffs)
                 if let Some(file) = model.files.get(selected) {
                     let name = file.name.clone();
                     let has_staged = file.has_staged_changes;
@@ -162,7 +222,6 @@ impl Gui {
 
                     if let Ok(diff) = diff_result {
                         if diff.is_empty() && !tracked {
-                            // Untracked files: show full content as all-insertions
                             if let Ok(content) = self.git.file_content(&name) {
                                 if !content.is_empty() {
                                     self.diff_view.load(&name, "", &content);
@@ -179,29 +238,64 @@ impl Gui {
                 }
             }
             ContextId::Commits => {
+                // Commits: load async on background thread (can be slow for large diffs)
                 if let Some(commit) = model.commits.get(selected) {
                     let hash = commit.hash.clone();
                     drop(model);
 
-                    if let Ok(diff) = self.git.diff_commit(&hash) {
-                        let filename = format!("commit:{}", &hash[..7.min(hash.len())]);
-                        self.diff_view.load_from_diff_output(&filename, &diff);
-                    }
+                    let git = Arc::clone(&self.git);
+                    let tx = self.diff_tx.clone();
+                    let gen_counter = Arc::clone(&self.diff_generation);
+
+                    std::thread::spawn(move || {
+                        // Check if still relevant before doing work
+                        if gen_counter.load(Ordering::Relaxed) != generation {
+                            return;
+                        }
+                        let payload = if let Ok(diff) = git.diff_commit(&hash) {
+                            let filename = format!("commit:{}", &hash[..7.min(hash.len())]);
+                            DiffPayload::UnifiedDiff { filename, diff_output: diff }
+                        } else {
+                            DiffPayload::Empty
+                        };
+                        let _ = tx.send(DiffResult {
+                            generation,
+                            diff_key,
+                            payload,
+                        });
+                    });
                 }
             }
             ContextId::Stash => {
+                // Stash: also load async
                 if let Some(entry) = model.stash_entries.get(selected) {
                     let index = entry.index;
                     drop(model);
 
-                    if let Ok(diff) = self.git.stash_diff(index) {
-                        if diff.is_empty() {
-                            self.diff_view = DiffViewState::new();
-                        } else {
-                            let filename = format!("stash@{{{}}}", index);
-                            self.diff_view.load_from_diff_output(&filename, &diff);
+                    let git = Arc::clone(&self.git);
+                    let tx = self.diff_tx.clone();
+                    let gen_counter = Arc::clone(&self.diff_generation);
+
+                    std::thread::spawn(move || {
+                        if gen_counter.load(Ordering::Relaxed) != generation {
+                            return;
                         }
-                    }
+                        let payload = if let Ok(diff) = git.stash_diff(index) {
+                            if diff.is_empty() {
+                                DiffPayload::Empty
+                            } else {
+                                let filename = format!("stash@{{{}}}", index);
+                                DiffPayload::UnifiedDiff { filename, diff_output: diff }
+                            }
+                        } else {
+                            DiffPayload::Empty
+                        };
+                        let _ = tx.send(DiffResult {
+                            generation,
+                            diff_key,
+                            payload,
+                        });
+                    });
                 } else {
                     drop(model);
                 }
