@@ -59,18 +59,12 @@ impl GitCommands {
     }
 
     /// Get total insertions/deletions across all working tree changes,
-    /// including untracked files (counted as all additions), matching
-    /// VSCode and GitHub PR behavior.
+    /// including untracked files (counted as all additions).
+    /// Uses `git diff HEAD` to get the combined staged+unstaged delta from HEAD.
     pub fn diff_shortstat(&self) -> Result<(usize, usize)> {
-        // Unstaged changes (tracked files only)
-        let unstaged = self
+        let result = self
             .git()
-            .args(&["diff", "--shortstat"])
-            .run()?;
-        // Staged changes
-        let staged = self
-            .git()
-            .args(&["diff", "--cached", "--shortstat"])
+            .args(&["diff", "HEAD", "--shortstat"])
             .run()?;
 
         fn parse_stat(s: &str) -> (usize, usize) {
@@ -92,13 +86,12 @@ impl GitCommands {
             (added, deleted)
         }
 
-        let (a1, d1) = parse_stat(&unstaged.stdout);
-        let (a2, d2) = parse_stat(&staged.stdout);
+        let (added, deleted) = parse_stat(&result.stdout);
 
         // Count lines in untracked files (git diff ignores these)
         let untracked_lines = self.count_untracked_lines().unwrap_or(0);
 
-        Ok((a1 + a2 + untracked_lines, d1 + d2))
+        Ok((added + untracked_lines, deleted))
     }
 
     /// Count total lines across all untracked files.

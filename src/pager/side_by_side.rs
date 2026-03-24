@@ -139,83 +139,145 @@ pub fn render_diff(
 
     let gutter_width = 5u16;
     let divider_width = 1u16;
-    let total_chrome = gutter_width * 2 + divider_width;
 
-    let content_width = if inner.width > total_chrome {
-        inner.width - total_chrome
-    } else {
-        inner.width
-    };
-    let panel_width = content_width / 2;
+    // Detect new file: old content is empty, so no left panel needed
+    let is_new_file = state.old_content.is_empty();
 
     let visible_height = inner.height as usize;
     let buf = frame.buffer_mut();
 
-    for (row, diff_line) in state.lines[state.scroll_offset..]
-        .iter()
-        .take(visible_height)
-        .enumerate()
-    {
-        let y = inner.y + row as u16;
-        if y >= inner.y + inner.height {
-            break;
+    if is_new_file {
+        // New file: single full-width panel (right side only)
+        let content_width = inner.width.saturating_sub(gutter_width);
+
+        for (row, diff_line) in state.lines[state.scroll_offset..]
+            .iter()
+            .take(visible_height)
+            .enumerate()
+        {
+            let y = inner.y + row as u16;
+            if y >= inner.y + inner.height {
+                break;
+            }
+
+            let bg = theme.diff_add_bg;
+
+            // Gutter
+            let line_num = diff_line
+                .new_line
+                .as_ref()
+                .map(|(n, _)| format!("{:>4} ", n))
+                .unwrap_or_else(|| "     ".to_string());
+            let gutter_style = Style::default().fg(Color::DarkGray).bg(bg);
+            buf_write_str(buf, inner.x, y, &line_num, gutter_style, gutter_width);
+
+            // Content
+            let spans = build_content_spans(
+                diff_line.new_line.as_ref().map(|(n, t)| (*n, t.as_str())),
+                &diff_line.new_segments,
+                diff_line.change_type,
+                false,
+                new_highlighter,
+                bg,
+                theme,
+                content_width as usize,
+            );
+            buf_write_spans(buf, inner.x + gutter_width, y, &spans, content_width);
         }
+    } else {
+        // Normal side-by-side diff
+        let total_chrome = gutter_width * 2 + divider_width;
+        let content_width = if inner.width > total_chrome {
+            inner.width - total_chrome
+        } else {
+            inner.width
+        };
+        let panel_width = content_width / 2;
 
-        let (left_bg, right_bg) = line_bg_colors(diff_line.change_type, theme);
+        for (row, diff_line) in state.lines[state.scroll_offset..]
+            .iter()
+            .take(visible_height)
+            .enumerate()
+        {
+            let y = inner.y + row as u16;
+            if y >= inner.y + inner.height {
+                break;
+            }
 
-        // Left gutter
-        let left_num = diff_line
-            .old_line
-            .as_ref()
-            .map(|(n, _)| format!("{:>4} ", n))
-            .unwrap_or_else(|| "     ".to_string());
-        let gutter_style = Style::default().fg(Color::DarkGray).bg(left_bg);
-        buf_write_str(buf, inner.x, y, &left_num, gutter_style, gutter_width);
+            let (left_bg, right_bg) = line_bg_colors(diff_line.change_type, theme);
 
-        // Left content
-        let left_spans = build_content_spans(
-            diff_line.old_line.as_ref().map(|(n, t)| (*n, t.as_str())),
-            &diff_line.old_segments,
-            diff_line.change_type,
-            true,
-            old_highlighter,
-            left_bg,
-            theme,
-            panel_width as usize,
-        );
-        buf_write_spans(buf, inner.x + gutter_width, y, &left_spans, panel_width);
+            // Left gutter
+            let left_num = diff_line
+                .old_line
+                .as_ref()
+                .map(|(n, _)| format!("{:>4} ", n))
+                .unwrap_or_else(|| "     ".to_string());
+            let gutter_style = Style::default().fg(Color::DarkGray).bg(left_bg);
+            buf_write_str(buf, inner.x, y, &left_num, gutter_style, gutter_width);
 
-        // Divider
-        let div_x = inner.x + gutter_width + panel_width;
-        let divider_style = Style::default().fg(Color::DarkGray);
-        buf_write_str(buf, div_x, y, "│", divider_style, divider_width);
+            // Left content
+            let left_spans = if diff_line.change_type == ChangeType::Insert {
+                // Addition-only line: fill left side with slash pattern
+                let slash_fill: String = std::iter::repeat('/').take(panel_width as usize).collect();
+                vec![Span::styled(
+                    slash_fill,
+                    Style::default().fg(Color::Rgb(60, 60, 60)).bg(left_bg),
+                )]
+            } else {
+                build_content_spans(
+                    diff_line.old_line.as_ref().map(|(n, t)| (*n, t.as_str())),
+                    &diff_line.old_segments,
+                    diff_line.change_type,
+                    true,
+                    old_highlighter,
+                    left_bg,
+                    theme,
+                    panel_width as usize,
+                )
+            };
+            buf_write_spans(buf, inner.x + gutter_width, y, &left_spans, panel_width);
 
-        // Right gutter
-        let right_num = diff_line
-            .new_line
-            .as_ref()
-            .map(|(n, _)| format!("{:>4} ", n))
-            .unwrap_or_else(|| "     ".to_string());
-        let right_gutter_style = Style::default().fg(Color::DarkGray).bg(right_bg);
-        let right_gutter_x = div_x + divider_width;
-        buf_write_str(buf, right_gutter_x, y, &right_num, right_gutter_style, gutter_width);
+            // Divider
+            let div_x = inner.x + gutter_width + panel_width;
+            let divider_style = Style::default().fg(Color::DarkGray);
+            buf_write_str(buf, div_x, y, "│", divider_style, divider_width);
 
-        // Right content
-        let right_spans = build_content_spans(
-            diff_line.new_line.as_ref().map(|(n, t)| (*n, t.as_str())),
-            &diff_line.new_segments,
-            diff_line.change_type,
-            false,
-            new_highlighter,
-            right_bg,
-            theme,
-            panel_width as usize,
-        );
-        let right_content_x = right_gutter_x + gutter_width;
-        let right_content_width = inner
-            .width
-            .saturating_sub(gutter_width * 2 + panel_width + divider_width);
-        buf_write_spans(buf, right_content_x, y, &right_spans, right_content_width);
+            // Right gutter
+            let right_num = diff_line
+                .new_line
+                .as_ref()
+                .map(|(n, _)| format!("{:>4} ", n))
+                .unwrap_or_else(|| "     ".to_string());
+            let right_gutter_style = Style::default().fg(Color::DarkGray).bg(right_bg);
+            let right_gutter_x = div_x + divider_width;
+            buf_write_str(buf, right_gutter_x, y, &right_num, right_gutter_style, gutter_width);
+
+            // Right content
+            let right_spans = if diff_line.change_type == ChangeType::Delete {
+                // Deletion-only line: fill right side with slash pattern
+                let slash_fill: String = std::iter::repeat('/').take(panel_width as usize).collect();
+                vec![Span::styled(
+                    slash_fill,
+                    Style::default().fg(Color::Rgb(60, 60, 60)).bg(right_bg),
+                )]
+            } else {
+                build_content_spans(
+                    diff_line.new_line.as_ref().map(|(n, t)| (*n, t.as_str())),
+                    &diff_line.new_segments,
+                    diff_line.change_type,
+                    false,
+                    new_highlighter,
+                    right_bg,
+                    theme,
+                    panel_width as usize,
+                )
+            };
+            let right_content_x = right_gutter_x + gutter_width;
+            let right_content_width = inner
+                .width
+                .saturating_sub(gutter_width * 2 + panel_width + divider_width);
+            buf_write_spans(buf, right_content_x, y, &right_spans, right_content_width);
+        }
     }
 }
 
