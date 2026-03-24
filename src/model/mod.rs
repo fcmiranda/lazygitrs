@@ -21,6 +21,7 @@ use std::collections::HashMap;
 /// Holds all repository data loaded from git.
 #[derive(Debug, Default)]
 pub struct Model {
+    pub repo_name: String,
     pub files: Vec<File>,
     pub branches: Vec<Branch>,
     pub commits: Vec<Commit>,
@@ -32,6 +33,9 @@ pub struct Model {
     pub sub_commits: Vec<Commit>,
     pub commit_files: Vec<CommitFile>,
     pub authors: HashMap<String, Author>,
+    // Total line changes
+    pub total_additions: usize,
+    pub total_deletions: usize,
     // In-progress operation state
     pub is_rebasing: bool,
     pub is_merging: bool,

@@ -58,6 +58,71 @@ impl GitCommands {
         Ok(std::fs::read_to_string(full_path).unwrap_or_default())
     }
 
+    /// Get total insertions/deletions across all working tree changes,
+    /// including untracked files (counted as all additions), matching
+    /// VSCode and GitHub PR behavior.
+    pub fn diff_shortstat(&self) -> Result<(usize, usize)> {
+        // Unstaged changes (tracked files only)
+        let unstaged = self
+            .git()
+            .args(&["diff", "--shortstat"])
+            .run()?;
+        // Staged changes
+        let staged = self
+            .git()
+            .args(&["diff", "--cached", "--shortstat"])
+            .run()?;
+
+        fn parse_stat(s: &str) -> (usize, usize) {
+            let mut added = 0usize;
+            let mut deleted = 0usize;
+            // Format: " 3 files changed, 10 insertions(+), 2 deletions(-)"
+            for part in s.split(',') {
+                let part = part.trim();
+                if part.contains("insertion") {
+                    if let Some(n) = part.split_whitespace().next().and_then(|w| w.parse().ok()) {
+                        added = n;
+                    }
+                } else if part.contains("deletion") {
+                    if let Some(n) = part.split_whitespace().next().and_then(|w| w.parse().ok()) {
+                        deleted = n;
+                    }
+                }
+            }
+            (added, deleted)
+        }
+
+        let (a1, d1) = parse_stat(&unstaged.stdout);
+        let (a2, d2) = parse_stat(&staged.stdout);
+
+        // Count lines in untracked files (git diff ignores these)
+        let untracked_lines = self.count_untracked_lines().unwrap_or(0);
+
+        Ok((a1 + a2 + untracked_lines, d1 + d2))
+    }
+
+    /// Count total lines across all untracked files.
+    fn count_untracked_lines(&self) -> Result<usize> {
+        let result = self
+            .git()
+            .args(&["ls-files", "--others", "--exclude-standard"])
+            .run()?;
+
+        let mut total = 0;
+        for file in result.stdout.lines() {
+            if file.is_empty() {
+                continue;
+            }
+            let path = self.repo_path().join(file);
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                total += content.lines().count();
+            }
+            // Skip binary files that fail read_to_string
+        }
+
+        Ok(total)
+    }
+
     /// Get the staged content of a file.
     pub fn file_content_staged(&self, path: &str) -> Result<String> {
         let result = self

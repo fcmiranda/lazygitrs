@@ -91,7 +91,7 @@ impl Theme {
             search_match: Style::default()
                 .bg(Color::Yellow)
                 .fg(Color::Black),
-            status_bar: Style::default().fg(Color::White).bg(Color::DarkGray),
+            status_bar: Style::default().fg(Color::DarkGray),
             spinner: Style::default().fg(Color::Cyan),
         }
     }

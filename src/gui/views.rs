@@ -28,7 +28,14 @@ pub fn render(
     let theme = config.user_config.theme();
     let panel_count = SideWindow::ALL.len();
 
-    let fl = layout::compute_layout(area, layout_state.side_panel_ratio, panel_count);
+    // Determine which panel index is active so it gets expanded
+    let active_window = ctx_mgr.active_window();
+    let active_panel_index = SideWindow::ALL
+        .iter()
+        .position(|w| *w == active_window)
+        .unwrap_or(1); // default to Files
+
+    let fl = layout::compute_layout(area, layout_state.side_panel_ratio, panel_count, active_panel_index);
 
     // Render sidebar panels — one per window
     for (i, window) in SideWindow::ALL.iter().enumerate() {
@@ -56,17 +63,18 @@ pub fn render(
 
         match ctx_id {
             ContextId::Status => {
-                let status_text = render_status_panel(model, config);
-                let widget = Paragraph::new(status_text).block(block);
+                let inner_width = rect.width.saturating_sub(2) as usize;
+                let status_line = render_status_sidebar(model, config, inner_width);
+                let widget = Paragraph::new(status_line).block(block);
                 frame.render_widget(widget, rect);
             }
             ContextId::Files => {
                 let items = presentation::files::render_file_list(model, &theme);
-                render_list(frame, rect, block, items, selected, &theme);
+                render_list(frame, rect, block, items, selected, is_active, &theme);
             }
             ContextId::Worktrees => {
                 let items = render_worktree_list(model);
-                render_list(frame, rect, block, items, selected, &theme);
+                render_list(frame, rect, block, items, selected, is_active, &theme);
             }
             ContextId::Submodules => {
                 let widget = Paragraph::new(" (no submodules)").block(block);
@@ -74,23 +82,23 @@ pub fn render(
             }
             ContextId::Branches => {
                 let items = presentation::branches::render_branch_list(model, &theme);
-                render_list(frame, rect, block, items, selected, &theme);
+                render_list(frame, rect, block, items, selected, is_active, &theme);
             }
             ContextId::Remotes => {
                 let items = presentation::remotes::render_remote_list(model, &theme);
-                render_list(frame, rect, block, items, selected, &theme);
+                render_list(frame, rect, block, items, selected, is_active, &theme);
             }
             ContextId::Tags => {
                 let items = presentation::tags::render_tag_list(model, &theme);
-                render_list(frame, rect, block, items, selected, &theme);
+                render_list(frame, rect, block, items, selected, is_active, &theme);
             }
             ContextId::Commits => {
                 let items = presentation::commits::render_commit_list(model, &theme);
-                render_list(frame, rect, block, items, selected, &theme);
+                render_list(frame, rect, block, items, selected, is_active, &theme);
             }
             ContextId::Stash => {
                 let items = presentation::stash::render_stash_list(model, &theme);
-                render_list(frame, rect, block, items, selected, &theme);
+                render_list(frame, rect, block, items, selected, is_active, &theme);
             }
             _ => {
                 let widget = Paragraph::new("").block(block);
@@ -99,8 +107,11 @@ pub fn render(
         }
     }
 
-    // Render main panel — side-by-side diff view
-    if !diff_view.is_empty() {
+    // Render main panel
+    if ctx_mgr.active() == ContextId::Status {
+        // Status view: show logo + copyright in the main content area
+        render_status_main(frame, fl.main_panel, model, config, &theme);
+    } else if !diff_view.is_empty() {
         side_by_side::render_diff(frame, fl.main_panel, diff_view, &theme);
     } else {
         // Fallback: show info about selected item
@@ -123,30 +134,122 @@ pub fn render(
     }
 }
 
-/// Build a window title like " 3 Branches | Remotes | Tags " with the active tab highlighted.
-fn build_window_title(window: SideWindow, active_ctx: ContextId, _ctx_mgr: &ContextManager) -> String {
+/// Build a window title like " 3 Branches | Remotes | Tags " with the active tab in a highlight color.
+fn build_window_title<'a>(window: SideWindow, active_ctx: ContextId, _ctx_mgr: &ContextManager) -> Line<'a> {
     let tabs = window.tabs();
     let key = window.key_label();
 
     if tabs.len() == 1 {
-        return format!(" {} {} ", key, tabs[0].title());
+        return Line::from(format!(" {} {} ", key, tabs[0].title()));
     }
 
-    let tab_parts: Vec<String> = tabs
-        .iter()
-        .map(|ctx| {
-            if *ctx == active_ctx {
-                format!("[{}]", ctx.title())
-            } else {
-                ctx.title().to_string()
-            }
-        })
-        .collect();
+    let mut spans = vec![Span::raw(format!(" {} ", key))];
 
-    format!(" {} {} ", key, tab_parts.join(" | "))
+    for (i, ctx) in tabs.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" | ", Style::default().fg(Color::DarkGray)));
+        }
+        if *ctx == active_ctx {
+            spans.push(Span::styled(
+                ctx.title(),
+                Style::default().fg(Color::Green).add_modifier(Modifier::BOLD),
+            ));
+        } else {
+            spans.push(Span::styled(
+                ctx.title(),
+                Style::default().fg(Color::DarkGray),
+            ));
+        }
+    }
+
+    spans.push(Span::raw(" "));
+    Line::from(spans)
 }
 
-fn render_status_panel<'a>(model: &Model, config: &AppConfig) -> Vec<Line<'a>> {
+/// Compact 1-line status for the sidebar: "reponame → branch          +N -N"
+fn render_status_sidebar<'a>(model: &Model, _config: &AppConfig, inner_width: usize) -> Line<'a> {
+    let branch_name = model
+        .branches
+        .iter()
+        .find(|b| b.head)
+        .map(|b| b.name.clone())
+        .unwrap_or_else(|| "detached".to_string());
+
+    let repo_name = model.repo_name.clone();
+
+    // Build the right-side stats string to measure its width
+    let additions = model.total_additions;
+    let deletions = model.total_deletions;
+    let has_changes = additions > 0 || deletions > 0;
+
+    let stats_text = if has_changes {
+        let mut s = String::new();
+        if additions > 0 {
+            s.push_str(&format!("+{}", additions));
+        }
+        if additions > 0 && deletions > 0 {
+            s.push(' ');
+        }
+        if deletions > 0 {
+            s.push_str(&format!("-{}", deletions));
+        }
+        s
+    } else {
+        String::new()
+    };
+
+    // Left side: " reponame → branch"
+    // We need +1 for leading space, +repo, +1 space, +2 "→ ", +branch
+    let left_len = 1 + repo_name.len() + 1 + 2 + branch_name.len();
+    // Right side: stats + trailing space
+    let right_len = if has_changes { stats_text.len() + 1 } else { 0 };
+    let padding = inner_width.saturating_sub(left_len + right_len);
+
+    let mut spans = vec![
+        Span::styled(
+            format!(" {} ", repo_name),
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("→ ", Style::default().fg(Color::DarkGray)),
+        Span::styled(branch_name, Style::default().fg(Color::Green)),
+    ];
+
+    if has_changes {
+        spans.push(Span::raw(" ".repeat(padding)));
+        if additions > 0 {
+            spans.push(Span::styled(
+                format!("+{}", additions),
+                Style::default().fg(Color::Green),
+            ));
+        }
+        if additions > 0 && deletions > 0 {
+            spans.push(Span::raw(" "));
+        }
+        if deletions > 0 {
+            spans.push(Span::styled(
+                format!("-{}", deletions),
+                Style::default().fg(Color::Red),
+            ));
+        }
+        spans.push(Span::raw(" "));
+    }
+
+    Line::from(spans)
+}
+
+/// Full status view for the main content area: logo + copyright + repo info
+fn render_status_main(
+    frame: &mut Frame,
+    rect: Rect,
+    model: &Model,
+    _config: &AppConfig,
+    theme: &crate::config::Theme,
+) {
+    let block = Block::default()
+        .title(" Status ")
+        .borders(Borders::ALL)
+        .border_style(theme.active_border);
+
     let branch_name = model
         .branches
         .iter()
@@ -154,17 +257,23 @@ fn render_status_panel<'a>(model: &Model, config: &AppConfig) -> Vec<Line<'a>> {
         .map(|b| b.name.as_str())
         .unwrap_or("detached");
 
-    let mut lines = vec![
-        Line::from(Span::styled(
-            format!(" {} ", config.user_config.gui.nerd_fonts_version),
-            Style::default().fg(Color::Cyan),
-        )),
-        Line::from(format!(" Branch: {}", branch_name)),
-        Line::from(format!(" Commits: {}", model.commits.len())),
-        Line::from(format!(" Files: {}", model.files.len())),
-    ];
+    let logo = include_str!("../../logo.txt");
+    let mut lines: Vec<Line> = logo
+        .lines()
+        .map(|l| Line::from(Span::styled(l.to_string(), Style::default().fg(Color::Cyan))))
+        .collect();
 
-    // Show in-progress operation status
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        " Copyright 2026 Carlo Taleon (Blankeos)",
+        Style::default().fg(Color::DarkGray),
+    )));
+    lines.push(Line::from(""));
+    lines.push(Line::from(format!(" Branch: {}", branch_name)));
+    lines.push(Line::from(format!(" Commits: {}", model.commits.len())));
+    lines.push(Line::from(format!(" Files: {}", model.files.len())));
+
+    // In-progress operation banners
     if model.is_rebasing {
         lines.push(Line::from(Span::styled(
             " REBASING (m: options)",
@@ -190,7 +299,8 @@ fn render_status_panel<'a>(model: &Model, config: &AppConfig) -> Vec<Line<'a>> {
         )));
     }
 
-    lines
+    let widget = Paragraph::new(lines).block(block);
+    frame.render_widget(widget, rect);
 }
 
 fn render_worktree_list<'a>(model: &Model) -> Vec<ListItem<'a>> {
@@ -224,6 +334,7 @@ fn render_list(
     block: Block<'_>,
     items: Vec<ListItem<'_>>,
     selected: usize,
+    is_active: bool,
     theme: &crate::config::Theme,
 ) {
     if items.is_empty() {
@@ -246,7 +357,7 @@ fn render_list(
         .skip(offset)
         .enumerate()
         .map(|(i, item)| {
-            if i + offset == selected {
+            if is_active && i + offset == selected {
                 item.style(theme.selected_line)
             } else {
                 item

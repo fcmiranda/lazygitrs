@@ -41,12 +41,19 @@ impl GitCommands {
     pub fn load_model(&self) -> Result<Model> {
         let mut model = Model::default();
 
+        model.repo_name = self.repo_name();
         model.files = self.load_files()?;
         model.branches = self.load_branches()?;
         model.commits = self.load_commits(50)?;
         model.stash_entries = self.load_stash()?;
         model.remotes = self.load_remotes()?;
         model.tags = self.load_tags()?;
+
+        // Load total line change stats
+        if let Ok((added, deleted)) = self.diff_shortstat() {
+            model.total_additions = added;
+            model.total_deletions = deleted;
+        }
 
         // Load in-progress operation state
         if let Ok(status) = self.repo_status() {

@@ -263,7 +263,12 @@ fn build_content_spans<'a>(
     };
 
     let display = if text.len() > max_width {
-        &text[..max_width]
+        // Find a safe byte boundary to avoid slicing mid-character
+        let mut end = max_width;
+        while end > 0 && !text.is_char_boundary(end) {
+            end -= 1;
+        }
+        &text[..end]
     } else {
         text
     };

@@ -32,7 +32,17 @@ pub struct FrameLayout {
     pub status_bar: Rect,
 }
 
-pub fn compute_layout(area: Rect, side_ratio: f64, panel_count: usize) -> FrameLayout {
+/// Height for the status panel (always compact: 1 content line + 2 border lines).
+const STATUS_PANEL_HEIGHT: u16 = 3;
+/// Height for a collapsed (unfocused) panel: 1 content line + 2 border lines.
+const COLLAPSED_PANEL_HEIGHT: u16 = 3;
+
+pub fn compute_layout(
+    area: Rect,
+    side_ratio: f64,
+    panel_count: usize,
+    active_panel_index: usize,
+) -> FrameLayout {
     // Top-level: main area + status bar at bottom
     let outer = Layout::default()
         .direction(Direction::Vertical)
@@ -60,9 +70,21 @@ pub fn compute_layout(area: Rect, side_ratio: f64, panel_count: usize) -> FrameL
     let side_area = horizontal[0];
     let main_panel = horizontal[1];
 
-    // Split side area into panels
+    // Dynamic panel sizing: Status is always compact (3 lines),
+    // the active panel expands to fill remaining space, others collapse.
     let panel_constraints: Vec<Constraint> = (0..panel_count)
-        .map(|_| Constraint::Ratio(1, panel_count as u32))
+        .map(|i| {
+            if i == 0 {
+                // Status panel is always compact
+                Constraint::Length(STATUS_PANEL_HEIGHT)
+            } else if i == active_panel_index {
+                // Active panel fills remaining space
+                Constraint::Min(COLLAPSED_PANEL_HEIGHT)
+            } else {
+                // Inactive panels collapse
+                Constraint::Length(COLLAPSED_PANEL_HEIGHT)
+            }
+        })
         .collect();
 
     let side_panels = Layout::default()
