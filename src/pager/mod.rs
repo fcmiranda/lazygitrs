@@ -18,6 +18,10 @@ pub struct DiffLine {
     pub old_segments: Option<Vec<InlineSegment>>,
     /// Word-level diff segments for the new (right) side.
     pub new_segments: Option<Vec<InlineSegment>>,
+    /// If set, this line is a file header separator (multi-file diffs).
+    pub file_header: Option<String>,
+    /// Index of the file section this line belongs to (for multi-file highlighting).
+    pub section_index: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

@@ -27,6 +27,8 @@ pub fn compute_side_by_side(old: &str, new: &str, tab_width: usize) -> Vec<DiffL
                     change_type: ChangeType::Equal,
                     old_segments: None,
                     new_segments: None,
+                    file_header: None,
+                    section_index: 0,
                 });
                 old_num += 1;
                 new_num += 1;
@@ -91,6 +93,8 @@ pub fn compute_side_by_side(old: &str, new: &str, tab_width: usize) -> Vec<DiffL
                         change_type,
                         old_segments,
                         new_segments,
+                        file_header: None,
+                        section_index: 0,
                     });
                 }
             }
@@ -104,6 +108,8 @@ pub fn compute_side_by_side(old: &str, new: &str, tab_width: usize) -> Vec<DiffL
                     change_type: ChangeType::Insert,
                     old_segments: None,
                     new_segments: None,
+                    file_header: None,
+                    section_index: 0,
                 });
                 new_num += 1;
                 i += 1;

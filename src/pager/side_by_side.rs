@@ -1,7 +1,7 @@
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
-use ratatui::text::{Line, Span};
+use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, Paragraph};
 use ratatui::Frame;
 
@@ -9,6 +9,12 @@ use crate::config::Theme;
 
 use super::highlight::FileHighlighter;
 use super::{ChangeType, DiffLine, InlineSegment};
+
+/// A section of a multi-file diff with its own highlighters.
+struct FileSection {
+    old_highlighter: FileHighlighter,
+    new_highlighter: FileHighlighter,
+}
 
 /// State for the diff view panel.
 pub struct DiffViewState {
@@ -20,9 +26,8 @@ pub struct DiffViewState {
     pub old_content: String,
     pub new_content: String,
     pub tab_width: usize,
-    /// Cached syntax highlighters — rebuilt only when content changes.
-    cached_old_highlighter: Option<FileHighlighter>,
-    cached_new_highlighter: Option<FileHighlighter>,
+    /// Per-file-section highlighters for multi-file diffs.
+    sections: Vec<FileSection>,
 }
 
 impl Default for DiffViewState {
@@ -36,8 +41,7 @@ impl Default for DiffViewState {
             old_content: String::new(),
             new_content: String::new(),
             tab_width: 4,
-            cached_old_highlighter: None,
-            cached_new_highlighter: None,
+            sections: Vec::new(),
         }
     }
 }
@@ -50,7 +54,7 @@ impl DiffViewState {
         }
     }
 
-    /// Load a diff from old/new content.
+    /// Load a diff from old/new content (single file).
     pub fn load(&mut self, filename: &str, old: &str, new: &str) {
         self.filename = filename.to_string();
         self.old_content = old.to_string();
@@ -59,15 +63,69 @@ impl DiffViewState {
         self.hunk_starts = super::diff_algo::find_hunk_starts(&self.lines);
         self.scroll_offset = 0;
         self.horizontal_scroll = 0;
-        // Pre-compute syntax highlighters once on load, not every frame
-        self.cached_old_highlighter = Some(FileHighlighter::new(&self.old_content, &self.filename));
-        self.cached_new_highlighter = Some(FileHighlighter::new(&self.new_content, &self.filename));
+        // Single section with index 0
+        self.sections = vec![FileSection {
+            old_highlighter: FileHighlighter::new(old, filename),
+            new_highlighter: FileHighlighter::new(new, filename),
+        }];
     }
 
     /// Load from raw diff output (git diff).
+    /// Automatically detects multi-file diffs and splits into per-file sections.
     pub fn load_from_diff_output(&mut self, filename: &str, diff_output: &str) {
-        let (old, new) = parse_unified_diff(diff_output);
-        self.load(filename, &old, &new);
+        let file_diffs = parse_multi_file_diff(diff_output);
+
+        if file_diffs.len() <= 1 {
+            // Single file diff — use the simple path
+            let (old, new) = parse_unified_diff(diff_output);
+            // Use the actual filename from the diff header if available
+            let actual_name = file_diffs
+                .first()
+                .map(|(name, _)| name.as_str())
+                .unwrap_or(filename);
+            self.load(actual_name, &old, &new);
+        } else {
+            // Multi-file diff — build per-section lines with highlighters
+            let file_count = file_diffs.len();
+            self.filename = format!("{} ({} files)", filename, file_count);
+            self.old_content = String::new();
+            self.new_content = String::new();
+            self.lines = Vec::new();
+            self.sections = Vec::new();
+            self.scroll_offset = 0;
+            self.horizontal_scroll = 0;
+
+            for (section_idx, (file_name, file_diff)) in file_diffs.iter().enumerate() {
+                let (old, new) = parse_unified_diff(file_diff);
+
+                // Add file header separator line
+                self.lines.push(DiffLine {
+                    old_line: None,
+                    new_line: None,
+                    change_type: ChangeType::Equal,
+                    old_segments: None,
+                    new_segments: None,
+                    file_header: Some(file_name.clone()),
+                    section_index: section_idx,
+                });
+
+                // Compute diff lines for this file section
+                let mut section_lines =
+                    super::diff_algo::compute_side_by_side(&old, &new, self.tab_width);
+                for line in &mut section_lines {
+                    line.section_index = section_idx;
+                }
+                self.lines.append(&mut section_lines);
+
+                // Create highlighters for this section
+                self.sections.push(FileSection {
+                    old_highlighter: FileHighlighter::new(&old, file_name),
+                    new_highlighter: FileHighlighter::new(&new, file_name),
+                });
+            }
+
+            self.hunk_starts = super::diff_algo::find_hunk_starts(&self.lines);
+        }
     }
 
     pub fn scroll_up(&mut self, amount: usize) {
@@ -111,6 +169,13 @@ impl DiffViewState {
     pub fn is_empty(&self) -> bool {
         self.lines.is_empty()
     }
+
+    /// Get the highlighters for a given section index.
+    fn highlighters_for_section(&self, section_index: usize) -> Option<(&FileHighlighter, &FileHighlighter)> {
+        self.sections
+            .get(section_index)
+            .map(|s| (&s.old_highlighter, &s.new_highlighter))
+    }
 }
 
 /// Render a side-by-side diff view into the given area.
@@ -150,16 +215,11 @@ pub fn render_diff(
         return;
     }
 
-    // Use cached highlighters (built once on load, not every frame)
-    let default_highlighter = FileHighlighter::default();
-    let old_highlighter = state.cached_old_highlighter.as_ref().unwrap_or(&default_highlighter);
-    let new_highlighter = state.cached_new_highlighter.as_ref().unwrap_or(&default_highlighter);
-
     let gutter_width = 5u16;
     let divider_width = 1u16;
 
     // Detect new file: old content is empty, so no left panel needed
-    let is_new_file = state.old_content.is_empty();
+    let is_new_file = state.old_content.is_empty() && state.sections.len() <= 1;
 
     let visible_height = inner.height as usize;
     let buf = frame.buffer_mut();
@@ -167,6 +227,11 @@ pub fn render_diff(
     if is_new_file {
         // New file: single full-width panel (right side only)
         let content_width = inner.width.saturating_sub(gutter_width);
+        let default_highlighter = FileHighlighter::default();
+        let new_highlighter = state
+            .highlighters_for_section(0)
+            .map(|(_, n)| n)
+            .unwrap_or(&default_highlighter);
 
         for (row, diff_line) in state.lines[state.scroll_offset..]
             .iter()
@@ -221,6 +286,17 @@ pub fn render_diff(
             if y >= inner.y + inner.height {
                 break;
             }
+
+            // Handle file header separator lines
+            if let Some(ref header) = diff_line.file_header {
+                render_file_header(buf, inner.x, y, inner.width, header, theme);
+                continue;
+            }
+
+            let default_hl = FileHighlighter::default();
+            let (old_highlighter, new_highlighter) = state
+                .highlighters_for_section(diff_line.section_index)
+                .unwrap_or((&default_hl, &default_hl));
 
             let (left_bg, right_bg) = line_bg_colors(diff_line.change_type, theme);
 
@@ -297,6 +373,28 @@ pub fn render_diff(
             buf_write_spans(buf, right_content_x, y, &right_spans, right_content_width, state.horizontal_scroll);
         }
     }
+}
+
+/// Render a file header separator line spanning the full width.
+fn render_file_header(buf: &mut Buffer, x: u16, y: u16, width: u16, filename: &str, _theme: &Theme) {
+    let buf_area = buf.area();
+    if y < buf_area.y || y >= buf_area.y + buf_area.height {
+        return;
+    }
+
+    let header_style = Style::default()
+        .fg(Color::Rgb(158, 203, 255))
+        .bg(Color::Rgb(30, 40, 55))
+        .add_modifier(Modifier::BOLD);
+
+    // Build header text: "── filename ──────..."
+    let prefix = "── ";
+    let suffix_char = '─';
+    let label = format!("{}{} ", prefix, filename);
+    let remaining = (width as usize).saturating_sub(label.len());
+    let full_line = format!("{}{}", label, suffix_char.to_string().repeat(remaining));
+
+    buf_write_str(buf, x, y, &full_line, header_style, width);
 }
 
 /// Write a string directly to the buffer at (x, y) with the given style, clamped to max_width.
@@ -458,6 +556,50 @@ fn build_word_diff_spans<'a>(
             }
         })
         .collect()
+}
+
+/// Parse a multi-file unified diff into per-file sections.
+/// Returns Vec of (filename, raw_diff_for_that_file).
+fn parse_multi_file_diff(diff: &str) -> Vec<(String, String)> {
+    let mut sections: Vec<(String, Vec<&str>)> = Vec::new();
+    let mut current_filename = String::new();
+    let mut current_lines: Vec<&str> = Vec::new();
+
+    for line in diff.lines() {
+        if line.starts_with("diff --git ") {
+            // Save previous section
+            if !current_filename.is_empty() {
+                sections.push((current_filename, current_lines));
+                current_lines = Vec::new();
+            }
+            // Extract filename from "diff --git a/path b/path"
+            current_filename = extract_filename_from_diff_header(line);
+        } else {
+            current_lines.push(line);
+        }
+    }
+
+    // Save last section
+    if !current_filename.is_empty() {
+        sections.push((current_filename, current_lines));
+    }
+
+    sections
+        .into_iter()
+        .map(|(name, lines)| (name, lines.join("\n")))
+        .collect()
+}
+
+/// Extract the filename from a "diff --git a/path b/path" header line.
+fn extract_filename_from_diff_header(line: &str) -> String {
+    // Format: "diff --git a/some/path b/some/path"
+    // We want "some/path" (the b/ side, which is the new name)
+    if let Some(b_part) = line.split(" b/").last() {
+        b_part.to_string()
+    } else {
+        // Fallback: strip "diff --git " prefix
+        line.trim_start_matches("diff --git ").to_string()
+    }
 }
 
 /// Parse a unified diff into old/new content for side-by-side display.
