@@ -1,12 +1,30 @@
-/// Commit graph layout engine.
+/// Commit graph layout engine matching lazygit's visual style.
 ///
-/// Given an ordered list of commits (newest first) with their parent hashes,
-/// computes an ASCII graph column layout similar to `git log --graph`.
+/// Uses ○ (hollow circle) for nodes, │ for vertical pipes,
+/// ╭─╮ for merge connectors, ╰─╯ for converging lines.
+/// Each column is 2 chars wide for readability.
 
 use ratatui::style::{Color, Style};
 use ratatui::text::Span;
 
-/// The computed graph cell for one commit row.
+/// Graph colors — each column gets a rotating color.
+/// These match lazygit's palette.
+const GRAPH_COLORS: &[Color] = &[
+    Color::Cyan,
+    Color::Green,
+    Color::Yellow,
+    Color::Magenta,
+    Color::Blue,
+    Color::Red,
+    Color::LightCyan,
+    Color::LightGreen,
+];
+
+pub fn col_color(col: usize) -> Color {
+    GRAPH_COLORS[col % GRAPH_COLORS.len()]
+}
+
+/// The computed graph data for one commit row.
 #[derive(Debug, Clone)]
 pub struct GraphRow {
     /// The column (0-based) where this commit's node sits.
@@ -17,41 +35,27 @@ pub struct GraphRow {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum GraphCell {
-    /// The commit node itself: ●
+    /// The commit node: ○
     Node,
     /// A vertical pipe passing through: │
     Pipe,
-    /// A merge line coming from the right: ╮
+    /// Merge connector from right: ╮
     MergeRight,
-    /// Horizontal connector: ─
+    /// Closing col is RIGHT of commit — pipe from above bends left: ┛
+    ConvergeFromRight,
+    /// Closing col is LEFT of commit — pipe from above bends right: ┗
+    ConvergeFromLeft,
+    /// Horizontal connector: ━
     Horizontal,
+    /// Left-going merge connector: ┛
+    MergeLeft,
     /// Empty space
     Empty,
-}
-
-/// Graph colors — each column gets a rotating color.
-const GRAPH_COLORS: &[Color] = &[
-    Color::Green,
-    Color::Yellow,
-    Color::Magenta,
-    Color::Cyan,
-    Color::Blue,
-    Color::Red,
-    Color::LightGreen,
-    Color::LightYellow,
-];
-
-fn col_color(col: usize) -> Color {
-    GRAPH_COLORS[col % GRAPH_COLORS.len()]
 }
 
 /// Compute graph layout for a list of commits.
 ///
 /// `commits` is a slice of (hash, parent_hashes) in display order (newest first).
-///
-/// The algorithm tracks "lanes" — each lane holds the hash of a commit it is
-/// waiting for. When that commit appears, the lane either continues (first parent
-/// takes over) or closes. Merge parents open new lanes to the right.
 pub fn compute_graph(commits: &[(String, Vec<String>)]) -> Vec<GraphRow> {
     // `lanes[i]` = Some(hash) means lane i is an open line waiting for `hash`.
     let mut lanes: Vec<Option<String>> = Vec::new();
@@ -62,7 +66,7 @@ pub fn compute_graph(commits: &[(String, Vec<String>)]) -> Vec<GraphRow> {
         let commit_col = if let Some(col) = lanes.iter().position(|l| l.as_deref() == Some(hash)) {
             col
         } else {
-            // No lane waiting for us — find an empty slot or append.
+            // No lane waiting — find an empty slot or append.
             if let Some(empty) = lanes.iter().position(|l| l.is_none()) {
                 empty
             } else {
@@ -71,8 +75,7 @@ pub fn compute_graph(commits: &[(String, Vec<String>)]) -> Vec<GraphRow> {
             }
         };
 
-        // 2. Collect all lanes pointing to this commit (there can be multiple
-        //    if several branches converge here). Close them all.
+        // 2. Collect all lanes pointing to this commit. Close them all.
         let mut closing: Vec<usize> = Vec::new();
         for (i, lane) in lanes.iter().enumerate() {
             if lane.as_deref() == Some(hash) {
@@ -92,19 +95,12 @@ pub fn compute_graph(commits: &[(String, Vec<String>)]) -> Vec<GraphRow> {
             lanes[commit_col] = Some(fp.clone());
         }
 
-        // For closing lanes that aren't the commit_col, re-assign them to the
-        // first parent so the line visually merges into the commit's lane.
-        // (They were already cleared above — the first parent inherits the
-        // commit_col lane, so closing lanes simply disappear.)
-
         // Merge parents get new lanes.
         let mut merge_cols: Vec<usize> = Vec::new();
         for mp in merge_parents {
-            // Check if any existing lane already tracks this parent.
             if let Some(existing) = lanes.iter().position(|l| l.as_deref() == Some(mp.as_str())) {
                 merge_cols.push(existing);
             } else {
-                // Allocate new lane.
                 let col = if let Some(empty) = lanes.iter().position(|l| l.is_none()) {
                     lanes[empty] = Some(mp.clone());
                     empty
@@ -120,7 +116,7 @@ pub fn compute_graph(commits: &[(String, Vec<String>)]) -> Vec<GraphRow> {
         let width = lanes.len().max(commit_col + 1);
         let mut cells = vec![GraphCell::Empty; width];
 
-        // Draw vertical pipes for all active lanes (except commit_col which gets a node).
+        // Draw vertical pipes for all active lanes except commit_col.
         for (i, lane) in lanes.iter().enumerate() {
             if lane.is_some() && i != commit_col {
                 cells[i] = GraphCell::Pipe;
@@ -139,6 +135,40 @@ pub fn compute_graph(commits: &[(String, Vec<String>)]) -> Vec<GraphRow> {
                     }
                 }
                 cells[mc] = GraphCell::MergeRight;
+            } else if mc < commit_col {
+                for c in (mc + 1)..commit_col {
+                    if cells[c] == GraphCell::Empty {
+                        cells[c] = GraphCell::Horizontal;
+                    }
+                }
+                cells[mc] = GraphCell::MergeLeft;
+            }
+        }
+
+        // Draw converging lines for closing columns (branches merging in).
+        for &cc in &closing {
+            if cc != commit_col {
+                if cc > commit_col {
+                    // Closing col is to the RIGHT — pipe bends left toward commit: ┛
+                    for c in (commit_col + 1)..cc {
+                        if cells[c] == GraphCell::Empty {
+                            cells[c] = GraphCell::Horizontal;
+                        }
+                    }
+                    if cells[cc] == GraphCell::Empty {
+                        cells[cc] = GraphCell::ConvergeFromRight;
+                    }
+                } else if cc < commit_col {
+                    // Closing col is to the LEFT — pipe bends right toward commit: ┗
+                    for c in (cc + 1)..commit_col {
+                        if cells[c] == GraphCell::Empty {
+                            cells[c] = GraphCell::Horizontal;
+                        }
+                    }
+                    if cells[cc] == GraphCell::Empty {
+                        cells[cc] = GraphCell::ConvergeFromLeft;
+                    }
+                }
             }
         }
 
@@ -158,29 +188,61 @@ pub fn compute_graph(commits: &[(String, Vec<String>)]) -> Vec<GraphRow> {
     rows
 }
 
-/// Render a GraphRow into a Vec<Span> for display.
+/// Render a GraphRow into Spans. Each cell is 2 chars wide (glyph + space)
+/// to match lazygit's spacing.
 pub fn render_graph_spans(row: &GraphRow, max_width: usize) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
 
     for (i, cell) in row.cells.iter().enumerate() {
         let (ch, style) = match cell {
-            GraphCell::Node => ("●", Style::default().fg(col_color(row.commit_col))),
-            GraphCell::Pipe => ("│", Style::default().fg(col_color(i))),
-            GraphCell::MergeRight => ("╮", Style::default().fg(col_color(i))),
-            GraphCell::Horizontal => ("─", Style::default().fg(col_color(row.commit_col))),
+            GraphCell::Node => {
+                let color = col_color(row.commit_col);
+                ("◯", Style::default().fg(color))
+            }
+            GraphCell::Pipe => {
+                let color = col_color(i);
+                ("┃", Style::default().fg(color))
+            }
+            GraphCell::MergeRight => {
+                let color = col_color(i);
+                ("╮", Style::default().fg(color))
+            }
+            GraphCell::ConvergeFromRight => {
+                // Pipe from above bends left: ╯
+                let color = col_color(i);
+                ("╯", Style::default().fg(color))
+            }
+            GraphCell::ConvergeFromLeft => {
+                // Pipe from above bends right: ╰
+                let color = col_color(i);
+                ("╰", Style::default().fg(color))
+            }
+            GraphCell::MergeLeft => {
+                let color = col_color(i);
+                ("╯", Style::default().fg(color))
+            }
+            GraphCell::Horizontal => {
+                let color = col_color(row.commit_col);
+                ("━", Style::default().fg(color))
+            }
             GraphCell::Empty => (" ", Style::default()),
         };
+
         spans.push(Span::styled(ch.to_string(), style));
+        // Each column is 2 chars wide: glyph + connector/space.
+        if matches!(cell, GraphCell::Horizontal) {
+            spans.push(Span::styled("━".to_string(), style));
+        } else {
+            spans.push(Span::raw(" "));
+        }
     }
 
     // Pad to max_width so commit info aligns across rows.
-    let current = row.cells.len();
-    if current < max_width {
-        spans.push(Span::raw(" ".repeat(max_width - current)));
+    let current_cells = row.cells.len();
+    if current_cells < max_width {
+        let pad = (max_width - current_cells) * 2;
+        spans.push(Span::raw(" ".repeat(pad)));
     }
-
-    // Separator.
-    spans.push(Span::raw(" "));
 
     spans
 }

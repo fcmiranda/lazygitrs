@@ -25,31 +25,26 @@ pub fn render_commit_list<'a>(model: &Model, theme: &Theme) -> Vec<ListItem<'a>>
         .iter()
         .enumerate()
         .map(|(i, commit)| {
-            let status_color = match commit.status {
-                CommitStatus::Unpushed => Color::Green,
-                CommitStatus::Pushed => Color::Yellow,
-                CommitStatus::Merged => Color::Cyan,
-                CommitStatus::Rebasing => Color::Magenta,
-                CommitStatus::Conflicted => Color::Red,
-                _ => Color::Yellow,
-            };
+            let graph_row = graph_rows.get(i);
 
             // Start with graph spans.
-            let mut spans: Vec<Span<'a>> = if let Some(row) = graph_rows.get(i) {
+            let mut spans: Vec<Span<'a>> = if let Some(row) = graph_row {
                 graph::render_graph_spans(row, max_graph_width)
             } else {
-                vec![Span::raw(" ".repeat(max_graph_width + 1))]
+                vec![Span::raw(" ".repeat(max_graph_width * 2))]
             };
 
             // Hash
             spans.push(Span::styled(
                 format!("{} ", commit.short_hash()),
-                Style::default().fg(status_color),
+                Style::default().fg(Color::Yellow),
             ));
 
             // Ref decorations (HEAD -> main, origin/main, etc.)
             for r in &commit.refs {
                 let (label, color) = if r.starts_with("HEAD -> ") {
+                    (r.clone(), Color::Cyan)
+                } else if r == "HEAD" {
                     (r.clone(), Color::Cyan)
                 } else if r.contains('/') {
                     // Remote ref like origin/main
@@ -74,7 +69,7 @@ pub fn render_commit_list<'a>(model: &Model, theme: &Theme) -> Vec<ListItem<'a>>
             for tag in &commit.tags {
                 spans.push(Span::styled(
                     format!(" [{}]", tag),
-                    Style::default().fg(Color::Cyan),
+                    Style::default().fg(Color::Yellow),
                 ));
             }
 
