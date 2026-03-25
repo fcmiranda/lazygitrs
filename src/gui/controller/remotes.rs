@@ -32,8 +32,11 @@ fn fetch_remote(gui: &mut Gui) -> Result<()> {
         let name = remote.name.clone();
         drop(model);
 
-        gui.git.fetch(&name)?;
-        gui.needs_refresh = true;
+        let msg = format!("Fetching {}...", name);
+        gui.start_remote_op("Fetch", &msg, move |git| {
+            git.fetch(&name)?;
+            Ok(())
+        });
     }
     Ok(())
 }
@@ -51,8 +54,11 @@ fn show_push_menu(gui: &mut Gui) -> Result<()> {
                 description: format!("Push {} to origin", branch),
                 key: Some("p".to_string()),
                 action: Some(Box::new(move |gui| {
-                    gui.git.push(false)?;
-                    gui.needs_refresh = true;
+                    let msg = format!("Pushing {} to origin...", b1);
+                    gui.start_remote_op("Push", &msg, |git| {
+                        git.push(false)?;
+                        Ok(())
+                    });
                     Ok(())
                 })),
             },
@@ -61,18 +67,23 @@ fn show_push_menu(gui: &mut Gui) -> Result<()> {
                 description: "Force push with safety check".to_string(),
                 key: Some("f".to_string()),
                 action: Some(Box::new(move |gui| {
-                    gui.git.push(true)?;
-                    gui.needs_refresh = true;
+                    gui.start_remote_op("Push", "Force pushing (with lease)...", |git| {
+                        git.push(true)?;
+                        Ok(())
+                    });
                     Ok(())
                 })),
             },
             MenuItem {
                 label: "Push and set upstream".to_string(),
-                description: format!("Push -u origin {}", b1),
+                description: format!("Push -u origin {}", b2),
                 key: Some("u".to_string()),
                 action: Some(Box::new(move |gui| {
-                    gui.git.push_with_upstream("origin", &b2)?;
-                    gui.needs_refresh = true;
+                    let branch = b2.clone();
+                    gui.start_remote_op("Push", &format!("Pushing -u origin {}...", branch), move |git| {
+                        git.push_with_upstream("origin", &branch)?;
+                        Ok(())
+                    });
                     Ok(())
                 })),
             },
@@ -91,8 +102,10 @@ fn show_pull_menu(gui: &mut Gui) -> Result<()> {
                 description: "Pull from upstream".to_string(),
                 key: Some("p".to_string()),
                 action: Some(Box::new(move |gui| {
-                    gui.git.pull()?;
-                    gui.needs_refresh = true;
+                    gui.start_remote_op("Pull", "Pulling from upstream...", |git| {
+                        git.pull()?;
+                        Ok(())
+                    });
                     Ok(())
                 })),
             },
@@ -101,8 +114,10 @@ fn show_pull_menu(gui: &mut Gui) -> Result<()> {
                 description: "Fetch from all remotes".to_string(),
                 key: Some("f".to_string()),
                 action: Some(Box::new(move |gui| {
-                    gui.git.fetch_all()?;
-                    gui.needs_refresh = true;
+                    gui.start_remote_op("Fetch", "Fetching from all remotes...", |git| {
+                        git.fetch_all()?;
+                        Ok(())
+                    });
                     Ok(())
                 })),
             },

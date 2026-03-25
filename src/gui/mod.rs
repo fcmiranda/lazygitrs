@@ -92,6 +92,10 @@ pub struct Gui {
     ai_commit_rx: mpsc::Receiver<Result<String>>,
     /// Sender cloned into background threads for AI commit generation.
     ai_commit_tx: mpsc::Sender<Result<String>>,
+    /// Receiver for background remote operations (push, pull, fetch).
+    remote_op_rx: mpsc::Receiver<Result<()>>,
+    /// Sender cloned into background threads for remote operations.
+    remote_op_tx: mpsc::Sender<Result<()>>,
     /// Undo stack: stores reflog hashes for undo/redo.
     undo_reflog_idx: usize,
     /// Patch building mode state.
@@ -118,6 +122,7 @@ impl Gui {
         let model = git.load_model()?;
         let (diff_tx, diff_rx) = mpsc::channel();
         let (ai_commit_tx, ai_commit_rx) = mpsc::channel();
+        let (remote_op_tx, remote_op_rx) = mpsc::channel();
         let show_file_tree = config.user_config.gui.show_file_tree;
         let show_command_log_default = config.user_config.gui.show_command_log;
         let command_log = crate::os::cmd::new_command_log();
@@ -151,6 +156,8 @@ impl Gui {
             diff_tx,
             ai_commit_rx,
             ai_commit_tx,
+            remote_op_rx,
+            remote_op_tx,
             undo_reflog_idx: 0,
             patch_building: PatchBuildingState::new(),
             pending_commit_popup: None,
@@ -185,6 +192,9 @@ impl Gui {
 
             // Check for AI commit message generation results
             self.receive_ai_commit_results();
+
+            // Check for completed background remote operations
+            self.receive_remote_op_results();
 
             // Render
             terminal.draw(|frame| {
@@ -339,6 +349,42 @@ impl Gui {
                 }
             }
         }
+    }
+
+    /// Check for completed background remote operations (push, pull, fetch).
+    fn receive_remote_op_results(&mut self) {
+        if let Ok(result) = self.remote_op_rx.try_recv() {
+            match result {
+                Ok(()) => {
+                    self.popup = PopupState::None;
+                    self.needs_refresh = true;
+                }
+                Err(e) => {
+                    self.popup = PopupState::Confirm {
+                        title: "Error".to_string(),
+                        message: format!("{}", e),
+                        on_confirm: Box::new(|_| Ok(())),
+                    };
+                }
+            }
+        }
+    }
+
+    /// Run a remote operation (push/pull/fetch) on a background thread with a loading popup.
+    pub fn start_remote_op<F>(&mut self, title: &str, message: &str, op: F)
+    where
+        F: FnOnce(&GitCommands) -> Result<()> + Send + 'static,
+    {
+        self.popup = PopupState::Loading {
+            title: title.to_string(),
+            message: message.to_string(),
+        };
+        let git = Arc::clone(&self.git);
+        let tx = self.remote_op_tx.clone();
+        std::thread::spawn(move || {
+            let result = op(&git);
+            let _ = tx.send(result);
+        });
     }
 
     /// Start AI commit message generation on a background thread.
