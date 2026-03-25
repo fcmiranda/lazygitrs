@@ -147,6 +147,8 @@ pub fn render(
             }
         }
         render_status_bar(frame, fl.status_bar, ctx_mgr, diff_view, &theme);
+        // Render text selection highlight overlay and tooltip (must be before popup)
+        render_selection_overlay(frame, diff_view, fl.main_panel);
         if *popup != PopupState::None {
             render_popup(frame, popup, area);
         }

@@ -195,6 +195,11 @@ impl Gui {
         }
         let mut terminal = setup_terminal()?;
 
+        // Sync layout dimensions with actual terminal size so mouse handling
+        // uses the correct geometry from the very first frame.
+        let size = terminal.size()?;
+        self.layout.update_size(size.width, size.height);
+
         let result = self.main_loop(&mut terminal);
 
         restore_terminal(&mut terminal)?;
@@ -1936,7 +1941,12 @@ impl Gui {
                     && main_panel.y <= mouse.row
                     && mouse.row < main_panel.y + main_panel.height;
 
-                if in_main && !self.diff_view.is_empty() {
+                // In Full screen mode, the main_panel covers everything.
+                // If the sidebar is focused (not diff_focused), clicks should
+                // go to the sidebar handler, not start a diff selection.
+                let full_sidebar = self.screen_mode == ScreenMode::Full && !self.diff_focused;
+
+                if in_main && !self.diff_view.is_empty() && !full_sidebar {
                     if let Some(panel) = pl.panel_at_x(mouse.column) {
                         self.diff_view.selection = Some(TextSelection {
                             panel,
@@ -2018,6 +2028,34 @@ impl Gui {
             active_panel_index,
             self.screen_mode,
         );
+
+        // In Full screen mode with sidebar focused, the sidebar is rendered
+        // in main_panel — treat clicks there as sidebar item selection.
+        if self.screen_mode == ScreenMode::Full && !self.diff_focused {
+            let panel_rect = fl.main_panel;
+            if panel_rect.x <= col
+                && col < panel_rect.x + panel_rect.width
+                && panel_rect.y <= row
+                && row < panel_rect.y + panel_rect.height
+            {
+                let inner_y = row.saturating_sub(panel_rect.y + 1);
+                let selected = self.context_mgr.selected_active();
+                let model = self.model.lock().unwrap();
+                let list_len = self.context_mgr.list_len(&model);
+                drop(model);
+                let visible_height = panel_rect.height.saturating_sub(2) as usize;
+                let scroll_offset = if selected >= visible_height {
+                    selected - visible_height + 1
+                } else {
+                    0
+                };
+                let clicked_idx = scroll_offset + inner_y as usize;
+                if clicked_idx < list_len {
+                    self.context_mgr.set_selection(clicked_idx);
+                }
+            }
+            return;
+        }
 
         // Check if click is in the main (diff) panel
         if fl.main_panel.x <= col
