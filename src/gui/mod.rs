@@ -2102,7 +2102,7 @@ impl Gui {
     }
 
     fn handle_mouse(&mut self, mouse: MouseEvent) {
-        use crossterm::event::{MouseButton, MouseEventKind};
+        use crossterm::event::{KeyModifiers, MouseButton, MouseEventKind};
 
         if !self.config.user_config.gui.mouse_events {
             return;
@@ -2201,7 +2201,10 @@ impl Gui {
             }
             MouseEventKind::ScrollUp => {
                 self.diff_view.selection = None;
-                if self.diff_focused || self.is_in_main_panel(mouse.column) {
+                let in_diff = self.diff_focused || self.is_in_main_panel(mouse.column);
+                if mouse.modifiers.contains(KeyModifiers::SHIFT) && in_diff {
+                    self.diff_view.scroll_left(4);
+                } else if in_diff {
                     self.diff_view.scroll_up(3);
                 } else {
                     let model = self.model.lock().unwrap();
@@ -2210,7 +2213,10 @@ impl Gui {
             }
             MouseEventKind::ScrollDown => {
                 self.diff_view.selection = None;
-                if self.diff_focused || self.is_in_main_panel(mouse.column) {
+                let in_diff = self.diff_focused || self.is_in_main_panel(mouse.column);
+                if mouse.modifiers.contains(KeyModifiers::SHIFT) && in_diff {
+                    self.diff_view.scroll_right(4);
+                } else if in_diff {
                     self.diff_view.scroll_down(3);
                 } else {
                     let model = self.model.lock().unwrap();
