@@ -7,6 +7,11 @@ use crate::gui::popup::{PopupState, make_textarea};
 use crate::gui::Gui;
 
 pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) -> Result<()> {
+    // Enter: view branch commits
+    if key.code == KeyCode::Enter {
+        return enter_branch_commits(gui);
+    }
+
     // Checkout with space
     if key.code == KeyCode::Char(' ') {
         return checkout_branch(gui);
@@ -40,6 +45,30 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) 
         return set_upstream(gui);
     }
 
+    Ok(())
+}
+
+fn enter_branch_commits(gui: &mut Gui) -> Result<()> {
+    let selected = gui.context_mgr.selected_active();
+    let model = gui.model.lock().unwrap();
+    if let Some(branch) = model.branches.get(selected) {
+        let name = branch.name.clone();
+        drop(model);
+
+        // Load commits for this branch
+        let commits = gui.git.load_commits_for_branch(&name, 300)?;
+        {
+            let mut model = gui.model.lock().unwrap();
+            model.sub_commits = commits;
+        }
+        gui.branch_commits_name = name;
+
+        // Switch to BranchCommits context
+        gui.context_mgr
+            .set_active(crate::gui::context::ContextId::BranchCommits);
+        gui.context_mgr.set_selection(0);
+        gui.needs_diff_refresh = true;
+    }
     Ok(())
 }
 

@@ -14,6 +14,8 @@ pub enum ContextId {
     Stash,
     CommitFiles,
     StashFiles,
+    BranchCommits,
+    BranchCommitFiles,
     Staging,
 }
 
@@ -63,7 +65,7 @@ impl SideWindow {
         match ctx {
             ContextId::Status => SideWindow::Status,
             ContextId::Files | ContextId::Worktrees | ContextId::Submodules => SideWindow::Files,
-            ContextId::Branches | ContextId::Remotes | ContextId::Tags => SideWindow::Branches,
+            ContextId::Branches | ContextId::Remotes | ContextId::Tags | ContextId::BranchCommits | ContextId::BranchCommitFiles => SideWindow::Branches,
             ContextId::Commits | ContextId::CommitFiles => SideWindow::Commits,
             ContextId::Stash | ContextId::StashFiles => SideWindow::Stash,
             ContextId::Staging => SideWindow::Files,
@@ -97,6 +99,8 @@ impl ContextId {
             Self::Stash => "Stash",
             Self::CommitFiles => "Commit Files",
             Self::StashFiles => "Stash Files",
+            Self::BranchCommits => "Branch Commits",
+            Self::BranchCommitFiles => "Branch Commit Files",
             Self::Staging => "Staging",
         }
     }
@@ -128,9 +132,11 @@ impl ContextManager {
             }
         }
 
-        // CommitFiles and StashFiles are dynamic contexts, initialize their selections
+        // Dynamic sub-contexts, initialize their selections
         selections.insert(ContextId::CommitFiles, 0);
         selections.insert(ContextId::StashFiles, 0);
+        selections.insert(ContextId::BranchCommits, 0);
+        selections.insert(ContextId::BranchCommitFiles, 0);
 
         Self {
             active: ContextId::Files,
@@ -274,7 +280,8 @@ impl ContextManager {
             ContextId::Remotes => model.remotes.len(),
             ContextId::Tags => model.tags.len(),
             ContextId::Worktrees => model.worktrees.len(),
-            ContextId::CommitFiles | ContextId::StashFiles => self.commit_files_list_len_override.unwrap_or(model.commit_files.len()),
+            ContextId::CommitFiles | ContextId::StashFiles | ContextId::BranchCommitFiles => self.commit_files_list_len_override.unwrap_or(model.commit_files.len()),
+            ContextId::BranchCommits => model.sub_commits.len(),
             _ => 0,
         }
     }

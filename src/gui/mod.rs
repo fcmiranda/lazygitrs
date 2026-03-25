@@ -118,6 +118,8 @@ pub struct Gui {
     pub commit_files_collapsed_dirs: HashSet<String>,
     /// Whether to show tree view for commit files (mirrors show_file_tree).
     pub show_commit_file_tree: bool,
+    /// Name of the branch whose commits are being viewed in BranchCommits context.
+    pub branch_commits_name: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -179,6 +181,7 @@ impl Gui {
             commit_file_tree_nodes: Vec::new(),
             commit_files_collapsed_dirs: HashSet::new(),
             show_commit_file_tree: show_file_tree,
+            branch_commits_name: String::new(),
         })
     }
 
@@ -247,6 +250,7 @@ impl Gui {
                     &self.commit_files_collapsed_dirs,
                     &self.commit_files_hash,
                     &self.commit_files_message,
+                    &self.branch_commits_name,
                 );
             })?;
 
@@ -542,8 +546,38 @@ impl Gui {
                     drop(model);
                 }
             }
-            ContextId::CommitFiles | ContextId::StashFiles => {
-                // CommitFiles/StashFiles: load diff for the selected file within the commit/stash
+            ContextId::BranchCommits => {
+                // BranchCommits: load commit diff for the selected commit
+                if let Some(commit) = model.sub_commits.get(selected) {
+                    let hash = commit.hash.clone();
+                    drop(model);
+
+                    let git = Arc::clone(&self.git);
+                    let tx = self.diff_tx.clone();
+                    let gen_counter = Arc::clone(&self.diff_generation);
+
+                    std::thread::spawn(move || {
+                        if gen_counter.load(Ordering::Relaxed) != generation {
+                            return;
+                        }
+                        let payload = if let Ok(diff) = git.diff_commit(&hash) {
+                            let filename = format!("commit:{}", &hash[..7.min(hash.len())]);
+                            DiffPayload::UnifiedDiff { filename, diff_output: diff }
+                        } else {
+                            DiffPayload::Empty
+                        };
+                        let _ = tx.send(DiffResult {
+                            generation,
+                            diff_key,
+                            payload,
+                        });
+                    });
+                } else {
+                    drop(model);
+                }
+            }
+            ContextId::CommitFiles | ContextId::StashFiles | ContextId::BranchCommitFiles => {
+                // CommitFiles/StashFiles/BranchCommitFiles: load diff for the selected file within the commit/stash
                 let file_idx = if self.show_commit_file_tree {
                     self.commit_file_tree_nodes.get(selected).and_then(|n| n.file_index)
                 } else {
@@ -631,6 +665,17 @@ impl Gui {
                     && window == SideWindow::Stash
                 {
                     self.context_mgr.set_active(ContextId::Stash);
+                    return Ok(());
+                }
+                if (self.context_mgr.active() == ContextId::BranchCommits
+                    || self.context_mgr.active() == ContextId::BranchCommitFiles)
+                    && window == SideWindow::Branches
+                {
+                    if self.context_mgr.active() == ContextId::BranchCommitFiles {
+                        self.context_mgr.set_active(ContextId::BranchCommits);
+                    } else {
+                        self.context_mgr.set_active(ContextId::Branches);
+                    }
                     return Ok(());
                 }
                 self.context_mgr.jump_to_window(window);
@@ -851,8 +896,11 @@ impl Gui {
             ContextId::Submodules => {
                 controller::submodules::handle_key(self, key, &keybindings)?;
             }
-            ContextId::CommitFiles | ContextId::StashFiles => {
+            ContextId::CommitFiles | ContextId::StashFiles | ContextId::BranchCommitFiles => {
                 controller::commit_files::handle_key(self, key, &keybindings)?;
+            }
+            ContextId::BranchCommits => {
+                controller::branch_commits::handle_key(self, key, &keybindings)?;
             }
             _ => {}
         }
@@ -1516,7 +1564,7 @@ impl Gui {
                     }
                 }
             }
-            ContextId::CommitFiles | ContextId::StashFiles => {
+            ContextId::CommitFiles | ContextId::StashFiles | ContextId::BranchCommitFiles => {
                 if self.show_commit_file_tree {
                     for (i, node) in self.commit_file_tree_nodes.iter().enumerate() {
                         if node.path.to_lowercase().contains(&query)
@@ -1530,6 +1578,16 @@ impl Gui {
                         if file.name.to_lowercase().contains(&query) {
                             self.search_matches.push(i);
                         }
+                    }
+                }
+            }
+            ContextId::BranchCommits => {
+                for (i, commit) in model.sub_commits.iter().enumerate() {
+                    if commit.name.to_lowercase().contains(&query)
+                        || commit.hash.to_lowercase().contains(&query)
+                        || commit.author_name.to_lowercase().contains(&query)
+                    {
+                        self.search_matches.push(i);
                     }
                 }
             }
@@ -1689,9 +1747,20 @@ impl Gui {
             self.context_mgr.files_list_len_override = None;
         }
 
+        // If we're viewing branch commits, re-load them (refresh wipes the model)
+        if (self.context_mgr.active() == ContextId::BranchCommits
+            || self.context_mgr.active() == ContextId::BranchCommitFiles)
+            && !self.branch_commits_name.is_empty()
+        {
+            if let Ok(commits) = self.git.load_commits_for_branch(&self.branch_commits_name, 300) {
+                model.sub_commits = commits;
+            }
+        }
+
         // If we're viewing commit/stash files, re-load them (refresh wipes the model)
         if (self.context_mgr.active() == ContextId::CommitFiles
-            || self.context_mgr.active() == ContextId::StashFiles)
+            || self.context_mgr.active() == ContextId::StashFiles
+            || self.context_mgr.active() == ContextId::BranchCommitFiles)
             && !self.commit_files_hash.is_empty()
         {
             if let Ok(cf) = self.git.commit_files(&self.commit_files_hash) {
@@ -1743,6 +1812,12 @@ impl Gui {
         }
         if self.context_mgr.active() == ContextId::StashFiles {
             self.context_mgr.set_active(ContextId::Stash);
+        }
+        if self.context_mgr.active() == ContextId::BranchCommitFiles {
+            self.context_mgr.set_active(ContextId::BranchCommits);
+        }
+        if self.context_mgr.active() == ContextId::BranchCommits {
+            self.context_mgr.set_active(ContextId::Branches);
         }
     }
 

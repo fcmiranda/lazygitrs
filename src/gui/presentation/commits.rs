@@ -3,14 +3,20 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::ListItem;
 
 use crate::config::Theme;
-use crate::model::{CommitStatus, Model};
+use crate::model::Model;
+use crate::model::commit::Commit;
 
 use super::graph;
 
-pub fn render_commit_list<'a>(model: &Model, theme: &Theme) -> Vec<ListItem<'a>> {
-    let commits = &model.commits;
-    let head_hash = &model.head_hash;
+pub fn render_sub_commit_list<'a>(model: &Model, theme: &Theme) -> Vec<ListItem<'a>> {
+    render_commits(&model.sub_commits, &model.head_hash, theme)
+}
 
+pub fn render_commit_list<'a>(model: &Model, theme: &Theme) -> Vec<ListItem<'a>> {
+    render_commits(&model.commits, &model.head_hash, theme)
+}
+
+fn render_commits<'a>(commits: &[Commit], head_hash: &str, theme: &Theme) -> Vec<ListItem<'a>> {
     // Build graph data from commits.
     let graph_input: Vec<(String, Vec<String>)> = commits
         .iter()

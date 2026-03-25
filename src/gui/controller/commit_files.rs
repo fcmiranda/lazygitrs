@@ -9,10 +9,10 @@ use crate::gui::Gui;
 pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) -> Result<()> {
     // Escape: go back to parent list (Commits or Stash)
     if key.code == KeyCode::Esc {
-        let parent = if gui.context_mgr.active() == ContextId::StashFiles {
-            ContextId::Stash
-        } else {
-            ContextId::Commits
+        let parent = match gui.context_mgr.active() {
+            ContextId::StashFiles => ContextId::Stash,
+            ContextId::BranchCommitFiles => ContextId::BranchCommits,
+            _ => ContextId::Commits,
         };
         gui.context_mgr.set_active(parent);
         gui.commit_file_tree_nodes.clear();

@@ -40,6 +40,7 @@ pub fn render(
     commit_files_collapsed_dirs: &HashSet<String>,
     commit_files_hash: &str,
     commit_files_message: &str,
+    branch_commits_name: &str,
 ) {
     let area = frame.area();
     let theme = config.user_config.theme();
@@ -72,8 +73,10 @@ pub fn render(
             // Sidebar is focused: show active sidebar panel fullscreen
             let ctx_id = ctx_mgr.active();
             let selected = ctx_mgr.selected(ctx_id);
-            let title = if ctx_id == ContextId::CommitFiles || ctx_id == ContextId::StashFiles {
+            let title = if ctx_id == ContextId::CommitFiles || ctx_id == ContextId::StashFiles || ctx_id == ContextId::BranchCommitFiles {
                 build_commit_files_title(ctx_id, commit_files_hash, commit_files_message)
+            } else if ctx_id == ContextId::BranchCommits {
+                build_branch_commits_title(branch_commits_name)
             } else if ctx_id == ContextId::Commits && !commit_branch_filter.is_empty() {
                 let filter_label = commit_branch_filter.join(", ");
                 Line::from(vec![
@@ -124,7 +127,11 @@ pub fn render(
                     let items = presentation::stash::render_stash_list(model, &theme);
                     render_list(frame, fl.main_panel, block, items, selected, true, &theme);
                 }
-                ContextId::CommitFiles | ContextId::StashFiles => {
+                ContextId::BranchCommits => {
+                    let items = presentation::commits::render_sub_commit_list(model, &theme);
+                    render_list(frame, fl.main_panel, block, items, selected, true, &theme);
+                }
+                ContextId::CommitFiles | ContextId::StashFiles | ContextId::BranchCommitFiles => {
                     if show_commit_file_tree {
                         let items = presentation::commit_files::render_commit_file_tree(model, &theme, commit_file_tree_nodes, commit_files_collapsed_dirs);
                         render_list(frame, fl.main_panel, block, items, selected, true, &theme);
@@ -206,8 +213,34 @@ pub fn render(
                 frame.render_widget(widget, rect);
             }
             ContextId::Branches => {
-                let items = presentation::branches::render_branch_list(model, &theme);
-                render_list(frame, rect, block, items, selected, is_active, &theme);
+                // If BranchCommits or BranchCommitFiles is active, render that instead
+                if ctx_mgr.active() == ContextId::BranchCommitFiles {
+                    let cf_selected = ctx_mgr.selected(ContextId::BranchCommitFiles);
+                    let cf_title = build_commit_files_title(ContextId::BranchCommitFiles, commit_files_hash, commit_files_message);
+                    let cf_block = Block::default()
+                        .title(cf_title)
+                        .borders(Borders::ALL)
+                        .border_style(border_style);
+                    if show_commit_file_tree {
+                        let items = presentation::commit_files::render_commit_file_tree(model, &theme, commit_file_tree_nodes, commit_files_collapsed_dirs);
+                        render_list(frame, rect, cf_block, items, cf_selected, is_active, &theme);
+                    } else {
+                        let items = presentation::commit_files::render_commit_file_list(model, &theme);
+                        render_list(frame, rect, cf_block, items, cf_selected, is_active, &theme);
+                    }
+                } else if ctx_mgr.active() == ContextId::BranchCommits {
+                    let bc_selected = ctx_mgr.selected(ContextId::BranchCommits);
+                    let bc_title = build_branch_commits_title(branch_commits_name);
+                    let bc_block = Block::default()
+                        .title(bc_title)
+                        .borders(Borders::ALL)
+                        .border_style(border_style);
+                    let items = presentation::commits::render_sub_commit_list(model, &theme);
+                    render_list(frame, rect, bc_block, items, bc_selected, is_active, &theme);
+                } else {
+                    let items = presentation::branches::render_branch_list(model, &theme);
+                    render_list(frame, rect, block, items, selected, is_active, &theme);
+                }
             }
             ContextId::Remotes => {
                 let items = presentation::remotes::render_remote_list(model, &theme);
@@ -366,12 +399,23 @@ pub fn render(
 }
 
 /// Build a window title like " 4 Commit Files (abc1234 feat: some change) ".
+fn build_branch_commits_title<'a>(branch_name: &str) -> Line<'a> {
+    Line::from(vec![
+        Span::raw(" 3 Commits "),
+        Span::styled(
+            format!("({})", branch_name),
+            Style::default().fg(Color::Yellow),
+        ),
+        Span::raw(" "),
+    ])
+}
+
 fn build_commit_files_title<'a>(ctx: ContextId, commit_hash: &str, commit_message: &str) -> Line<'a> {
     let short = if commit_hash.len() > 7 { &commit_hash[..7] } else { commit_hash };
-    let prefix = if ctx == ContextId::StashFiles {
-        " 5 Stash Files "
-    } else {
-        " 4 Commit Files "
+    let prefix = match ctx {
+        ContextId::StashFiles => " 5 Stash Files ",
+        ContextId::BranchCommitFiles => " 3 Commit Files ",
+        _ => " 4 Commit Files ",
     };
     let mut spans = vec![
         Span::raw(prefix),

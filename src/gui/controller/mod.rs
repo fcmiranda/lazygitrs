@@ -1,4 +1,5 @@
 pub mod bisect;
+pub mod branch_commits;
 pub mod branches;
 pub mod commit_files;
 pub mod commits;
