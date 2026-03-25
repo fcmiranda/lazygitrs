@@ -901,7 +901,7 @@ fn render_popup(frame: &mut Frame, popup: &PopupState, area: Rect) {
                 .enumerate()
                 .map(|(i, item)| {
                     let disabled = item.action.is_none();
-                    let mut style = if i == *selected && !disabled {
+                    let style = if i == *selected && !disabled {
                         Style::default()
                             .bg(Color::DarkGray)
                             .add_modifier(Modifier::BOLD)
@@ -1046,6 +1046,162 @@ fn render_popup(frame: &mut Frame, popup: &PopupState, area: Rect) {
                 let hint = Line::from(hint_spans);
                 frame.render_widget(Paragraph::new(hint), hint_area);
             }
+        }
+        PopupState::Help { sections, selected, search, scroll_offset } => {
+            // Collect all visible entries (filtered by search) as flat list with section headers
+            let search_lower = search.to_lowercase();
+            let has_search = !search_lower.is_empty();
+
+            // Build flat display list: (is_header, key, description, is_match)
+            let mut display: Vec<(bool, String, String)> = Vec::new();
+            for section in sections {
+                let visible_entries: Vec<&super::popup::HelpEntry> = if has_search {
+                    section.entries.iter().filter(|e| {
+                        e.key.to_lowercase().contains(&search_lower)
+                            || e.description.to_lowercase().contains(&search_lower)
+                    }).collect()
+                } else {
+                    section.entries.iter().collect()
+                };
+
+                if !visible_entries.is_empty() {
+                    display.push((true, section.title.clone(), String::new()));
+                    for entry in visible_entries {
+                        display.push((false, entry.key.clone(), entry.description.clone()));
+                    }
+                }
+            }
+
+            // Sizing: use more of the screen for help
+            let popup_width = (area.width * 70 / 100).min(72).max(36);
+            let content_height = display.len().max(1);
+            // search bar (1) + separator (1) + content + hint (1) + borders (2)
+            let popup_height = (content_height as u16 + 5).min(area.height.saturating_sub(4)).max(10);
+            let x = (area.width.saturating_sub(popup_width)) / 2;
+            let y = (area.height.saturating_sub(popup_height)) / 2;
+            let popup_rect = Rect::new(x, y, popup_width, popup_height);
+            frame.render_widget(Clear, popup_rect);
+
+            let block = Block::default()
+                .title(" Keybindings ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan));
+            frame.render_widget(block, popup_rect);
+
+            let inner = popup_rect.inner(ratatui::layout::Margin { horizontal: 1, vertical: 1 });
+            if inner.height < 3 {
+                return;
+            }
+
+            // Search bar row
+            let search_area = Rect::new(inner.x, inner.y, inner.width, 1);
+            let search_display = if search.is_empty() {
+                Line::from(vec![
+                    Span::styled("  ", Style::default().fg(Color::DarkGray)),
+                    Span::styled("Type to filter...", Style::default().fg(Color::DarkGray)),
+                ])
+            } else {
+                Line::from(vec![
+                    Span::styled("  ", Style::default().fg(Color::Yellow)),
+                    Span::styled(search.clone(), Style::default().fg(Color::Yellow)),
+                    Span::styled("▏", Style::default().fg(Color::Yellow)),
+                ])
+            };
+            frame.render_widget(Paragraph::new(search_display), search_area);
+
+            // Separator
+            let sep_area = Rect::new(inner.x, inner.y + 1, inner.width, 1);
+            let sep = "─".repeat(inner.width as usize);
+            frame.render_widget(
+                Paragraph::new(Span::styled(sep, Style::default().fg(Color::DarkGray))),
+                sep_area,
+            );
+
+            // Content area
+            let list_start = inner.y + 2;
+            let list_height = inner.height.saturating_sub(3) as usize; // search + sep + hint
+            let list_area = Rect::new(inner.x, list_start, inner.width, list_height as u16);
+
+            // Use the stored scroll_offset, clamped to valid range
+            let max_scroll = display.len().saturating_sub(list_height);
+            let so = *scroll_offset;
+            let effective_scroll = if so > max_scroll { max_scroll } else { so };
+
+            let visible_display: Vec<&(bool, String, String)> = display.iter()
+                .skip(effective_scroll)
+                .take(list_height)
+                .collect();
+
+            // Count non-header entries before scroll offset to track selection
+            let mut entry_idx = 0usize;
+            for (is_header, _, _) in display.iter().take(effective_scroll) {
+                if !is_header {
+                    entry_idx += 1;
+                }
+            }
+
+            let key_col_width = 14usize;
+
+            let mut list_items: Vec<ListItem> = Vec::new();
+            for (is_header, key_or_title, desc) in visible_display {
+                if *is_header {
+                    let line = Line::from(vec![
+                        Span::styled(
+                            format!(" {} ", key_or_title),
+                            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                        ),
+                    ]);
+                    list_items.push(ListItem::new(line));
+                } else {
+                    let is_selected = entry_idx == *selected;
+                    entry_idx += 1;
+
+                    let key_display = format!("  {:>width$}", key_or_title, width = key_col_width);
+                    let desc_display = format!("  {}", desc);
+
+                    let key_style = if is_selected {
+                        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
+                    } else if has_search && key_or_title.to_lowercase().contains(&search_lower) {
+                        Style::default().fg(Color::Yellow)
+                    } else {
+                        Style::default().fg(Color::Green)
+                    };
+
+                    let desc_style = if is_selected {
+                        Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                    } else if has_search && desc.to_lowercase().contains(&search_lower) {
+                        Style::default().fg(Color::White)
+                    } else {
+                        Style::default().fg(Color::Gray)
+                    };
+
+                    let line = Line::from(vec![
+                        Span::styled(key_display, key_style),
+                        Span::styled(desc_display, desc_style),
+                    ]);
+
+                    if is_selected {
+                        list_items.push(ListItem::new(line).style(Style::default().bg(Color::DarkGray)));
+                    } else {
+                        list_items.push(ListItem::new(line));
+                    }
+                }
+            }
+
+            let list = List::new(list_items);
+            frame.render_widget(list, list_area);
+
+            // Hint bar at bottom
+            let hint_area = Rect::new(inner.x, inner.y + inner.height - 1, inner.width, 1);
+            let hint = Line::from(vec![
+                Span::styled(" j/k", Style::default().fg(Color::Yellow)),
+                Span::styled(": navigate  ", Style::default().fg(Color::DarkGray)),
+                Span::styled("type", Style::default().fg(Color::Yellow)),
+                Span::styled(": search  ", Style::default().fg(Color::DarkGray)),
+                Span::styled("esc", Style::default().fg(Color::Yellow)),
+                Span::styled(": close", Style::default().fg(Color::DarkGray)),
+            ]);
+            frame.render_widget(Paragraph::new(hint), hint_area);
         }
         PopupState::None => {}
     }

@@ -28,6 +28,7 @@ use crate::pager::side_by_side::DiffViewState;
 
 use self::context::{ContextId, ContextManager, SideWindow};
 use self::layout::LayoutState;
+use self::popup::{HelpEntry, HelpSection};
 use self::modes::patch_building::PatchBuildingState;
 use self::popup::PopupState;
 
@@ -822,6 +823,12 @@ impl Gui {
             }
         }
 
+        // Help popup (?)
+        if key.code == KeyCode::Char('?') {
+            self.show_help();
+            return Ok(());
+        }
+
         // Start search
         if matches_key(key, &keybindings.universal.start_search) {
             self.search_active = true;
@@ -1164,9 +1171,243 @@ impl Gui {
             PopupState::Loading { .. } => {
                 // Block all input while loading — user must wait
             }
+            PopupState::Help { .. } => {}
             PopupState::None => {}
         }
+
+        // Help popup is handled separately to avoid borrow conflicts
+        if matches!(self.popup, PopupState::Help { .. }) {
+            self.handle_help_popup_key(key);
+        }
+
         Ok(())
+    }
+
+    fn handle_help_popup_key(&mut self, key: KeyEvent) {
+        // Helper: compute display index for a given entry selection
+        fn find_display_idx(sections: &[HelpSection], sel: usize, search_lower: &str) -> usize {
+            let has_search = !search_lower.is_empty();
+            let mut ei = 0usize;
+            let mut di = 0usize;
+            for section in sections {
+                let mut section_has_visible = false;
+                for entry in &section.entries {
+                    let matches = !has_search
+                        || entry.key.to_lowercase().contains(search_lower)
+                        || entry.description.to_lowercase().contains(search_lower);
+                    if matches {
+                        if !section_has_visible {
+                            section_has_visible = true;
+                            di += 1; // header row
+                        }
+                        if ei == sel {
+                            return di;
+                        }
+                        ei += 1;
+                        di += 1;
+                    }
+                }
+            }
+            di
+        }
+
+        fn count_visible(sections: &[HelpSection], search_lower: &str) -> usize {
+            let has_search = !search_lower.is_empty();
+            sections.iter().map(|s| {
+                if has_search {
+                    s.entries.iter().filter(|e| {
+                        e.key.to_lowercase().contains(search_lower)
+                            || e.description.to_lowercase().contains(search_lower)
+                    }).count()
+                } else {
+                    s.entries.len()
+                }
+            }).sum()
+        }
+
+        if let PopupState::Help { sections, selected, search, scroll_offset } = &mut self.popup {
+            let search_lower = search.to_lowercase();
+
+            // Estimate list viewport height from terminal
+            let popup_height = (self.layout.height as usize).saturating_sub(4).min(50);
+            let list_height = popup_height.saturating_sub(5); // borders + search + sep + hint
+
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('?') => {
+                    self.popup = PopupState::None;
+                    return;
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    let total = count_visible(sections, &search_lower);
+                    if total > 0 {
+                        *selected = (*selected + 1).min(total.saturating_sub(1));
+                    }
+                    let sdi = find_display_idx(sections, *selected, &search_lower);
+                    if sdi >= *scroll_offset + list_height {
+                        *scroll_offset = sdi.saturating_sub(list_height - 1);
+                    }
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    *selected = selected.saturating_sub(1);
+                    if *selected == 0 {
+                        // First item: always scroll to top so the section header is visible
+                        *scroll_offset = 0;
+                    } else {
+                        let sdi = find_display_idx(sections, *selected, &search_lower);
+                        if sdi <= *scroll_offset {
+                            // Scroll up to show the section header too when possible
+                            *scroll_offset = sdi.saturating_sub(1);
+                        }
+                    }
+                }
+                KeyCode::Backspace => {
+                    search.pop();
+                    *selected = 0;
+                    *scroll_offset = 0;
+                }
+                KeyCode::Char(c) => {
+                    search.push(c);
+                    *selected = 0;
+                    *scroll_offset = 0;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn show_help(&mut self) {
+        let kb = &self.config.user_config.keybinding;
+        let active = self.context_mgr.active();
+
+        // Universal keybindings
+        let universal = HelpSection {
+            title: "Universal".into(),
+            entries: vec![
+                HelpEntry { key: kb.universal.quit.clone(), description: "Quit".into() },
+                HelpEntry { key: kb.universal.quit_alt1.clone(), description: "Quit (alt)".into() },
+                HelpEntry { key: kb.universal.return_key.clone(), description: "Return / Cancel".into() },
+                HelpEntry { key: kb.universal.toggle_panel.clone(), description: "Next panel".into() },
+                HelpEntry { key: kb.universal.prev_item.clone(), description: "Previous item".into() },
+                HelpEntry { key: kb.universal.next_item.clone(), description: "Next item".into() },
+                HelpEntry { key: kb.universal.prev_page.clone(), description: "Page up".into() },
+                HelpEntry { key: kb.universal.next_page.clone(), description: "Page down".into() },
+                HelpEntry { key: kb.universal.goto_top.clone(), description: "Go to top".into() },
+                HelpEntry { key: kb.universal.goto_bottom.clone(), description: "Go to bottom".into() },
+                HelpEntry { key: kb.universal.prev_block.clone(), description: "Previous panel".into() },
+                HelpEntry { key: kb.universal.next_block.clone(), description: "Next panel".into() },
+                HelpEntry { key: kb.universal.start_search.clone(), description: "Search".into() },
+                HelpEntry { key: kb.universal.next_match.clone(), description: "Next search match".into() },
+                HelpEntry { key: kb.universal.prev_match.clone(), description: "Previous search match".into() },
+                HelpEntry { key: kb.universal.scroll_up_main_alt1.clone(), description: "Scroll diff up".into() },
+                HelpEntry { key: kb.universal.scroll_down_main_alt1.clone(), description: "Scroll diff down".into() },
+                HelpEntry { key: kb.universal.scroll_left.clone(), description: "Scroll left".into() },
+                HelpEntry { key: kb.universal.scroll_right.clone(), description: "Scroll right".into() },
+                HelpEntry { key: kb.universal.edit.clone(), description: "Edit file".into() },
+                HelpEntry { key: kb.universal.open_file.clone(), description: "Open file".into() },
+                HelpEntry { key: kb.universal.undo.clone(), description: "Undo".into() },
+                HelpEntry { key: kb.universal.redo.clone(), description: "Redo".into() },
+                HelpEntry { key: kb.universal.refresh.clone(), description: "Refresh".into() },
+                HelpEntry { key: kb.universal.push_files.clone(), description: "Push".into() },
+                HelpEntry { key: kb.universal.pull_files.clone(), description: "Pull".into() },
+                HelpEntry { key: kb.universal.next_screen_mode.clone(), description: "Enlarge panel".into() },
+                HelpEntry { key: kb.universal.prev_screen_mode.clone(), description: "Shrink panel".into() },
+                HelpEntry { key: kb.universal.create_rebase_options_menu.clone(), description: "Rebase options".into() },
+                HelpEntry { key: kb.universal.create_patch_options_menu.clone(), description: "Patch options".into() },
+                HelpEntry { key: "{/}".into(), description: "Previous/next hunk".into() },
+                HelpEntry { key: "1-5".into(), description: "Jump to panel".into() },
+                HelpEntry { key: "?".into(), description: "Show this help".into() },
+            ],
+        };
+
+        // Context-specific keybindings
+        let context_section = match active {
+            ContextId::Files | ContextId::Worktrees | ContextId::Submodules => HelpSection {
+                title: "Files".into(),
+                entries: vec![
+                    HelpEntry { key: "<enter>".into(), description: "Toggle dir / Focus diff".into() },
+                    HelpEntry { key: "<space>".into(), description: "Stage / Unstage".into() },
+                    HelpEntry { key: kb.files.commit_changes.clone(), description: "Commit".into() },
+                    HelpEntry { key: kb.files.amend_last_commit.clone(), description: "Amend last commit".into() },
+                    HelpEntry { key: kb.files.commit_changes_with_editor.clone(), description: "Commit with editor".into() },
+                    HelpEntry { key: kb.files.toggle_staged_all.clone(), description: "Toggle stage all".into() },
+                    HelpEntry { key: kb.files.stash_all_changes.clone(), description: "Stash changes".into() },
+                    HelpEntry { key: kb.files.view_stash_options.clone(), description: "Stash options".into() },
+                    HelpEntry { key: kb.files.toggle_tree_view.clone(), description: "Toggle tree view".into() },
+                    HelpEntry { key: kb.files.fetch.clone(), description: "Fetch".into() },
+                    HelpEntry { key: kb.files.ignore_file.clone(), description: "Ignore file".into() },
+                    HelpEntry { key: "d".into(), description: "Discard changes".into() },
+                ],
+            },
+            ContextId::Branches | ContextId::BranchCommits | ContextId::BranchCommitFiles => HelpSection {
+                title: "Branches".into(),
+                entries: vec![
+                    HelpEntry { key: "<enter>".into(), description: "View branch commits".into() },
+                    HelpEntry { key: "<space>".into(), description: "Checkout branch".into() },
+                    HelpEntry { key: "n".into(), description: "New branch".into() },
+                    HelpEntry { key: "d".into(), description: "Delete branch".into() },
+                    HelpEntry { key: kb.branches.merge_into_current_branch.clone(), description: "Merge into current".into() },
+                    HelpEntry { key: kb.branches.rebase_branch.clone(), description: "Rebase".into() },
+                    HelpEntry { key: kb.branches.rename_branch.clone(), description: "Rename branch".into() },
+                    HelpEntry { key: kb.branches.fast_forward.clone(), description: "Fast-forward".into() },
+                    HelpEntry { key: kb.branches.set_upstream.clone(), description: "Set upstream".into() },
+                ],
+            },
+            ContextId::Commits | ContextId::CommitFiles => HelpSection {
+                title: "Commits".into(),
+                entries: vec![
+                    HelpEntry { key: "<enter>".into(), description: "View commit files".into() },
+                    HelpEntry { key: kb.commits.squash_down.clone(), description: "Squash down".into() },
+                    HelpEntry { key: kb.commits.rename_commit.clone(), description: "Reword commit".into() },
+                    HelpEntry { key: kb.commits.view_reset_options.clone(), description: "Reset options".into() },
+                    HelpEntry { key: kb.commits.mark_commit_as_fixup.clone(), description: "Fixup commit".into() },
+                    HelpEntry { key: kb.commits.create_fixup_commit.clone(), description: "Create fixup commit".into() },
+                    HelpEntry { key: kb.commits.squash_above_commits.clone(), description: "Squash above commits".into() },
+                    HelpEntry { key: kb.commits.move_up_commit.clone(), description: "Move commit up".into() },
+                    HelpEntry { key: kb.commits.move_down_commit.clone(), description: "Move commit down".into() },
+                    HelpEntry { key: kb.commits.amend_to_commit.clone(), description: "Amend to commit".into() },
+                    HelpEntry { key: kb.commits.pick_commit.clone(), description: "Pick / Drop commit".into() },
+                    HelpEntry { key: kb.commits.revert_commit.clone(), description: "Revert commit".into() },
+                    HelpEntry { key: kb.commits.cherry_pick_copy.clone(), description: "Cherry-pick copy".into() },
+                    HelpEntry { key: kb.commits.paste_commits.clone(), description: "Paste commits".into() },
+                    HelpEntry { key: kb.commits.tag_commit.clone(), description: "Tag commit".into() },
+                    HelpEntry { key: kb.commits.checkout_commit.clone(), description: "Checkout commit".into() },
+                    HelpEntry { key: kb.commits.view_bisect_options.clone(), description: "Bisect options".into() },
+                ],
+            },
+            ContextId::Stash | ContextId::StashFiles => HelpSection {
+                title: "Stash".into(),
+                entries: vec![
+                    HelpEntry { key: "<enter>".into(), description: "View stash files".into() },
+                    HelpEntry { key: "<space>".into(), description: "Apply stash".into() },
+                    HelpEntry { key: kb.stash.pop_stash.clone(), description: "Pop stash".into() },
+                    HelpEntry { key: kb.stash.rename_stash.clone(), description: "Rename stash".into() },
+                    HelpEntry { key: "d".into(), description: "Drop stash".into() },
+                ],
+            },
+            ContextId::Status => HelpSection {
+                title: "Status".into(),
+                entries: vec![
+                    HelpEntry { key: "<enter>".into(), description: "Recent repos".into() },
+                    HelpEntry { key: kb.status.all_branches_log_graph.clone(), description: "All branches log".into() },
+                ],
+            },
+            _ => HelpSection {
+                title: "Navigation".into(),
+                entries: vec![
+                    HelpEntry { key: "<enter>".into(), description: "Select / Open".into() },
+                    HelpEntry { key: "<space>".into(), description: "Toggle / Confirm".into() },
+                ],
+            },
+        };
+
+        let sections = vec![context_section, universal];
+
+        self.popup = PopupState::Help {
+            sections,
+            selected: 0,
+            search: String::new(),
+            scroll_offset: 0,
+        };
     }
 
     fn show_rebase_options_menu(
@@ -1628,6 +1869,38 @@ impl Gui {
         use crossterm::event::{MouseButton, MouseEventKind};
 
         if !self.config.user_config.gui.mouse_events {
+            return;
+        }
+
+        // Help popup intercepts mouse scroll
+        if let PopupState::Help { sections, scroll_offset, search, .. } = &mut self.popup {
+            // Compute total display rows so we can clamp scroll
+            let search_lower = search.to_lowercase();
+            let has_search = !search_lower.is_empty();
+            let total_rows: usize = sections.iter().map(|s| {
+                let visible = if has_search {
+                    s.entries.iter().filter(|e| {
+                        e.key.to_lowercase().contains(&search_lower)
+                            || e.description.to_lowercase().contains(&search_lower)
+                    }).count()
+                } else {
+                    s.entries.len()
+                };
+                if visible > 0 { visible + 1 } else { 0 } // +1 for header
+            }).sum();
+
+            match mouse.kind {
+                MouseEventKind::ScrollUp => {
+                    *scroll_offset = scroll_offset.saturating_sub(3);
+                }
+                MouseEventKind::ScrollDown => {
+                    *scroll_offset = (*scroll_offset + 3).min(total_rows.saturating_sub(1));
+                }
+                MouseEventKind::Down(MouseButton::Left) => {
+                    // Clicking outside could close, but for now just ignore clicks
+                }
+                _ => {}
+            }
             return;
         }
 

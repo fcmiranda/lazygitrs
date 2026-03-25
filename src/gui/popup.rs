@@ -40,6 +40,13 @@ pub enum PopupState {
         search: String,
         on_confirm: ChecklistAction,
     },
+    /// Keybinding help overlay with integrated search.
+    Help {
+        sections: Vec<HelpSection>,
+        selected: usize,
+        search: String,
+        scroll_offset: usize,
+    },
 }
 
 pub type ChecklistAction = Box<dyn FnOnce(&mut Gui, Vec<String>) -> Result<()>>;
@@ -73,4 +80,14 @@ pub struct MenuItem {
     pub description: String,
     pub key: Option<String>,
     pub action: Option<MenuAction>,
+}
+
+pub struct HelpSection {
+    pub title: String,
+    pub entries: Vec<HelpEntry>,
+}
+
+pub struct HelpEntry {
+    pub key: String,
+    pub description: String,
 }
