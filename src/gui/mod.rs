@@ -542,8 +542,8 @@ impl Gui {
                     drop(model);
                 }
             }
-            ContextId::CommitFiles => {
-                // CommitFiles: load diff for the selected file within the commit
+            ContextId::CommitFiles | ContextId::StashFiles => {
+                // CommitFiles/StashFiles: load diff for the selected file within the commit/stash
                 let file_idx = if self.show_commit_file_tree {
                     self.commit_file_tree_nodes.get(selected).and_then(|n| n.file_index)
                 } else {
@@ -625,6 +625,12 @@ impl Gui {
                     && window == SideWindow::Commits
                 {
                     self.context_mgr.set_active(ContextId::Commits);
+                    return Ok(());
+                }
+                if self.context_mgr.active() == ContextId::StashFiles
+                    && window == SideWindow::Stash
+                {
+                    self.context_mgr.set_active(ContextId::Stash);
                     return Ok(());
                 }
                 self.context_mgr.jump_to_window(window);
@@ -845,7 +851,7 @@ impl Gui {
             ContextId::Submodules => {
                 controller::submodules::handle_key(self, key, &keybindings)?;
             }
-            ContextId::CommitFiles => {
+            ContextId::CommitFiles | ContextId::StashFiles => {
                 controller::commit_files::handle_key(self, key, &keybindings)?;
             }
             _ => {}
@@ -1510,7 +1516,7 @@ impl Gui {
                     }
                 }
             }
-            ContextId::CommitFiles => {
+            ContextId::CommitFiles | ContextId::StashFiles => {
                 if self.show_commit_file_tree {
                     for (i, node) in self.commit_file_tree_nodes.iter().enumerate() {
                         if node.path.to_lowercase().contains(&query)
@@ -1683,8 +1689,11 @@ impl Gui {
             self.context_mgr.files_list_len_override = None;
         }
 
-        // If we're viewing commit files, re-load them (refresh wipes the model)
-        if self.context_mgr.active() == ContextId::CommitFiles && !self.commit_files_hash.is_empty() {
+        // If we're viewing commit/stash files, re-load them (refresh wipes the model)
+        if (self.context_mgr.active() == ContextId::CommitFiles
+            || self.context_mgr.active() == ContextId::StashFiles)
+            && !self.commit_files_hash.is_empty()
+        {
             if let Ok(cf) = self.git.commit_files(&self.commit_files_hash) {
                 model.commit_files = cf;
             }
@@ -1731,6 +1740,9 @@ impl Gui {
     fn exit_sub_contexts(&mut self) {
         if self.context_mgr.active() == ContextId::CommitFiles {
             self.context_mgr.set_active(ContextId::Commits);
+        }
+        if self.context_mgr.active() == ContextId::StashFiles {
+            self.context_mgr.set_active(ContextId::Stash);
         }
     }
 

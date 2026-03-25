@@ -72,8 +72,8 @@ pub fn render(
             // Sidebar is focused: show active sidebar panel fullscreen
             let ctx_id = ctx_mgr.active();
             let selected = ctx_mgr.selected(ctx_id);
-            let title = if ctx_id == ContextId::CommitFiles {
-                build_commit_files_title(commit_files_hash, commit_files_message)
+            let title = if ctx_id == ContextId::CommitFiles || ctx_id == ContextId::StashFiles {
+                build_commit_files_title(ctx_id, commit_files_hash, commit_files_message)
             } else if ctx_id == ContextId::Commits && !commit_branch_filter.is_empty() {
                 let filter_label = commit_branch_filter.join(", ");
                 Line::from(vec![
@@ -124,7 +124,7 @@ pub fn render(
                     let items = presentation::stash::render_stash_list(model, &theme);
                     render_list(frame, fl.main_panel, block, items, selected, true, &theme);
                 }
-                ContextId::CommitFiles => {
+                ContextId::CommitFiles | ContextId::StashFiles => {
                     if show_commit_file_tree {
                         let items = presentation::commit_files::render_commit_file_tree(model, &theme, commit_file_tree_nodes, commit_files_collapsed_dirs);
                         render_list(frame, fl.main_panel, block, items, selected, true, &theme);
@@ -221,7 +221,7 @@ pub fn render(
                 // If CommitFiles is active within this window, render that instead
                 if ctx_mgr.active() == ContextId::CommitFiles {
                     let cf_selected = ctx_mgr.selected(ContextId::CommitFiles);
-                    let cf_title = build_commit_files_title(commit_files_hash, commit_files_message);
+                    let cf_title = build_commit_files_title(ContextId::CommitFiles, commit_files_hash, commit_files_message);
                     let cf_block = Block::default()
                         .title(cf_title)
                         .borders(Borders::ALL)
@@ -239,8 +239,25 @@ pub fn render(
                 }
             }
             ContextId::Stash => {
-                let items = presentation::stash::render_stash_list(model, &theme);
-                render_list(frame, rect, block, items, selected, is_active, &theme);
+                // If StashFiles is active within this window, render that instead
+                if ctx_mgr.active() == ContextId::StashFiles {
+                    let sf_selected = ctx_mgr.selected(ContextId::StashFiles);
+                    let sf_title = build_commit_files_title(ContextId::StashFiles, commit_files_hash, commit_files_message);
+                    let sf_block = Block::default()
+                        .title(sf_title)
+                        .borders(Borders::ALL)
+                        .border_style(border_style);
+                    if show_commit_file_tree {
+                        let items = presentation::commit_files::render_commit_file_tree(model, &theme, commit_file_tree_nodes, commit_files_collapsed_dirs);
+                        render_list(frame, rect, sf_block, items, sf_selected, is_active, &theme);
+                    } else {
+                        let items = presentation::commit_files::render_commit_file_list(model, &theme);
+                        render_list(frame, rect, sf_block, items, sf_selected, is_active, &theme);
+                    }
+                } else {
+                    let items = presentation::stash::render_stash_list(model, &theme);
+                    render_list(frame, rect, block, items, selected, is_active, &theme);
+                }
             }
             _ => {
                 let widget = Paragraph::new("").block(block);
@@ -349,10 +366,15 @@ pub fn render(
 }
 
 /// Build a window title like " 4 Commit Files (abc1234 feat: some change) ".
-fn build_commit_files_title<'a>(commit_hash: &str, commit_message: &str) -> Line<'a> {
+fn build_commit_files_title<'a>(ctx: ContextId, commit_hash: &str, commit_message: &str) -> Line<'a> {
     let short = if commit_hash.len() > 7 { &commit_hash[..7] } else { commit_hash };
+    let prefix = if ctx == ContextId::StashFiles {
+        " 5 Stash Files "
+    } else {
+        " 4 Commit Files "
+    };
     let mut spans = vec![
-        Span::raw(" 4 Commit Files "),
+        Span::raw(prefix),
         Span::styled(
             format!("({}", short),
             Style::default().fg(Color::Yellow),

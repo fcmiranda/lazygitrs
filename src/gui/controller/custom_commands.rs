@@ -160,6 +160,7 @@ fn context_id_to_name(ctx: ContextId) -> &'static str {
         ContextId::Worktrees => "worktrees",
         ContextId::Submodules => "submodules",
         ContextId::CommitFiles => "commitFiles",
+        ContextId::StashFiles => "stashFiles",
         ContextId::Staging => "staging",
     }
 }

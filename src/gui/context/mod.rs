@@ -13,6 +13,7 @@ pub enum ContextId {
     Commits,
     Stash,
     CommitFiles,
+    StashFiles,
     Staging,
 }
 
@@ -64,7 +65,7 @@ impl SideWindow {
             ContextId::Files | ContextId::Worktrees | ContextId::Submodules => SideWindow::Files,
             ContextId::Branches | ContextId::Remotes | ContextId::Tags => SideWindow::Branches,
             ContextId::Commits | ContextId::CommitFiles => SideWindow::Commits,
-            ContextId::Stash => SideWindow::Stash,
+            ContextId::Stash | ContextId::StashFiles => SideWindow::Stash,
             ContextId::Staging => SideWindow::Files,
         }
     }
@@ -95,6 +96,7 @@ impl ContextId {
             Self::Commits => "Commits",
             Self::Stash => "Stash",
             Self::CommitFiles => "Commit Files",
+            Self::StashFiles => "Stash Files",
             Self::Staging => "Staging",
         }
     }
@@ -126,8 +128,9 @@ impl ContextManager {
             }
         }
 
-        // CommitFiles is a dynamic context, initialize its selection
+        // CommitFiles and StashFiles are dynamic contexts, initialize their selections
         selections.insert(ContextId::CommitFiles, 0);
+        selections.insert(ContextId::StashFiles, 0);
 
         Self {
             active: ContextId::Files,
@@ -271,7 +274,7 @@ impl ContextManager {
             ContextId::Remotes => model.remotes.len(),
             ContextId::Tags => model.tags.len(),
             ContextId::Worktrees => model.worktrees.len(),
-            ContextId::CommitFiles => self.commit_files_list_len_override.unwrap_or(model.commit_files.len()),
+            ContextId::CommitFiles | ContextId::StashFiles => self.commit_files_list_len_override.unwrap_or(model.commit_files.len()),
             _ => 0,
         }
     }

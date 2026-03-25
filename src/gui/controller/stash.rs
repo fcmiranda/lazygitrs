@@ -7,6 +7,11 @@ use crate::gui::popup::{MenuItem, PopupState, make_textarea};
 use crate::gui::Gui;
 
 pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) -> Result<()> {
+    // Enter: view stash files
+    if key.code == KeyCode::Enter {
+        return enter_stash_files(gui);
+    }
+
     // Pop stash
     if matches_key(key, &keybindings.stash.pop_stash) {
         return pop_stash(gui);
@@ -27,6 +32,46 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) 
         return rename_stash(gui);
     }
 
+    Ok(())
+}
+
+fn enter_stash_files(gui: &mut Gui) -> Result<()> {
+    let selected = gui.context_mgr.selected_active();
+    let model = gui.model.lock().unwrap();
+    if let Some(entry) = model.stash_entries.get(selected) {
+        let hash = entry.hash.clone();
+        let message = entry.name.clone();
+        drop(model);
+
+        // Load stash files (stashes are merge commits internally)
+        let commit_files = gui.git.commit_files(&hash)?;
+        {
+            let mut model = gui.model.lock().unwrap();
+            model.commit_files = commit_files;
+        }
+        gui.commit_files_hash = hash;
+        gui.commit_files_message = message;
+
+        // Build file tree if tree view is enabled
+        if gui.show_commit_file_tree {
+            let model = gui.model.lock().unwrap();
+            gui.commit_file_tree_nodes = crate::model::file_tree::build_commit_file_tree(
+                &model.commit_files,
+                &gui.commit_files_collapsed_dirs,
+            );
+            gui.context_mgr.commit_files_list_len_override =
+                Some(gui.commit_file_tree_nodes.len());
+        } else {
+            gui.commit_file_tree_nodes.clear();
+            gui.context_mgr.commit_files_list_len_override = None;
+        }
+
+        // Switch to StashFiles context
+        gui.context_mgr
+            .set_active(crate::gui::context::ContextId::StashFiles);
+        gui.context_mgr.set_selection(0);
+        gui.needs_diff_refresh = true;
+    }
     Ok(())
 }
 

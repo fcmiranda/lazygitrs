@@ -7,9 +7,14 @@ use crate::gui::context::ContextId;
 use crate::gui::Gui;
 
 pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) -> Result<()> {
-    // Escape: go back to commits list
+    // Escape: go back to parent list (Commits or Stash)
     if key.code == KeyCode::Esc {
-        gui.context_mgr.set_active(ContextId::Commits);
+        let parent = if gui.context_mgr.active() == ContextId::StashFiles {
+            ContextId::Stash
+        } else {
+            ContextId::Commits
+        };
+        gui.context_mgr.set_active(parent);
         gui.commit_file_tree_nodes.clear();
         gui.commit_files_hash.clear();
         gui.needs_diff_refresh = true;

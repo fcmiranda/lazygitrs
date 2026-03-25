@@ -15,10 +15,10 @@ This is mostly a "for me" tool — built for my own workflow. Not saying you sho
 
 ### Planned
 
-- [ ] commits pane overhaul
-  - [ ] Better graph view (enabled by default)
-  - [ ] Filter by branch
-  - [ ] Filter by commit message (handy if you prefix with ticket IDs)
+- [x] commits pane overhaul
+  - [x] Better graph view (enabled by default)
+  - [x] Filter by branch
+  - [x] Filter by commit message (handy if you prefix with ticket IDs)
 - [ ] Command palette (OpenCode-style) — still figuring this one out
 
 ### Get started
