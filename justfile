@@ -20,3 +20,7 @@ tag_and_release:
 
 sync_readme:
     cp README.md npm/README.md
+
+gen-benchmarks:
+    bun scripts/gen-benchmarks.ts
+    just sync_readme

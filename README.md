@@ -46,6 +46,28 @@ lazygitrs
 - [x] **Branch Filtering** — better experience in the Commits tab, compare what actually matters.
 - [ ] **Future: Built-in compare tool** — Again, inspired by lumen, but more built into the TUI. Pick a commit/branch A and a commit/branch B, then see how they differ.
 
+<!-- GEN_BENCHMARKS_START -->
+
+### Benchmarks
+
+Startup benchmark using [hyperfine](https://github.com/sharkdp/hyperfine):
+
+```sh
+Benchmark 1: lazygitrs --version
+  Time (mean ± σ):       4.2 ms ±   1.3 ms    [User: 1.2 ms, System: 0.9 ms]
+  Range (min … max):     2.7 ms …  15.4 ms    830 runs
+
+Benchmark 2: lazygit --version
+  Time (mean ± σ):      13.5 ms ±   2.5 ms    [User: 6.4 ms, System: 5.2 ms]
+  Range (min … max):    10.2 ms …  21.2 ms    224 runs
+
+Summary
+  lazygitrs --version ran
+    3.24 ± 1.16 times faster than lazygit --version
+```
+
+<!-- GEN_BENCHMARKS_END -->
+
 MIT
 
 Feel free to fork and give it your own spin.
