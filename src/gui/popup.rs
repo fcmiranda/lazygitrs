@@ -32,6 +32,21 @@ pub enum PopupState {
         title: String,
         message: String,
     },
+    /// Multi-select checklist with search filter.
+    Checklist {
+        title: String,
+        items: Vec<ChecklistItem>,
+        selected: usize,
+        search: String,
+        on_confirm: ChecklistAction,
+    },
+}
+
+pub type ChecklistAction = Box<dyn FnOnce(&mut Gui, Vec<String>) -> Result<()>>;
+
+pub struct ChecklistItem {
+    pub label: String,
+    pub checked: bool,
 }
 
 impl PartialEq for PopupState {

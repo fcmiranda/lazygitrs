@@ -521,56 +521,36 @@ fn copy_to_clipboard_menu(gui: &mut Gui) -> Result<()> {
 }
 
 fn show_branch_filter_menu(gui: &mut Gui) -> Result<()> {
+    use crate::gui::popup::ChecklistItem;
+
     let model = gui.model.lock().unwrap();
     let branches: Vec<String> = model.branches.iter().map(|b| b.name.clone()).collect();
     drop(model);
 
-    let mut items = Vec::new();
+    let current_filter = &gui.commit_branch_filter;
 
-    // Option to clear filter / show all
-    let has_filter = gui.commit_branch_filter.is_some();
-    let label = if let Some(ref f) = gui.commit_branch_filter {
-        format!("Show all commits (clear filter: {})", f)
-    } else {
-        "Show all commits (no filter active)".to_string()
-    };
+    let items: Vec<ChecklistItem> = branches
+        .into_iter()
+        .map(|name| {
+            let checked = current_filter.contains(&name);
+            ChecklistItem {
+                label: name,
+                checked,
+            }
+        })
+        .collect();
 
-    items.push(MenuItem {
-        label,
-        description: String::new(),
-        key: Some("a".to_string()),
-        action: if has_filter {
-            Some(Box::new(|gui: &mut Gui| {
-                gui.commit_branch_filter = None;
-                gui.needs_refresh = true;
-                gui.context_mgr.set_selection(0);
-                Ok(())
-            }) as Box<dyn Fn(&mut Gui) -> Result<()>>)
-        } else {
-            Some(Box::new(|_: &mut Gui| Ok(())))
-        },
-    });
-
-    // One entry per branch
-    for branch in branches {
-        let branch_clone = branch.clone();
-        items.push(MenuItem {
-            label: branch,
-            description: String::new(),
-            key: None,
-            action: Some(Box::new(move |gui: &mut Gui| {
-                gui.commit_branch_filter = Some(branch_clone.clone());
-                gui.needs_refresh = true;
-                gui.context_mgr.set_selection(0);
-                Ok(())
-            })),
-        });
-    }
-
-    gui.popup = PopupState::Menu {
+    gui.popup = PopupState::Checklist {
         title: "Filter commits by branch".to_string(),
         items,
         selected: 0,
+        search: String::new(),
+        on_confirm: Box::new(|gui: &mut Gui, checked: Vec<String>| {
+            gui.commit_branch_filter = checked;
+            gui.needs_refresh = true;
+            gui.context_mgr.set_selection(0);
+            Ok(())
+        }),
     };
 
     Ok(())

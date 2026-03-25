@@ -34,7 +34,7 @@ pub fn render(
     search_textarea: Option<&tui_textarea::TextArea<'_>>,
     command_log: &[String],
     show_command_log: bool,
-    commit_branch_filter: Option<&str>,
+    commit_branch_filter: &[String],
 ) {
     let area = frame.area();
     let theme = config.user_config.theme();
@@ -67,18 +67,15 @@ pub fn render(
             // Sidebar is focused: show active sidebar panel fullscreen
             let ctx_id = ctx_mgr.active();
             let selected = ctx_mgr.selected(ctx_id);
-            let title = if ctx_id == ContextId::Commits {
-                if let Some(branch) = commit_branch_filter {
-                    Line::from(vec![
-                        Span::raw(" 4 Commits "),
-                        Span::styled(
-                            format!("[filter: {}] ", branch),
-                            Style::default().fg(Color::Yellow),
-                        ),
-                    ])
-                } else {
-                    build_window_title(ctx_mgr.active_window(), ctx_id, ctx_mgr)
-                }
+            let title = if ctx_id == ContextId::Commits && !commit_branch_filter.is_empty() {
+                let filter_label = commit_branch_filter.join(", ");
+                Line::from(vec![
+                    Span::raw(" Commits "),
+                    Span::styled(
+                        format!("[filter: {}] ", filter_label),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                ])
             } else {
                 build_window_title(ctx_mgr.active_window(), ctx_id, ctx_mgr)
             };
@@ -150,18 +147,15 @@ pub fn render(
         };
 
         // Build title with tab indicators for multi-tab windows
-        let title = if *window == SideWindow::Commits {
-            if let Some(branch) = commit_branch_filter {
-                Line::from(vec![
-                    Span::raw(" 4 Commits "),
-                    Span::styled(
-                        format!("[filter: {}] ", branch),
-                        Style::default().fg(Color::Yellow),
-                    ),
-                ])
-            } else {
-                build_window_title(*window, ctx_id, ctx_mgr)
-            }
+        let title = if *window == SideWindow::Commits && !commit_branch_filter.is_empty() {
+            let filter_label = commit_branch_filter.join(", ");
+            Line::from(vec![
+                Span::raw(" Commits "),
+                Span::styled(
+                    format!("[filter: {}] ", filter_label),
+                    Style::default().fg(Color::Yellow),
+                ),
+            ])
         } else {
             build_window_title(*window, ctx_id, ctx_mgr)
         };
@@ -821,6 +815,105 @@ fn render_popup(frame: &mut Frame, popup: &PopupState, area: Rect) {
 
             let widget = Paragraph::new(text).block(block);
             frame.render_widget(widget, popup_rect);
+        }
+        PopupState::Checklist { title, items, selected, search, .. } => {
+            // Filter items by search query
+            let visible: Vec<(usize, &super::popup::ChecklistItem)> = items.iter().enumerate()
+                .filter(|(_, it)| search.is_empty() || it.label.to_lowercase().contains(&search.to_lowercase()))
+                .collect();
+
+            // Height: search bar (1) + blank (1) + items + blank (1) + hint (1) + borders (2)
+            let content_lines = visible.len().max(1);
+            let height = (content_lines as u16 + 6).min(area.height - 4).max(8);
+            let popup_rect = Rect::new(x, y, popup_width, height);
+            frame.render_widget(Clear, popup_rect);
+
+            let block = Block::default()
+                .title(format!(" {} ", title))
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(Color::Cyan));
+            frame.render_widget(block, popup_rect);
+
+            let inner = popup_rect.inner(ratatui::layout::Margin { horizontal: 1, vertical: 1 });
+            if inner.height < 3 {
+                // Too small, skip
+            } else {
+                // Search bar row
+                let search_area = Rect::new(inner.x, inner.y, inner.width, 1);
+                let search_display = if search.is_empty() {
+                    Line::from(Span::styled(
+                        " Type to filter...",
+                        Style::default().fg(Color::DarkGray),
+                    ))
+                } else {
+                    Line::from(vec![
+                        Span::styled(" ", Style::default().fg(Color::Yellow)),
+                        Span::styled(search.clone(), Style::default().fg(Color::Yellow)),
+                        Span::styled("▏", Style::default().fg(Color::Yellow)),
+                    ])
+                };
+                frame.render_widget(Paragraph::new(search_display), search_area);
+
+                // Separator line
+                let sep_area = Rect::new(inner.x, inner.y + 1, inner.width, 1);
+                let sep = "─".repeat(inner.width as usize);
+                frame.render_widget(
+                    Paragraph::new(Span::styled(sep, Style::default().fg(Color::DarkGray))),
+                    sep_area,
+                );
+
+                // Checklist items
+                let list_start = inner.y + 2;
+                let list_height = inner.height.saturating_sub(3); // search + sep + hint
+                let list_area = Rect::new(inner.x, list_start, inner.width, list_height);
+
+                let list_items: Vec<ListItem> = visible.iter().enumerate().map(|(vi, (_, item))| {
+                    let check_sym = if item.checked { "◉" } else { "○" };
+                    let check_color = if item.checked { Color::Green } else { Color::DarkGray };
+                    let is_selected = vi == *selected;
+
+                    let line = Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(check_sym, Style::default().fg(check_color)),
+                        Span::raw("  "),
+                        Span::styled(
+                            item.label.clone(),
+                            if is_selected {
+                                Style::default().fg(Color::White).add_modifier(Modifier::BOLD)
+                            } else {
+                                Style::default().fg(Color::White)
+                            },
+                        ),
+                    ]);
+
+                    if is_selected {
+                        ListItem::new(line).style(Style::default().bg(Color::DarkGray))
+                    } else {
+                        ListItem::new(line)
+                    }
+                }).collect();
+
+                let list = List::new(list_items);
+                frame.render_widget(list, list_area);
+
+                // Hint at bottom
+                let hint_area = Rect::new(inner.x, inner.y + inner.height - 1, inner.width, 1);
+                let any_checked = items.iter().any(|it| it.checked);
+                let mut hint_spans = vec![
+                    Span::styled(" space", Style::default().fg(Color::Yellow)),
+                    Span::styled(": toggle  ", Style::default().fg(Color::DarkGray)),
+                ];
+                if any_checked {
+                    hint_spans.push(Span::styled("ctrl-a", Style::default().fg(Color::Yellow)));
+                    hint_spans.push(Span::styled(": clear  ", Style::default().fg(Color::DarkGray)));
+                }
+                hint_spans.push(Span::styled("enter", Style::default().fg(Color::Yellow)));
+                hint_spans.push(Span::styled(": apply  ", Style::default().fg(Color::DarkGray)));
+                hint_spans.push(Span::styled("esc", Style::default().fg(Color::Yellow)));
+                hint_spans.push(Span::styled(": cancel", Style::default().fg(Color::DarkGray)));
+                let hint = Line::from(hint_spans);
+                frame.render_widget(Paragraph::new(hint), hint_area);
+            }
         }
         PopupState::None => {}
     }

@@ -11,23 +11,86 @@ impl GitCommands {
 
     /// Load commits reachable from a specific branch only.
     pub fn load_commits_for_branch(&self, branch: &str, limit: usize) -> Result<Vec<Commit>> {
-        self.load_commits_inner(limit, false, Some(branch))
+        self.load_commits_for_branches(&[branch.to_string()], limit)
+    }
+
+    /// Load commits reachable from any of the given branches.
+    pub fn load_commits_for_branches(&self, branches: &[String], limit: usize) -> Result<Vec<Commit>> {
+        let format = "%H|%s|%an|%ae|%at|%P|%D";
+        let mut cmd = self.git();
+        cmd = cmd.arg("log");
+        for b in branches {
+            cmd = cmd.arg(b);
+        }
+        cmd = cmd
+            .arg(&format!("--max-count={}", limit))
+            .arg(&format!("--format={}", format))
+            .arg("--no-show-signature")
+            .arg("--topo-order");
+
+        let result = cmd.run()?;
+
+        if !result.success {
+            return Ok(Vec::new());
+        }
+
+        let _head_hash = self.head_hash().unwrap_or_default();
+        let unpushed_hashes = self.unpushed_commit_hashes().unwrap_or_default();
+
+        let mut commits = Vec::new();
+        for line in result.stdout.lines() {
+            let parts: Vec<&str> = line.splitn(7, '|').collect();
+            if parts.len() < 6 {
+                continue;
+            }
+
+            let hash = parts[0].to_string();
+            let name = parts[1].to_string();
+            let author_name = parts[2].to_string();
+            let author_email = parts[3].to_string();
+            let unix_timestamp = parts[4].parse::<i64>().unwrap_or(0);
+            let parents: Vec<String> = parts[5].split_whitespace().map(String::from).collect();
+
+            let decoration = if parts.len() > 6 { parts[6] } else { "" };
+            let tags = extract_tags(decoration);
+            let refs = extract_refs(decoration);
+
+            let status = if unpushed_hashes.contains(&hash) {
+                CommitStatus::Unpushed
+            } else {
+                CommitStatus::Pushed
+            };
+
+            commits.push(Commit {
+                hash,
+                name,
+                status,
+                action: String::new(),
+                tags,
+                refs,
+                extra_info: String::new(),
+                author_name,
+                author_email,
+                unix_timestamp,
+                parents,
+                divergence: Divergence::None,
+            });
+        }
+
+        Ok(commits)
     }
 
     fn load_commits_inner(
         &self,
         limit: usize,
         all: bool,
-        branch: Option<&str>,
+        _branch: Option<&str>,
     ) -> Result<Vec<Commit>> {
         let format = "%H|%s|%an|%ae|%at|%P|%D";
         let mut cmd = self.git();
         cmd = cmd.arg("log");
         if all {
             cmd = cmd.arg("--all");
-        }
-        if let Some(b) = branch {
-            cmd = cmd.arg(b);
         }
         cmd = cmd
             .arg(&format!("--max-count={}", limit))

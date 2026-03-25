@@ -102,8 +102,8 @@ pub struct Gui {
     search_textarea: Option<tui_textarea::TextArea<'static>>,
     /// Last time a refresh occurred (for 10s background auto-refresh interval).
     last_refresh_at: Instant,
-    /// Active branch filter for commits panel. When Some, only commits from this branch are shown.
-    pub commit_branch_filter: Option<String>,
+    /// Active branch filter for commits panel. When non-empty, only commits from these branches are shown.
+    pub commit_branch_filter: Vec<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -156,7 +156,7 @@ impl Gui {
             pending_commit_popup: None,
             search_textarea: None,
             last_refresh_at: Instant::now(),
-            commit_branch_filter: None,
+            commit_branch_filter: Vec::new(),
         })
     }
 
@@ -216,7 +216,7 @@ impl Gui {
                     self.search_textarea.as_ref(),
                     &cmd_log,
                     self.show_command_log,
-                    self.commit_branch_filter.as_deref(),
+                    &self.commit_branch_filter,
                 );
             })?;
 
@@ -917,6 +917,75 @@ impl Gui {
                     }
                 }
             }
+            PopupState::Checklist { items, selected, search, .. } => {
+                use crossterm::event::KeyModifiers;
+                // Ctrl+A: clear all checks
+                if key.code == KeyCode::Char('a') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    if let PopupState::Checklist { items, .. } = &mut self.popup {
+                        for item in items.iter_mut() {
+                            item.checked = false;
+                        }
+                    }
+                    return Ok(());
+                }
+                let visible_count = items.iter()
+                    .filter(|it| search.is_empty() || it.label.to_lowercase().contains(&search.to_lowercase()))
+                    .count();
+                match key.code {
+                    KeyCode::Down | KeyCode::Char('j') => {
+                        if let PopupState::Checklist { selected, .. } = &mut self.popup {
+                            if visible_count > 0 {
+                                *selected = (*selected + 1).min(visible_count - 1);
+                            }
+                        }
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        if let PopupState::Checklist { selected, .. } = &mut self.popup {
+                            *selected = selected.saturating_sub(1);
+                        }
+                    }
+                    KeyCode::Char(' ') => {
+                        // Toggle checked state on the visible item at `selected`
+                        if let PopupState::Checklist { items, selected, search, .. } = &mut self.popup {
+                            let visible_indices: Vec<usize> = items.iter().enumerate()
+                                .filter(|(_, it)| search.is_empty() || it.label.to_lowercase().contains(&search.to_lowercase()))
+                                .map(|(i, _)| i)
+                                .collect();
+                            if let Some(&real_idx) = visible_indices.get(*selected) {
+                                items[real_idx].checked = !items[real_idx].checked;
+                            }
+                        }
+                    }
+                    KeyCode::Enter => {
+                        let popup = std::mem::replace(&mut self.popup, PopupState::None);
+                        if let PopupState::Checklist { items, on_confirm, .. } = popup {
+                            let checked: Vec<String> = items.into_iter()
+                                .filter(|it| it.checked)
+                                .map(|it| it.label)
+                                .collect();
+                            on_confirm(self, checked)?;
+                        }
+                    }
+                    KeyCode::Esc => {
+                        self.popup = PopupState::None;
+                    }
+                    KeyCode::Backspace => {
+                        if let PopupState::Checklist { search, selected, .. } = &mut self.popup {
+                            search.pop();
+                            *selected = 0;
+                        }
+                    }
+                    KeyCode::Char(c) => {
+                        // Type into search filter (but not j/k which are nav)
+                        // j/k already handled above, this won't fire for them
+                        if let PopupState::Checklist { search, selected, .. } = &mut self.popup {
+                            search.push(c);
+                            *selected = 0;
+                        }
+                    }
+                    _ => {}
+                }
+            }
             PopupState::Loading { .. } => {
                 // Block all input while loading — user must wait
             }
@@ -1460,9 +1529,9 @@ impl Gui {
         let mut model = self.model.lock().unwrap();
         *model = new_model;
 
-        // If a branch filter is active, reload commits for that branch only.
-        if let Some(ref branch) = self.commit_branch_filter {
-            if let Ok(filtered) = self.git.load_commits_for_branch(branch, 300) {
+        // If branch filters are active, reload commits for those branches only.
+        if !self.commit_branch_filter.is_empty() {
+            if let Ok(filtered) = self.git.load_commits_for_branches(&self.commit_branch_filter, 300) {
                 model.commits = filtered;
             }
         }
