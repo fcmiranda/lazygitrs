@@ -69,6 +69,13 @@ fn strip_markdown_fences(raw: &str) -> String {
         return content.trim().to_string();
     }
 
+    // Strip surrounding single backticks (e.g. `feat: blah blah`)
+    let trimmed = trimmed
+        .strip_prefix('`')
+        .and_then(|s| s.strip_suffix('`'))
+        .unwrap_or(trimmed)
+        .trim();
+
     trimmed.to_string()
 }
 
@@ -90,6 +97,14 @@ mod tests {
         assert_eq!(
             strip_markdown_fences(input),
             "feat: add user auth\n\nAdded JWT-based authentication."
+        );
+    }
+
+    #[test]
+    fn test_strip_single_backticks() {
+        assert_eq!(
+            strip_markdown_fences("`feat: blah blah blah`"),
+            "feat: blah blah blah"
         );
     }
 
