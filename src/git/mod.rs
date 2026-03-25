@@ -58,6 +58,7 @@ impl GitCommands {
         model.remotes = self.load_remotes()?;
         model.tags = self.load_tags()?;
         model.worktrees = self.load_worktrees().unwrap_or_default();
+        model.reflog_commits = self.load_reflog(100).unwrap_or_default();
 
         // Load total line change stats
         if let Ok((added, deleted)) = self.diff_shortstat() {

@@ -172,7 +172,7 @@ pub fn render(
         };
 
         // Build title with tab indicators for multi-tab windows
-        let title = if *window == SideWindow::Commits && !commit_branch_filter.is_empty() {
+        let title = if *window == SideWindow::Commits && ctx_id == ContextId::Commits && !commit_branch_filter.is_empty() {
             let filter_label = commit_branch_filter.join(", ");
             Line::from(vec![
                 Span::raw(" Commits "),
@@ -272,6 +272,10 @@ pub fn render(
                     let items = presentation::commits::render_commit_list(model, &theme);
                     render_list(frame, rect, block, items, selected, is_active, &theme);
                 }
+            }
+            ContextId::Reflog => {
+                let items = presentation::reflog::render_reflog_list(model, &theme);
+                render_list(frame, rect, block, items, selected, is_active, &theme);
             }
             ContextId::Stash => {
                 // If StashFiles is active within this window, render that instead

@@ -518,6 +518,34 @@ impl Gui {
                     });
                 }
             }
+            ContextId::Reflog => {
+                // Reflog: load commit diff async
+                if let Some(commit) = model.reflog_commits.get(selected) {
+                    let hash = commit.hash.clone();
+                    drop(model);
+
+                    let git = Arc::clone(&self.git);
+                    let tx = self.diff_tx.clone();
+                    let gen_counter = Arc::clone(&self.diff_generation);
+
+                    std::thread::spawn(move || {
+                        if gen_counter.load(Ordering::Relaxed) != generation {
+                            return;
+                        }
+                        let payload = if let Ok(diff) = git.diff_commit(&hash) {
+                            let filename = format!("reflog:{}", &hash[..7.min(hash.len())]);
+                            DiffPayload::UnifiedDiff { filename, diff_output: diff }
+                        } else {
+                            DiffPayload::Empty
+                        };
+                        let _ = tx.send(DiffResult {
+                            generation,
+                            diff_key,
+                            payload,
+                        });
+                    });
+                }
+            }
             ContextId::Stash => {
                 // Stash: also load async
                 if let Some(entry) = model.stash_entries.get(selected) {
@@ -886,6 +914,9 @@ impl Gui {
             }
             ContextId::Commits => {
                 controller::commits::handle_key(self, key, &keybindings)?;
+            }
+            ContextId::Reflog => {
+                controller::reflog::handle_key(self, key, &keybindings)?;
             }
             ContextId::Stash => {
                 controller::stash::handle_key(self, key, &keybindings)?;
@@ -1423,6 +1454,15 @@ impl Gui {
                     HelpEntry { key: kb.commits.view_bisect_options.clone(), description: "Bisect options".into() },
                 ],
             },
+            ContextId::Reflog => HelpSection {
+                title: "Reflog".into(),
+                entries: vec![
+                    HelpEntry { key: kb.commits.checkout_commit.clone(), description: "Checkout commit".into() },
+                    HelpEntry { key: kb.commits.view_reset_options.clone(), description: "Reset options".into() },
+                    HelpEntry { key: kb.commits.cherry_pick_copy.clone(), description: "Cherry-pick".into() },
+                    HelpEntry { key: "y".into(), description: "Copy to clipboard".into() },
+                ],
+            },
             ContextId::Stash | ContextId::StashFiles => HelpSection {
                 title: "Stash".into(),
                 entries: vec![
@@ -1846,6 +1886,15 @@ impl Gui {
                     if commit.name.to_lowercase().contains(&query)
                         || commit.hash.starts_with(&self.search_query)
                         || commit.author_name.to_lowercase().contains(&query)
+                    {
+                        self.search_matches.push(i);
+                    }
+                }
+            }
+            ContextId::Reflog => {
+                for (i, commit) in model.reflog_commits.iter().enumerate() {
+                    if commit.name.to_lowercase().contains(&query)
+                        || commit.hash.starts_with(&self.search_query)
                     {
                         self.search_matches.push(i);
                     }

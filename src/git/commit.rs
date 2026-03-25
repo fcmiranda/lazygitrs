@@ -150,6 +150,61 @@ impl GitCommands {
         Ok(commits)
     }
 
+    /// Load reflog entries using `git log -g`.
+    pub fn load_reflog(&self, limit: usize) -> Result<Vec<Commit>> {
+        let format = "%H|%gs|%an|%ae|%at|%P";
+        let result = self
+            .git()
+            .args(&[
+                "log",
+                "-g",
+                &format!("--max-count={}", limit),
+                &format!("--format={}", format),
+                "--no-show-signature",
+            ])
+            .run()?;
+
+        if !result.success {
+            return Ok(Vec::new());
+        }
+
+        let mut commits = Vec::new();
+        for line in result.stdout.lines() {
+            let parts: Vec<&str> = line.splitn(6, '|').collect();
+            if parts.len() < 5 {
+                continue;
+            }
+
+            let hash = parts[0].to_string();
+            let name = parts[1].to_string();
+            let author_name = parts[2].to_string();
+            let author_email = parts[3].to_string();
+            let unix_timestamp = parts[4].parse::<i64>().unwrap_or(0);
+            let parents: Vec<String> = if parts.len() > 5 {
+                parts[5].split_whitespace().map(String::from).collect()
+            } else {
+                Vec::new()
+            };
+
+            commits.push(Commit {
+                hash,
+                name,
+                status: CommitStatus::Reflog,
+                action: String::new(),
+                tags: Vec::new(),
+                refs: Vec::new(),
+                extra_info: String::new(),
+                author_name,
+                author_email,
+                unix_timestamp,
+                parents,
+                divergence: Divergence::None,
+            });
+        }
+
+        Ok(commits)
+    }
+
     fn unpushed_commit_hashes(&self) -> Result<Vec<String>> {
         let result = self
             .git()

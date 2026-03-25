@@ -156,6 +156,7 @@ fn context_id_to_name(ctx: ContextId) -> &'static str {
         ContextId::Remotes => "remotes",
         ContextId::Tags => "tags",
         ContextId::Commits => "commits",
+        ContextId::Reflog => "reflogCommits",
         ContextId::Stash => "stash",
         ContextId::Worktrees => "worktrees",
         ContextId::Submodules => "submodules",
