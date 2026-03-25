@@ -496,8 +496,7 @@ fn render_list(
     theme: &crate::config::Theme,
 ) {
     if items.is_empty() {
-        let widget = Paragraph::new(" (empty)").block(block);
-        frame.render_widget(widget, rect);
+        frame.render_widget(block, rect);
         return;
     }
 
