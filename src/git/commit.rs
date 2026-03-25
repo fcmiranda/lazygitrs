@@ -4,25 +4,44 @@ use super::GitCommands;
 use crate::model::{Commit, CommitStatus, commit::Divergence};
 
 impl GitCommands {
+    /// Load commits from all branches (--all) so the graph shows the full topology.
     pub fn load_commits(&self, limit: usize) -> Result<Vec<Commit>> {
+        self.load_commits_inner(limit, true, None)
+    }
+
+    /// Load commits reachable from a specific branch only.
+    pub fn load_commits_for_branch(&self, branch: &str, limit: usize) -> Result<Vec<Commit>> {
+        self.load_commits_inner(limit, false, Some(branch))
+    }
+
+    fn load_commits_inner(
+        &self,
+        limit: usize,
+        all: bool,
+        branch: Option<&str>,
+    ) -> Result<Vec<Commit>> {
         let format = "%H|%s|%an|%ae|%at|%P|%D";
-        let result = self
-            .git()
-            .args(&[
-                "log",
-                &format!("--max-count={}", limit),
-                &format!("--format={}", format),
-                "--no-show-signature",
-            ])
-            .run()?;
+        let mut cmd = self.git();
+        cmd = cmd.arg("log");
+        if all {
+            cmd = cmd.arg("--all");
+        }
+        if let Some(b) = branch {
+            cmd = cmd.arg(b);
+        }
+        cmd = cmd
+            .arg(&format!("--max-count={}", limit))
+            .arg(&format!("--format={}", format))
+            .arg("--no-show-signature")
+            .arg("--topo-order");
+
+        let result = cmd.run()?;
 
         if !result.success {
             return Ok(Vec::new());
         }
 
-        let head_hash = self.head_hash().unwrap_or_default();
-
-        // Get the upstream to determine pushed/unpushed status
+        let _head_hash = self.head_hash().unwrap_or_default();
         let unpushed_hashes = self.unpushed_commit_hashes().unwrap_or_default();
 
         let mut commits = Vec::new();
@@ -39,11 +58,9 @@ impl GitCommands {
             let unix_timestamp = parts[4].parse::<i64>().unwrap_or(0);
             let parents: Vec<String> = parts[5].split_whitespace().map(String::from).collect();
 
-            let tags = if parts.len() > 6 {
-                extract_tags(parts[6])
-            } else {
-                Vec::new()
-            };
+            let decoration = if parts.len() > 6 { parts[6] } else { "" };
+            let tags = extract_tags(decoration);
+            let refs = extract_refs(decoration);
 
             let status = if unpushed_hashes.contains(&hash) {
                 CommitStatus::Unpushed
@@ -57,6 +74,7 @@ impl GitCommands {
                 status,
                 action: String::new(),
                 tags,
+                refs,
                 extra_info: String::new(),
                 author_name,
                 author_email,
@@ -76,7 +94,6 @@ impl GitCommands {
             .run()?;
 
         if !result.success {
-            // No upstream or other error — treat all as unpushed
             return Ok(Vec::new());
         }
 
@@ -101,14 +118,12 @@ impl GitCommands {
     }
 
     pub fn reword_commit(&self, hash: &str, message: &str) -> Result<()> {
-        // For HEAD commit, use amend
         let head = self.head_hash()?;
         if hash == head {
             self.git()
                 .args(&["commit", "--amend", "-m", message])
                 .run_expecting_success()?;
         } else {
-            // For non-HEAD commits, delegate to interactive rebase
             self.reword_commit_rebase(hash, message)?;
         }
         Ok(())
@@ -131,7 +146,6 @@ impl GitCommands {
         Ok(())
     }
 
-    /// Full commit message (subject + body).
     pub fn commit_message_full(&self, hash: &str) -> Result<String> {
         let result = self
             .git()
@@ -140,7 +154,6 @@ impl GitCommands {
         Ok(result.stdout.trim().to_string())
     }
 
-    /// Commit message body only (without subject line).
     pub fn commit_message_body(&self, hash: &str) -> Result<String> {
         let result = self
             .git()
@@ -149,7 +162,6 @@ impl GitCommands {
         Ok(result.stdout.trim().to_string())
     }
 
-    /// Diff of a single commit.
     pub fn commit_diff(&self, hash: &str) -> Result<String> {
         let result = self
             .git()
@@ -175,6 +187,25 @@ fn extract_tags(decoration: &str) -> Vec<String> {
                 Some(tag.to_string())
             } else {
                 None
+            }
+        })
+        .collect()
+}
+
+/// Extract ref decorations like "HEAD -> main", "origin/main", "origin/feature".
+/// Excludes tags (handled separately).
+fn extract_refs(decoration: &str) -> Vec<String> {
+    if decoration.is_empty() {
+        return Vec::new();
+    }
+    decoration
+        .split(", ")
+        .filter_map(|d| {
+            let d = d.trim();
+            if d.is_empty() || d.starts_with("tag: ") {
+                None
+            } else {
+                Some(d.to_string())
             }
         })
         .collect()

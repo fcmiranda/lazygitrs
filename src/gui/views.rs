@@ -34,6 +34,7 @@ pub fn render(
     search_textarea: Option<&tui_textarea::TextArea<'_>>,
     command_log: &[String],
     show_command_log: bool,
+    commit_branch_filter: Option<&str>,
 ) {
     let area = frame.area();
     let theme = config.user_config.theme();
@@ -66,7 +67,21 @@ pub fn render(
             // Sidebar is focused: show active sidebar panel fullscreen
             let ctx_id = ctx_mgr.active();
             let selected = ctx_mgr.selected(ctx_id);
-            let title = build_window_title(ctx_mgr.active_window(), ctx_id, ctx_mgr);
+            let title = if ctx_id == ContextId::Commits {
+                if let Some(branch) = commit_branch_filter {
+                    Line::from(vec![
+                        Span::raw(" 4 Commits "),
+                        Span::styled(
+                            format!("[filter: {}] ", branch),
+                            Style::default().fg(Color::Yellow),
+                        ),
+                    ])
+                } else {
+                    build_window_title(ctx_mgr.active_window(), ctx_id, ctx_mgr)
+                }
+            } else {
+                build_window_title(ctx_mgr.active_window(), ctx_id, ctx_mgr)
+            };
             let block = Block::default()
                 .title(title)
                 .borders(Borders::ALL)
@@ -135,7 +150,21 @@ pub fn render(
         };
 
         // Build title with tab indicators for multi-tab windows
-        let title = build_window_title(*window, ctx_id, ctx_mgr);
+        let title = if *window == SideWindow::Commits {
+            if let Some(branch) = commit_branch_filter {
+                Line::from(vec![
+                    Span::raw(" 4 Commits "),
+                    Span::styled(
+                        format!("[filter: {}] ", branch),
+                        Style::default().fg(Color::Yellow),
+                    ),
+                ])
+            } else {
+                build_window_title(*window, ctx_id, ctx_mgr)
+            }
+        } else {
+            build_window_title(*window, ctx_id, ctx_mgr)
+        };
 
         let block = Block::default()
             .title(title)
@@ -636,7 +665,7 @@ fn render_status_bar(
     let context_hints = match ctx_mgr.active() {
         ContextId::Files => "c: commit | a: stage all | <space>: toggle | d: discard",
         ContextId::Branches => "<space>: checkout | n: new | d: delete | M: merge | r: rebase",
-        ContextId::Commits => "r: reword | g: reset | t: revert | C: cherry-pick | T: tag",
+        ContextId::Commits => "r: reword | g: reset | t: revert | C: cherry-pick | ctrl-l: filter branch",
         ContextId::Stash => "g: pop | <space>: apply | d: drop",
         ContextId::Remotes => "f: fetch | P: push | p: pull",
         ContextId::Tags => "n: new | d: delete | P: push",

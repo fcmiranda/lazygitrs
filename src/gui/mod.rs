@@ -102,6 +102,8 @@ pub struct Gui {
     search_textarea: Option<tui_textarea::TextArea<'static>>,
     /// Last time a refresh occurred (for 10s background auto-refresh interval).
     last_refresh_at: Instant,
+    /// Active branch filter for commits panel. When Some, only commits from this branch are shown.
+    pub commit_branch_filter: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -154,6 +156,7 @@ impl Gui {
             pending_commit_popup: None,
             search_textarea: None,
             last_refresh_at: Instant::now(),
+            commit_branch_filter: None,
         })
     }
 
@@ -213,6 +216,7 @@ impl Gui {
                     self.search_textarea.as_ref(),
                     &cmd_log,
                     self.show_command_log,
+                    self.commit_branch_filter.as_deref(),
                 );
             })?;
 
@@ -1455,6 +1459,14 @@ impl Gui {
         let new_model = self.git.load_model()?;
         let mut model = self.model.lock().unwrap();
         *model = new_model;
+
+        // If a branch filter is active, reload commits for that branch only.
+        if let Some(ref branch) = self.commit_branch_filter {
+            if let Ok(filtered) = self.git.load_commits_for_branch(branch, 300) {
+                model.commits = filtered;
+            }
+        }
+
         // Rebuild file tree inline to avoid borrow issues
         if self.show_file_tree {
             self.file_tree_nodes = build_file_tree(&model.files, &self.collapsed_dirs);

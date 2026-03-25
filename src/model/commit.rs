@@ -7,6 +7,8 @@ pub struct Commit {
     pub status: CommitStatus,
     pub action: String,
     pub tags: Vec<String>,
+    /// Branch/ref decorations (e.g. "HEAD -> main", "origin/main").
+    pub refs: Vec<String>,
     pub extra_info: String,
     pub author_name: String,
     pub author_email: String,
