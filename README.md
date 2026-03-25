@@ -1,4 +1,4 @@
-# lazygitrs
+# lazygitrss
 
 A slopfork of lazygit, but in rust (🦀 rust btw).
 

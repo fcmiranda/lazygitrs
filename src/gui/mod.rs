@@ -97,6 +97,8 @@ pub struct Gui {
     pub patch_building: PatchBuildingState,
     /// Stashed commit editor popup while commit menu or AI generation is shown.
     pending_commit_popup: Option<PopupState>,
+    /// Search bar textarea (1-line editor for search input).
+    search_textarea: Option<tui_textarea::TextArea<'static>>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -147,6 +149,7 @@ impl Gui {
             undo_reflog_idx: 0,
             patch_building: PatchBuildingState::new(),
             pending_commit_popup: None,
+            search_textarea: None,
         })
     }
 
@@ -203,6 +206,7 @@ impl Gui {
                     &self.collapsed_dirs,
                     self.diff_focused,
                     search_state,
+                    self.search_textarea.as_ref(),
                     &cmd_log,
                     self.show_command_log,
                 );
@@ -634,11 +638,20 @@ impl Gui {
             self.search_query.clear();
             self.search_matches.clear();
             self.search_match_idx = 0;
+            let mut ta = tui_textarea::TextArea::default();
+            ta.set_cursor_line_style(ratatui::style::Style::default());
+            self.search_textarea = Some(ta);
             return Ok(());
         }
 
-        // Next/prev search match
+        // Next/prev search match, or Esc to dismiss search results
         if !self.search_query.is_empty() {
+            if key.code == KeyCode::Esc {
+                self.search_query.clear();
+                self.search_matches.clear();
+                self.search_match_idx = 0;
+                return Ok(());
+            }
             if matches_key(key, &keybindings.universal.next_match) {
                 self.goto_next_search_match();
                 return Ok(());
@@ -710,6 +723,18 @@ impl Gui {
         if matches_key(key, &keybindings.universal.prev_screen_mode) {
             self.prev_screen_mode();
             return Ok(());
+        }
+
+        // Number keys 1-5 to jump to sidebar panels (unfocus diff)
+        // Use set_window instead of jump_to_window to avoid cycling tabs,
+        // since the user is "arriving" from diff focus, not pressing the same key again.
+        if let KeyCode::Char(c @ '1'..='5') = key.code {
+            let n = c.to_digit(10).unwrap();
+            if let Some(window) = SideWindow::from_number(n) {
+                self.diff_focused = false;
+                self.context_mgr.set_window(window);
+                return Ok(());
+            }
         }
 
         match key.code {
@@ -832,10 +857,19 @@ impl Gui {
                 use crossterm::event::KeyModifiers;
                 let is_commit = *is_commit;
 
-                // Ctrl+Enter or Meta+Enter to confirm
+                // Shift+Enter or Alt+Enter inserts a newline
                 if key.code == KeyCode::Enter
-                    && (key.modifiers.contains(KeyModifiers::CONTROL)
-                        || key.modifiers.contains(KeyModifiers::SUPER))
+                    && (key.modifiers.contains(KeyModifiers::SHIFT)
+                        || key.modifiers.contains(KeyModifiers::ALT))
+                {
+                    if let PopupState::Input { textarea, .. } = &mut self.popup {
+                        textarea.insert_newline();
+                    }
+                }
+                // Plain Enter to confirm
+                else if key.code == KeyCode::Enter
+                    && !key.modifiers.contains(KeyModifiers::SHIFT)
+                    && !key.modifiers.contains(KeyModifiers::ALT)
                 {
                     let popup = std::mem::replace(&mut self.popup, PopupState::None);
                     if let PopupState::Input { textarea, on_confirm, .. } = popup {
@@ -1164,28 +1198,35 @@ impl Gui {
     }
 
     fn handle_search_key(&mut self, key: KeyEvent) -> Result<()> {
-        match key.code {
-            KeyCode::Esc => {
-                self.search_active = false;
-            }
-            KeyCode::Enter => {
-                self.search_active = false;
-                // Jump to first match
-                if !self.search_matches.is_empty() {
-                    self.search_match_idx = 0;
-                    let idx = self.search_matches[0];
-                    self.context_mgr.set_selection(idx);
+        if let PopupState::None = self.popup {
+            // Search uses a textarea — forward keys to it
+            if let Some(ref mut ta) = self.search_textarea {
+                match key.code {
+                    KeyCode::Esc => {
+                        self.search_active = false;
+                        self.search_query.clear();
+                        self.search_matches.clear();
+                        self.search_match_idx = 0;
+                        self.search_textarea = None;
+                    }
+                    KeyCode::Enter => {
+                        self.search_active = false;
+                        // Jump to first match
+                        if !self.search_matches.is_empty() {
+                            self.search_match_idx = 0;
+                            let idx = self.search_matches[0];
+                            self.context_mgr.set_selection(idx);
+                        }
+                        self.search_textarea = None;
+                    }
+                    _ => {
+                        ta.input(key);
+                        // Sync textarea content back to search_query
+                        self.search_query = ta.lines().join("");
+                        self.update_search_matches();
+                    }
                 }
             }
-            KeyCode::Backspace => {
-                self.search_query.pop();
-                self.update_search_matches();
-            }
-            KeyCode::Char(c) => {
-                self.search_query.push(c);
-                self.update_search_matches();
-            }
-            _ => {}
         }
         Ok(())
     }
@@ -1202,9 +1243,20 @@ impl Gui {
 
         match active {
             ContextId::Files => {
-                for (i, file) in model.files.iter().enumerate() {
-                    if file.name.to_lowercase().contains(&query) {
-                        self.search_matches.push(i);
+                if self.show_file_tree {
+                    // When file tree is active, indices are into file_tree_nodes
+                    for (i, node) in self.file_tree_nodes.iter().enumerate() {
+                        if node.path.to_lowercase().contains(&query)
+                            || node.name.to_lowercase().contains(&query)
+                        {
+                            self.search_matches.push(i);
+                        }
+                    }
+                } else {
+                    for (i, file) in model.files.iter().enumerate() {
+                        if file.name.to_lowercase().contains(&query) {
+                            self.search_matches.push(i);
+                        }
                     }
                 }
             }
@@ -1242,6 +1294,15 @@ impl Gui {
             ContextId::Remotes => {
                 for (i, remote) in model.remotes.iter().enumerate() {
                     if remote.name.to_lowercase().contains(&query) {
+                        self.search_matches.push(i);
+                    }
+                }
+            }
+            ContextId::Worktrees => {
+                for (i, wt) in model.worktrees.iter().enumerate() {
+                    if wt.branch.to_lowercase().contains(&query)
+                        || wt.path.to_lowercase().contains(&query)
+                    {
                         self.search_matches.push(i);
                     }
                 }

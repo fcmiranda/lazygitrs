@@ -179,6 +179,11 @@ impl ContextManager {
     }
 
     /// Jump to a window by number (1-5). If already in that window, cycle tabs.
+    /// Jump to a window's active tab without cycling (even if already on that window).
+    pub fn set_window(&mut self, window: SideWindow) {
+        self.active = self.active_context_for_window(window);
+    }
+
     pub fn jump_to_window(&mut self, window: SideWindow) {
         let current_window = self.active_window();
         if current_window == window {

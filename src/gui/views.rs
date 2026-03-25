@@ -31,6 +31,7 @@ pub fn render(
     collapsed_dirs: &HashSet<String>,
     diff_focused: bool,
     search_state: Option<(&str, usize, usize)>,
+    search_textarea: Option<&tui_textarea::TextArea<'_>>,
     command_log: &[String],
     show_command_log: bool,
 ) {
@@ -250,11 +251,37 @@ pub fn render(
         } else {
             String::new()
         };
-        let bar = Paragraph::new(Span::styled(
-            format!(" /{}{}", query, match_info),
-            Style::default().fg(Color::Yellow),
-        ));
-        frame.render_widget(bar, fl.status_bar);
+
+        if let Some(ta) = search_textarea {
+            // Render: "/" prefix + textarea + match info
+            // Split the status bar into three parts
+            let prefix_width = 2u16; // " /"
+            let suffix_text = match_info;
+            let suffix_width = suffix_text.len() as u16;
+            let ta_width = fl.status_bar.width.saturating_sub(prefix_width + suffix_width);
+
+            // Prefix " /"
+            let prefix_rect = Rect::new(fl.status_bar.x, fl.status_bar.y, prefix_width, 1);
+            let prefix = Paragraph::new(Span::styled(" /", Style::default().fg(Color::Yellow)));
+            frame.render_widget(prefix, prefix_rect);
+
+            // Textarea
+            let ta_rect = Rect::new(fl.status_bar.x + prefix_width, fl.status_bar.y, ta_width, 1);
+            frame.render_widget(ta, ta_rect);
+
+            // Suffix (match info)
+            if !suffix_text.is_empty() {
+                let suffix_rect = Rect::new(fl.status_bar.x + prefix_width + ta_width, fl.status_bar.y, suffix_width, 1);
+                let suffix = Paragraph::new(Span::styled(suffix_text, Style::default().fg(Color::Yellow)));
+                frame.render_widget(suffix, suffix_rect);
+            }
+        } else {
+            let bar = Paragraph::new(Span::styled(
+                format!(" /{}{}", query, match_info),
+                Style::default().fg(Color::Yellow),
+            ));
+            frame.render_widget(bar, fl.status_bar);
+        }
     } else {
         render_status_bar(frame, fl.status_bar, ctx_mgr, diff_view, &theme);
     }
@@ -691,9 +718,9 @@ fn render_popup(frame: &mut Frame, popup: &PopupState, area: Rect) {
 
                 let hint_area = Rect::new(inner.x, inner.y + inner.height - 1, inner.width, 1);
                 let hint_text = if *is_commit {
-                    " Ctrl+Enter: confirm | Ctrl+O: commit menu | Esc: cancel"
+                    " Enter: confirm | Alt+Enter: newline | Ctrl+O: menu | Esc: cancel"
                 } else {
-                    " Ctrl+Enter to confirm, Esc to cancel"
+                    " Enter to confirm, Esc to cancel"
                 };
                 let hint = Span::styled(hint_text, Style::default().fg(Color::DarkGray));
                 frame.render_widget(Paragraph::new(Line::from(hint)), hint_area);

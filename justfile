@@ -10,5 +10,6 @@ ref-clone:
 preview:
     ./target/debug/lazygitrs
 
+# as
 rpreview:
     ./target/release/lazygitrs
