@@ -1,6 +1,6 @@
 /// Commit graph layout engine matching lazygit's visual style.
 ///
-/// Uses ○ (hollow circle) for nodes, │ for vertical pipes,
+/// Uses ◯ (hollow circle) for the HEAD node and ⬤ (solid circle) for others,
 /// ╭─╮ for merge connectors, ╰─╯ for converging lines.
 /// Each column is 2 chars wide for readability.
 
@@ -190,14 +190,17 @@ pub fn compute_graph(commits: &[(String, Vec<String>)]) -> Vec<GraphRow> {
 
 /// Render a GraphRow into Spans. Each cell is 2 chars wide (glyph + space)
 /// to match lazygit's spacing.
-pub fn render_graph_spans(row: &GraphRow, max_width: usize) -> Vec<Span<'static>> {
+///
+/// `is_head` — when true the node uses a hollow circle (◯); otherwise a solid one (⬤).
+pub fn render_graph_spans(row: &GraphRow, max_width: usize, is_head: bool) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
 
     for (i, cell) in row.cells.iter().enumerate() {
         let (ch, style) = match cell {
             GraphCell::Node => {
                 let color = col_color(row.commit_col);
-                ("◯", Style::default().fg(color))
+                let glyph = if is_head { "⬤" } else { "◯" };
+                (glyph, Style::default().fg(color))
             }
             GraphCell::Pipe => {
                 let color = col_color(i);

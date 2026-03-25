@@ -29,7 +29,7 @@ pub fn render_commit_list<'a>(model: &Model, theme: &Theme) -> Vec<ListItem<'a>>
 
             // Start with graph spans.
             let mut spans: Vec<Span<'a>> = if let Some(row) = graph_row {
-                graph::render_graph_spans(row, max_graph_width)
+                graph::render_graph_spans(row, max_graph_width, i == 0)
             } else {
                 vec![Span::raw(" ".repeat(max_graph_width * 2))]
             };
