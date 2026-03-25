@@ -126,11 +126,28 @@ impl GitCommands {
     }
 
     /// Get the list of files changed in a commit with their change status.
+    /// Uses `hash^1..hash` to correctly handle merge commits (including stashes).
+    /// Falls back to single-arg diff-tree for root commits (no parent).
     pub fn commit_files(&self, hash: &str) -> Result<Vec<crate::model::CommitFile>> {
+        // Try diffing against first parent; fall back for root commits.
         let result = self
             .git()
-            .args(&["diff-tree", "--no-commit-id", "--name-status", "-r", hash])
-            .run_expecting_success()?;
+            .args(&[
+                "diff-tree",
+                "--no-commit-id",
+                "--name-status",
+                "-r",
+                &format!("{}^1", hash),
+                hash,
+            ])
+            .run();
+        let result = match result {
+            Ok(r) if r.success => r,
+            _ => self
+                .git()
+                .args(&["diff-tree", "--no-commit-id", "--name-status", "-r", hash])
+                .run_expecting_success()?,
+        };
 
         let mut files = Vec::new();
         for line in result.stdout.lines() {
@@ -161,12 +178,30 @@ impl GitCommands {
     }
 
     /// Get the diff of a single file within a commit.
+    /// Uses `hash^1..hash` to correctly handle merge commits (including stashes).
+    /// Falls back to `git show` for root commits (no parent).
     pub fn diff_commit_file(&self, hash: &str, path: &str) -> Result<String> {
         let result = self
             .git()
-            .args(&["show", "--color=never", "--format=", hash, "--", path])
-            .run_expecting_success()?;
-        Ok(result.stdout)
+            .args(&[
+                "diff",
+                "--color=never",
+                &format!("{}^1", hash),
+                hash,
+                "--",
+                path,
+            ])
+            .run();
+        match result {
+            Ok(r) if r.success => Ok(r.stdout),
+            _ => {
+                let r = self
+                    .git()
+                    .args(&["show", "--color=never", "--format=", hash, "--", path])
+                    .run_expecting_success()?;
+                Ok(r.stdout)
+            }
+        }
     }
 
     /// Get the staged content of a file.

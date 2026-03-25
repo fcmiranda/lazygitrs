@@ -9,6 +9,7 @@ use super::graph;
 
 pub fn render_commit_list<'a>(model: &Model, theme: &Theme) -> Vec<ListItem<'a>> {
     let commits = &model.commits;
+    let head_hash = &model.head_hash;
 
     // Build graph data from commits.
     let graph_input: Vec<(String, Vec<String>)> = commits
@@ -26,10 +27,11 @@ pub fn render_commit_list<'a>(model: &Model, theme: &Theme) -> Vec<ListItem<'a>>
         .enumerate()
         .map(|(i, commit)| {
             let graph_row = graph_rows.get(i);
+            let is_head = commit.hash == *head_hash;
 
             // Start with graph spans.
             let mut spans: Vec<Span<'a>> = if let Some(row) = graph_row {
-                graph::render_graph_spans(row, max_graph_width, i == 0)
+                graph::render_graph_spans(row, max_graph_width, is_head)
             } else {
                 vec![Span::raw(" ".repeat(max_graph_width * 2))]
             };

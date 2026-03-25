@@ -23,6 +23,7 @@ use std::collections::HashMap;
 #[derive(Debug, Default)]
 pub struct Model {
     pub repo_name: String,
+    pub head_hash: String,
     pub files: Vec<File>,
     pub branches: Vec<Branch>,
     pub commits: Vec<Commit>,

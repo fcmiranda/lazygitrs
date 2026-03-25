@@ -50,6 +50,7 @@ impl GitCommands {
         let mut model = Model::default();
 
         model.repo_name = self.repo_name();
+        model.head_hash = self.head_hash().unwrap_or_default();
         model.files = self.load_files()?;
         model.branches = self.load_branches()?;
         model.commits = self.load_commits(50)?;
