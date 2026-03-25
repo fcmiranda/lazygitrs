@@ -69,14 +69,16 @@ fn strip_markdown_fences(raw: &str) -> String {
         return content.trim().to_string();
     }
 
-    // Strip surrounding single backticks (e.g. `feat: blah blah`)
-    let trimmed = trimmed
-        .strip_prefix('`')
-        .and_then(|s| s.strip_suffix('`'))
-        .unwrap_or(trimmed)
-        .trim();
+    // Strip single backticks from the first line (e.g. `feat: blah blah`)
+    // The AI sometimes wraps only the subject line in backticks.
+    let mut lines: Vec<&str> = trimmed.lines().collect();
+    if let Some(first) = lines.first_mut() {
+        if let Some(stripped) = first.strip_prefix('`').and_then(|s| s.strip_suffix('`')) {
+            *first = stripped;
+        }
+    }
 
-    trimmed.to_string()
+    lines.join("\n").trim().to_string()
 }
 
 #[cfg(test)]
@@ -105,6 +107,15 @@ mod tests {
         assert_eq!(
             strip_markdown_fences("`feat: blah blah blah`"),
             "feat: blah blah blah"
+        );
+    }
+
+    #[test]
+    fn test_strip_single_backticks_first_line_only() {
+        let input = "`feat: something something`\n\nother content of the commit here stuff\nblah blah blah";
+        assert_eq!(
+            strip_markdown_fences(input),
+            "feat: something something\n\nother content of the commit here stuff\nblah blah blah"
         );
     }
 
