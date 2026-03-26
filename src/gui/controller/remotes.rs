@@ -104,6 +104,17 @@ fn show_push_menu(gui: &mut Gui) -> Result<()> {
     let b1 = branch.clone();
     let b2 = branch.clone();
 
+    // Check if the current branch is tracking a remote
+    let is_tracking = {
+        let model = gui.model.lock().unwrap();
+        model
+            .branches
+            .iter()
+            .find(|b| b.head)
+            .map(|b| b.is_tracking())
+            .unwrap_or(false)
+    };
+
     gui.popup = PopupState::Menu {
         title: "Push".to_string(),
         items: vec![
@@ -113,10 +124,18 @@ fn show_push_menu(gui: &mut Gui) -> Result<()> {
                 key: Some("p".to_string()),
                 action: Some(Box::new(move |gui| {
                     let msg = format!("Pushing {} to origin...", b1);
-                    gui.start_remote_op("Push", &msg, |git| {
-                        git.push(false)?;
-                        Ok(())
-                    });
+                    if is_tracking {
+                        gui.start_remote_op("Push", &msg, |git| {
+                            git.push(false)?;
+                            Ok(())
+                        });
+                    } else {
+                        let branch = b1.clone();
+                        gui.start_remote_op("Push", &msg, move |git| {
+                            git.push_with_upstream("origin", &branch)?;
+                            Ok(())
+                        });
+                    }
                     Ok(())
                 })),
             },

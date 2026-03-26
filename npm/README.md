@@ -28,8 +28,8 @@ lazygitrs
 - [x] **AI commit messages** — works with whatever agent you already use (claude, opencode, codex, or my minimal shim [modelcli](https://github.com/blankeos/modelcli))
       Configure it in `~/.config/lazygit/config.toml`:
 
-  ```toml
-  # ~/.config/lazygit/config.toml
+  ```yml
+  # ~/.config/lazygit/config.yml
   git:
     commit:
       # Using claude
@@ -41,12 +41,17 @@ lazygitrs
   ```
 
 - [x] **Side-by-side diffs** with syntax highlighting by default, no pager hacks needed
-- [x] **Better diff navigation UX** — `[]` new/old only views, `{}` for hunk traveling, `hjkl←↑↓→` for line-by-line scrolling, mouse highlights so you can copy. Lots inspired by [lumen](https://github.com/jnsahaj/lumen)
+- [x] **Better diff navigation UX** — `[]` new/old only views, `{}` for hunk traveling, `hjkl←↑↓→` for line-by-line scrolling, supports mouse select/scroll too. Lots inspired by [lumen](https://github.com/jnsahaj/lumen)
 - [x] **Default GitHub conveniences** — copy repo url, open repo url, copy PR create url, open PR create, copy pr url, open pr. (The 'copy' variants are useful if you use different default browsers for work/personal.)
 - [x] **Branch Filtering** — better experience in the Commits tab, compare what actually matters.
 - [ ] **Future: Built-in compare tool** — Again, inspired by lumen, but more built into the TUI. Pick a commit/branch A and a commit/branch B, then see how they differ.
+- [ ] **Future: Command Palette** — easily access stuff like:
+  - [ ] `git reset` and then asks, what branch/commit, has quick search.
+  - [ ] `git diff/compare` and then asks what branch/commit A and B, has quick search.
+  - [ ] `git rebase` and then asks rebase on top of what branch/commit.
 
 <!-- GEN_BENCHMARKS_START -->
+
 ### Benchmarks
 
 Startup benchmark using [hyperfine](https://github.com/sharkdp/hyperfine):
@@ -55,15 +60,16 @@ Startup benchmark using [hyperfine](https://github.com/sharkdp/hyperfine):
 Benchmark 1: lazygitrs --version
   Time (mean ± σ):       4.2 ms ±   1.3 ms    [User: 1.2 ms, System: 0.9 ms]
   Range (min … max):     2.7 ms …  15.4 ms    830 runs
- 
+
 Benchmark 2: lazygit --version
   Time (mean ± σ):      13.5 ms ±   2.5 ms    [User: 6.4 ms, System: 5.2 ms]
   Range (min … max):    10.2 ms …  21.2 ms    224 runs
- 
+
 Summary
   lazygitrs --version ran
     3.24 ± 1.16 times faster than lazygit --version
 ```
+
 <!-- GEN_BENCHMARKS_END -->
 
 MIT
