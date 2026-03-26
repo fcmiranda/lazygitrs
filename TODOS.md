@@ -110,7 +110,7 @@
     - You can press tab to cycle focus between the A and B comboboxes, Commit Fles, and diff exploration view.
     - Commit Files and Diff Exploration View actually already exist if you notice. So as expected, they'd have the same hotkeys sort of. Especially diff exploration view like `[]` `{}`.
 
-- [ ] Pressing up or down in the commit messages, cycles through previously submitted ones. Kinda like the up or down key in the commandline.
+- [ ] Pressing up or down in the commit messages, should cycle through previously submitted ones. Kinda like the up or down key in the commandline.
 - [ ] In '3 Branches' git checkout -.
 - [ ] In '3 Branches' git checkout by name. Pressing 'c'
 - [ ] In '3 Branches'. pressing d, opens a 'Delete branch ?' dialog, and I can see options:
