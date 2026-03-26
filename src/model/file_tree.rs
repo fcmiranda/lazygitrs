@@ -144,6 +144,8 @@ pub struct CommitFileTreeNode {
     /// If this is a file node, the index into `Model.commit_files`.
     pub file_index: Option<usize>,
     pub is_dir: bool,
+    /// For directory nodes: indices into `Model.commit_files` of all descendant files.
+    pub child_file_indices: Vec<usize>,
 }
 
 /// Build a flat list of tree nodes from the commit file list.
@@ -165,9 +167,19 @@ pub fn build_commit_file_tree(
         .collect();
     entries.sort_by(|a, b| a.0.cmp(&b.0));
 
+    // First pass: collect child file indices per directory path
+    let mut dir_children: std::collections::HashMap<String, Vec<usize>> = std::collections::HashMap::new();
+    for (parts, file_idx) in &entries {
+        for depth in 0..parts.len().saturating_sub(1) {
+            let dir_path = parts[..=depth].join("/");
+            dir_children.entry(dir_path).or_default().push(*file_idx);
+        }
+    }
+
     let mut nodes = Vec::new();
 
     // Root node
+    let all_indices: Vec<usize> = (0..files.len()).collect();
     let root_collapsed = collapsed_dirs.contains(".");
     nodes.push(CommitFileTreeNode {
         depth: 0,
@@ -175,6 +187,7 @@ pub fn build_commit_file_tree(
         path: ".".to_string(),
         file_index: None,
         is_dir: true,
+        child_file_indices: all_indices,
     });
 
     if root_collapsed {
@@ -210,12 +223,14 @@ pub fn build_commit_file_tree(
             });
 
             if !dir_hidden {
+                let children = dir_children.get(&dir_path).cloned().unwrap_or_default();
                 nodes.push(CommitFileTreeNode {
                     depth: depth + 1, // +1 for root node
                     name: dir.to_string(),
                     path: dir_path.clone(),
                     file_index: None,
                     is_dir: true,
+                    child_file_indices: children,
                 });
             }
 
@@ -231,6 +246,7 @@ pub fn build_commit_file_tree(
                 path: parts.join("/"),
                 file_index: Some(*file_idx),
                 is_dir: false,
+                child_file_indices: Vec::new(),
             });
         }
 

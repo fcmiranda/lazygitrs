@@ -853,8 +853,63 @@ impl Gui {
                             payload,
                         });
                     });
+                } else if self.show_commit_file_tree {
+                    // Directory node in tree view: show combined diff of all child files
+                    if let Some(node) = self.commit_file_tree_nodes.get(selected) {
+                        if node.is_dir && !node.child_file_indices.is_empty() {
+                            let child_names: Vec<String> = node
+                                .child_file_indices
+                                .iter()
+                                .filter_map(|&i| model.commit_files.get(i))
+                                .map(|f| f.name.clone())
+                                .collect();
+                            let dir_name = node.name.clone();
+                            let hash = self.commit_files_hash.clone();
+                            drop(model);
+
+                            let git = Arc::clone(&self.git);
+                            let tx = self.diff_tx.clone();
+                            let gen_counter = Arc::clone(&self.diff_generation);
+
+                            std::thread::spawn(move || {
+                                if gen_counter.load(Ordering::Relaxed) != generation {
+                                    return;
+                                }
+                                let mut combined_diff = String::new();
+                                for name in &child_names {
+                                    if let Ok(diff) = git.diff_commit_file(&hash, name) {
+                                        if !diff.is_empty() {
+                                            if !combined_diff.is_empty() {
+                                                combined_diff.push('\n');
+                                            }
+                                            combined_diff.push_str(&diff);
+                                        }
+                                    }
+                                }
+                                let payload = if combined_diff.is_empty() {
+                                    DiffPayload::Empty
+                                } else {
+                                    DiffPayload::UnifiedDiff {
+                                        filename: dir_name,
+                                        diff_output: combined_diff,
+                                    }
+                                };
+                                let _ = tx.send(DiffResult {
+                                    generation,
+                                    diff_key,
+                                    payload,
+                                });
+                            });
+                        } else {
+                            drop(model);
+                            self.diff_view = DiffViewState::new();
+                        }
+                    } else {
+                        drop(model);
+                        self.diff_view = DiffViewState::new();
+                    }
                 } else {
-                    // Directory node or no file selected — clear diff
+                    // No file selected — clear diff
                     drop(model);
                     self.diff_view = DiffViewState::new();
                 }
