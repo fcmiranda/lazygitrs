@@ -32,12 +32,18 @@ pub struct FrameLayout {
     pub side_panels: Vec<Rect>,
     pub main_panel: Rect,
     pub status_bar: Rect,
+    /// Whether portrait (vertical stack) layout is in effect.
+    pub portrait: bool,
 }
 
 /// Height for the status panel (always compact: 1 content line + 2 border lines).
 const STATUS_PANEL_HEIGHT: u16 = 3;
-/// Height for a collapsed (unfocused) panel: 1 content line + 2 border lines.
-const COLLAPSED_PANEL_HEIGHT: u16 = 3;
+
+/// Portrait mode threshold: narrow terminal with enough vertical space.
+/// Matches the original lazygit: width <= 84 && height > 45.
+fn should_use_portrait(width: u16, height: u16, screen_mode: ScreenMode) -> bool {
+    screen_mode == ScreenMode::Normal && width <= 84 && height > 45
+}
 
 pub fn compute_layout(
     area: Rect,
@@ -64,8 +70,60 @@ pub fn compute_layout(
             side_panels: Vec::new(),
             main_panel: main_area,
             status_bar,
+            portrait: false,
         };
     }
+
+    let portrait = should_use_portrait(area.width, area.height, screen_mode);
+
+    if portrait {
+        // Portrait mode: side panels stacked vertically on top, main panel below.
+        // The side section gets roughly half the height so both sections are usable.
+        let side_height = (main_area.height as f64 * side_ratio).round() as u16;
+        let side_height = side_height
+            .max(panel_count as u16 * 2)
+            .min(main_area.height / 2);
+
+        let vertical = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([
+                Constraint::Length(side_height),
+                Constraint::Min(1),
+            ])
+            .split(main_area);
+
+        let side_area = vertical[0];
+        let main_panel = vertical[1];
+
+        // Side panels laid out vertically (same as landscape), active expands.
+        let collapsed: u16 = if side_area.height < 21 { 1 } else { 3 };
+        let panel_constraints: Vec<Constraint> = (0..panel_count)
+            .map(|i| {
+                if i == 0 {
+                    Constraint::Length(STATUS_PANEL_HEIGHT)
+                } else if i == active_panel_index {
+                    Constraint::Min(collapsed)
+                } else {
+                    Constraint::Length(collapsed)
+                }
+            })
+            .collect();
+
+        let side_panels = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints(panel_constraints)
+            .split(side_area)
+            .to_vec();
+
+        return FrameLayout {
+            side_panels,
+            main_panel,
+            status_bar,
+            portrait: true,
+        };
+    }
+
+    // Landscape mode (default): side panel on the left, main on the right.
 
     // Half mode: side panel enlarges to 50/50 split
     // Normal mode: use the configured ratio
@@ -94,19 +152,19 @@ pub fn compute_layout(
     let side_area = horizontal[0];
     let main_panel = horizontal[1];
 
-    // Dynamic panel sizing: Status is always compact (3 lines),
-    // the active panel expands to fill remaining space, others collapse.
+    // Side panel sizing: active panel expands, others collapse.
+    // On very short terminals (< 21 rows) unfocused panels shrink to 1 line.
+    let side_height = side_area.height;
+    let collapsed: u16 = if side_height < 21 { 1 } else { 3 };
+
     let panel_constraints: Vec<Constraint> = (0..panel_count)
         .map(|i| {
             if i == 0 {
-                // Status panel is always compact
                 Constraint::Length(STATUS_PANEL_HEIGHT)
             } else if i == active_panel_index {
-                // Active panel fills remaining space
-                Constraint::Min(COLLAPSED_PANEL_HEIGHT)
+                Constraint::Min(collapsed)
             } else {
-                // Inactive panels collapse
-                Constraint::Length(COLLAPSED_PANEL_HEIGHT)
+                Constraint::Length(collapsed)
             }
         })
         .collect();
@@ -121,5 +179,6 @@ pub fn compute_layout(
         side_panels,
         main_panel,
         status_bar,
+        portrait: false,
     }
 }

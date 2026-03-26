@@ -248,7 +248,7 @@ impl Gui {
     }
 
     pub fn run(&mut self) -> Result<()> {
-        let mut terminal = setup_terminal()?;
+        let (mut terminal, keyboard_enhanced) = setup_terminal()?;
 
         // Sync layout dimensions with actual terminal size so mouse handling
         // uses the correct geometry from the very first frame.
@@ -257,7 +257,7 @@ impl Gui {
 
         let result = self.main_loop(&mut terminal);
 
-        restore_terminal(&mut terminal)?;
+        restore_terminal(&mut terminal, keyboard_enhanced)?;
         result
     }
 
@@ -2939,7 +2939,7 @@ impl Gui {
             }
             MouseEventKind::ScrollUp => {
                 self.diff_view.selection = None;
-                let in_diff = self.diff_focused || self.is_in_main_panel(mouse.column);
+                let in_diff = self.diff_focused || self.is_in_main_panel(mouse.column, mouse.row);
                 if mouse.modifiers.contains(KeyModifiers::SHIFT) && in_diff {
                     self.diff_view.scroll_left(4);
                 } else if in_diff {
@@ -2951,7 +2951,7 @@ impl Gui {
             }
             MouseEventKind::ScrollDown => {
                 self.diff_view.selection = None;
-                let in_diff = self.diff_focused || self.is_in_main_panel(mouse.column);
+                let in_diff = self.diff_focused || self.is_in_main_panel(mouse.column, mouse.row);
                 if mouse.modifiers.contains(KeyModifiers::SHIFT) && in_diff {
                     self.diff_view.scroll_right(4);
                 } else if in_diff {
@@ -2962,12 +2962,12 @@ impl Gui {
                 }
             }
             MouseEventKind::ScrollLeft => {
-                if self.diff_focused || self.is_in_main_panel(mouse.column) {
+                if self.diff_focused || self.is_in_main_panel(mouse.column, mouse.row) {
                     self.diff_view.scroll_left(4);
                 }
             }
             MouseEventKind::ScrollRight => {
-                if self.diff_focused || self.is_in_main_panel(mouse.column) {
+                if self.diff_focused || self.is_in_main_panel(mouse.column, mouse.row) {
                     self.diff_view.scroll_right(4);
                 }
             }
@@ -3278,10 +3278,9 @@ impl Gui {
         }
     }
 
-    fn is_in_main_panel(&self, col: u16) -> bool {
-        let side_width = ((self.layout.width as f64)
-            * self.config.user_config.gui.side_panel_width) as u16;
-        col >= side_width
+    fn is_in_main_panel(&self, col: u16, row: u16) -> bool {
+        let mp = self.compute_main_panel_rect();
+        col >= mp.x && col < mp.x + mp.width && row >= mp.y && row < mp.y + mp.height
     }
 
     /// Compute the exact main panel Rect using the real layout engine.
@@ -3632,7 +3631,7 @@ fn rect_contains(r: ratatui::layout::Rect, col: u16, row: u16) -> bool {
     col >= r.x && col < r.x + r.width && row >= r.y && row < r.y + r.height
 }
 
-fn setup_terminal() -> Result<Term> {
+fn setup_terminal() -> Result<(Term, bool)> {
     terminal::enable_raw_mode()?;
     let mut stdout = io::stdout();
     execute!(
@@ -3640,22 +3639,31 @@ fn setup_terminal() -> Result<Term> {
         EnterAlternateScreen,
         crossterm::event::EnableMouseCapture,
         crossterm::event::EnableFocusChange,
-        cursor::Hide,
-        crossterm::event::PushKeyboardEnhancementFlags(
-            crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
-                | crossterm::event::KeyboardEnhancementFlags::REPORT_EVENT_TYPES
-        )
+        cursor::Hide
     )?;
+    let keyboard_enhanced =
+        crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false);
+    if keyboard_enhanced {
+        execute!(
+            stdout,
+            crossterm::event::PushKeyboardEnhancementFlags(
+                crossterm::event::KeyboardEnhancementFlags::DISAMBIGUATE_ESCAPE_CODES
+                    | crossterm::event::KeyboardEnhancementFlags::REPORT_EVENT_TYPES
+            )
+        )?;
+    }
     let backend = CrosstermBackend::new(stdout);
     let terminal = Terminal::new(backend)?;
-    Ok(terminal)
+    Ok((terminal, keyboard_enhanced))
 }
 
-fn restore_terminal(terminal: &mut Term) -> Result<()> {
+fn restore_terminal(terminal: &mut Term, keyboard_enhanced: bool) -> Result<()> {
     terminal::disable_raw_mode()?;
+    if keyboard_enhanced {
+        execute!(terminal.backend_mut(), crossterm::event::PopKeyboardEnhancementFlags)?;
+    }
     execute!(
         terminal.backend_mut(),
-        crossterm::event::PopKeyboardEnhancementFlags,
         crossterm::event::DisableFocusChange,
         LeaveAlternateScreen,
         crossterm::event::DisableMouseCapture,
