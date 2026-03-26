@@ -351,7 +351,7 @@ fn render_list(frame: &mut Frame, area: Rect, state: &RebaseModeState, theme: &T
     frame.render_stateful_widget(list, area, &mut list_state);
 }
 
-fn render_status_bar(frame: &mut Frame, area: Rect, state: &RebaseModeState, theme: &Theme) {
+fn render_status_bar(frame: &mut Frame, area: Rect, state: &RebaseModeState, _theme: &Theme) {
     let hints: Vec<(&str, &str)> = match state.phase {
         RebasePhase::Planning => vec![
             ("p", "pick"),
@@ -376,20 +376,17 @@ fn render_status_bar(frame: &mut Frame, area: Rect, state: &RebaseModeState, the
         ],
     };
 
-    let mut spans: Vec<Span> = vec![Span::raw(" ")];
-    for (i, (key, desc)) in hints.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::styled(" | ", Style::default().fg(Color::DarkGray)));
-        }
-        spans.push(Span::styled(
-            format!("{}", key),
-            Style::default().fg(Color::DarkGray),
-        ));
-        spans.push(Span::styled(
-            format!(": {}", desc),
-            theme.status_bar,
-        ));
-    }
+    let key_style = Style::default().fg(Color::Gray).add_modifier(ratatui::style::Modifier::BOLD);
+    let desc_style = Style::default().fg(Color::DarkGray);
+    let spans: Vec<Span> = hints
+        .iter()
+        .flat_map(|(key, desc)| {
+            vec![
+                Span::styled(format!(" {} ", key), key_style),
+                Span::styled(format!("{} ", desc), desc_style),
+            ]
+        })
+        .collect();
 
     let bar = Paragraph::new(Line::from(spans));
     frame.render_widget(bar, area);

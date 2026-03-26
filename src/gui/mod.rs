@@ -497,7 +497,7 @@ impl Gui {
                                 }
                                 Ok(())
                             }),
-                            is_commit: true,
+                            is_commit: true, confirm_focused: false,
                         };
                     }
                 }
@@ -1544,14 +1544,22 @@ impl Gui {
                     _ => {}
                 }
             }
-            PopupState::Input { is_commit, .. } => {
+            PopupState::Input { is_commit, confirm_focused, .. } => {
                 use crossterm::event::KeyModifiers;
                 let is_commit = *is_commit;
+                let confirm_focused = *confirm_focused;
 
-                // Confirm: Ctrl+S for commit (multiline), Enter for non-commit (single-line)
-                if (is_commit
+                // Tab toggles focus between textarea and confirm button (commit only)
+                if is_commit && key.code == KeyCode::Tab {
+                    if let PopupState::Input { confirm_focused, .. } = &mut self.popup {
+                        *confirm_focused = !*confirm_focused;
+                    }
+                }
+                // Confirm: Ctrl+S for commit, Enter on confirm button, Enter for non-commit
+                else if (is_commit
                     && key.code == KeyCode::Char('s')
                     && key.modifiers.contains(KeyModifiers::CONTROL))
+                    || (is_commit && confirm_focused && key.code == KeyCode::Enter)
                     || (!is_commit && key.code == KeyCode::Enter)
                 {
                     let popup = std::mem::replace(&mut self.popup, PopupState::None);
@@ -1579,6 +1587,7 @@ impl Gui {
                     self.popup = PopupState::None;
                     self.commit_history_idx = None;
                 } else if is_commit
+                    && !confirm_focused
                     && (key.code == KeyCode::Up || key.code == KeyCode::Down)
                     && !self.commit_message_history.is_empty()
                 {
@@ -1642,13 +1651,14 @@ impl Gui {
                         }
                     }
                 } else if is_commit
+                    && !confirm_focused
                     && key.code == KeyCode::Char('o')
                     && key.modifiers.contains(KeyModifiers::CONTROL)
                 {
                     // <c-o> in commit message editor: open commit menu
                     self.show_commit_editor_menu()?;
-                } else {
-                    // Forward all other keys to the textarea
+                } else if !confirm_focused {
+                    // Forward all other keys to the textarea (only when textarea is focused)
                     if let PopupState::Input { textarea, .. } = &mut self.popup {
                         textarea.input(key);
                         // Auto-wrap: hard-wrap lines so they never exceed the visible width.
@@ -2392,7 +2402,7 @@ impl Gui {
                             }
                             Ok(())
                         }),
-                        is_commit: false,
+                        is_commit: false, confirm_focused: false,
                     };
                     Ok(())
                 })),

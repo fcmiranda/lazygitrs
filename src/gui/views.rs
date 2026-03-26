@@ -1130,58 +1130,73 @@ fn render_status_bar(
     rect: Rect,
     ctx_mgr: &ContextManager,
     diff_view: &DiffViewState,
-    theme: &crate::config::Theme,
+    _theme: &crate::config::Theme,
     model: &Model,
 ) {
+    let mut hints: Vec<(&str, &str)> = Vec::new();
+
     // When in a special state (rebasing/merging/cherry-picking), show those options prominently
-    let state_hints = if model.is_rebasing {
-        Some("m: continue/abort/skip rebase")
+    if model.is_rebasing {
+        hints.push(("m", "continue/abort/skip rebase"));
     } else if model.is_merging {
-        Some("m: continue/abort merge")
+        hints.push(("m", "continue/abort merge"));
     } else if model.is_cherry_picking {
-        Some("m: continue/abort cherry-pick")
-    } else {
-        None
-    };
+        hints.push(("m", "continue/abort cherry-pick"));
+    }
 
-    let context_hints = match ctx_mgr.active() {
-        ContextId::Files => "c: commit | a: stage all | <space>: toggle | d: discard | e: edit | o: open",
-        ContextId::Branches => "<space>: checkout | n: new | d: delete | M: merge | r: rebase",
-        ContextId::Commits => {
-            "r: reword | g: reset | t: revert | C: cherry-pick | ctrl-l: filter branch"
+    // Context-specific hints
+    match ctx_mgr.active() {
+        ContextId::Files => {
+            hints.extend([("c", "commit"), ("a", "stage all"), ("space", "toggle"), ("d", "discard"), ("e", "edit"), ("o", "open")]);
         }
-        ContextId::Stash => "g: pop | <space>: apply | d: drop",
-        ContextId::Remotes => "<enter>: branches | f: fetch | P: push | p: pull",
-        ContextId::RemoteBranches => "<space>: checkout | M: merge | r: rebase | d: delete",
-        ContextId::Tags => "n: new | d: delete | P: push",
-        ContextId::Worktrees => "<space>: switch | n: new | d: remove",
-        ContextId::Submodules => "<space>: update | a: add | d: remove | e: enter",
-        _ => "",
-    };
+        ContextId::Branches => {
+            hints.extend([("space", "checkout"), ("n", "new"), ("d", "delete"), ("M", "merge"), ("r", "rebase")]);
+        }
+        ContextId::Commits => {
+            hints.extend([("r", "reword"), ("g", "reset"), ("t", "revert"), ("C", "cherry-pick"), ("ctrl+l", "filter branch")]);
+        }
+        ContextId::Stash => {
+            hints.extend([("g", "pop"), ("space", "apply"), ("d", "drop")]);
+        }
+        ContextId::Remotes => {
+            hints.extend([("enter", "branches"), ("f", "fetch"), ("P", "push"), ("p", "pull")]);
+        }
+        ContextId::RemoteBranches => {
+            hints.extend([("space", "checkout"), ("M", "merge"), ("r", "rebase"), ("d", "delete")]);
+        }
+        ContextId::Tags => {
+            hints.extend([("n", "new"), ("d", "delete"), ("P", "push")]);
+        }
+        ContextId::Worktrees => {
+            hints.extend([("space", "switch"), ("n", "new"), ("d", "remove")]);
+        }
+        ContextId::Submodules => {
+            hints.extend([("space", "update"), ("a", "add"), ("d", "remove"), ("e", "enter")]);
+        }
+        _ => {}
+    }
 
-    let scroll_info = if !diff_view.is_empty() {
-        format!(
-            " | J/K: scroll diff | {{}}/}}: hunks | L{}/{}",
-            diff_view.scroll_offset + 1,
-            diff_view.lines.len()
-        )
-    } else {
-        String::new()
-    };
+    // Global hints
+    hints.extend([("q", "quit"), ("tab/1-5", "panels"), ("j/k", "nav")]);
 
-    let bar_text = if let Some(state) = state_hints {
-        format!(
-            " {} | {} | q: quit | tab/1-5: panels | j/k: nav{}",
-            state, context_hints, scroll_info
-        )
-    } else {
-        format!(
-            " {} | q: quit | tab/1-5: panels | j/k: nav{}",
-            context_hints, scroll_info
-        )
-    };
+    // Diff scroll info
+    if !diff_view.is_empty() {
+        hints.extend([("J/K", "scroll diff"), ("{/}", "hunks")]);
+    }
 
-    let bar = Paragraph::new(Span::styled(bar_text, theme.status_bar));
+    let key_style = Style::default().fg(Color::Gray).add_modifier(ratatui::style::Modifier::BOLD);
+    let desc_style = Style::default().fg(Color::DarkGray);
+    let spans: Vec<Span> = hints
+        .iter()
+        .flat_map(|(key, desc)| {
+            vec![
+                Span::styled(format!(" {} ", key), key_style),
+                Span::styled(format!("{} ", desc), desc_style),
+            ]
+        })
+        .collect();
+
+    let bar = Paragraph::new(Line::from(spans));
     frame.render_widget(bar, rect);
 }
 
@@ -1401,10 +1416,12 @@ pub fn render_popup(frame: &mut Frame, popup: &PopupState, area: Rect, spinner_f
             title,
             textarea,
             is_commit,
+            confirm_focused,
             ..
         } => {
             // Textarea popup: taller to allow multiline editing
-            let ta_height = 12u16;
+            // Add extra row for commit dialogs to fit the confirm button row
+            let ta_height = if *is_commit { 14u16 } else { 12u16 };
             let ta_y = (area.height.saturating_sub(ta_height)) / 2;
             let ta_rect = Rect::new(x, ta_y, popup_width, ta_height);
             frame.render_widget(Clear, ta_rect);
@@ -1422,21 +1439,68 @@ pub fn render_popup(frame: &mut Frame, popup: &PopupState, area: Rect, spinner_f
                 vertical: 1,
             });
 
-            // Reserve last line for the hint
-            if inner.height > 2 {
-                let ta_area = Rect::new(inner.x, inner.y, inner.width, inner.height - 1);
-                frame.render_widget(textarea, ta_area);
+            if *is_commit {
+                // Reserve 2 lines: one for hint, one for confirm button row
+                if inner.height > 4 {
+                    let ta_area = Rect::new(inner.x, inner.y, inner.width, inner.height - 2);
+                    frame.render_widget(textarea, ta_area);
 
-                let hint_area = Rect::new(inner.x, inner.y + inner.height - 1, inner.width, 1);
-                let hint_text = if *is_commit {
-                    " Ctrl+S: confirm | Ctrl+O: menu | Esc: cancel"
+                    // Hint line (opencode-style: bold key, dim description)
+                    let hint_area = Rect::new(inner.x, inner.y + inner.height - 2, inner.width, 1);
+                    let key_style = Style::default().fg(Color::Gray).add_modifier(ratatui::style::Modifier::BOLD);
+                    let desc_style = Style::default().fg(Color::DarkGray);
+                    let hint_line = Line::from(vec![
+                        Span::styled(" ctrl+s ", key_style),
+                        Span::styled("confirm  ", desc_style),
+                        Span::styled("ctrl+o ", key_style),
+                        Span::styled("menu  ", desc_style),
+                        Span::styled("esc ", key_style),
+                        Span::styled("cancel", desc_style),
+                    ]);
+                    frame.render_widget(Paragraph::new(hint_line), hint_area);
+
+                    // Confirm button row (right-aligned)
+                    let btn_area = Rect::new(inner.x, inner.y + inner.height - 1, inner.width, 1);
+                    let (btn_style, btn_text) = if *confirm_focused {
+                        (
+                            Style::default().fg(Color::Black).bg(Color::Green).add_modifier(ratatui::style::Modifier::BOLD),
+                            " Confirm ",
+                        )
+                    } else {
+                        (
+                            Style::default().fg(Color::Green),
+                            " Confirm ",
+                        )
+                    };
+                    let btn_width = btn_text.len() as u16;
+                    let btn_x = btn_area.x + btn_area.width.saturating_sub(btn_width);
+                    let btn_rect = Rect::new(btn_x, btn_area.y, btn_width, 1);
+                    frame.render_widget(
+                        Paragraph::new(Line::from(Span::styled(btn_text, btn_style))),
+                        btn_rect,
+                    );
                 } else {
-                    " Enter to confirm, Esc to cancel"
-                };
-                let hint = Span::styled(hint_text, Style::default().fg(Color::DarkGray));
-                frame.render_widget(Paragraph::new(Line::from(hint)), hint_area);
+                    frame.render_widget(textarea, inner);
+                }
             } else {
-                frame.render_widget(textarea, inner);
+                // Non-commit: no button, just hint
+                if inner.height > 2 {
+                    let ta_area = Rect::new(inner.x, inner.y, inner.width, inner.height - 1);
+                    frame.render_widget(textarea, ta_area);
+
+                    let hint_area = Rect::new(inner.x, inner.y + inner.height - 1, inner.width, 1);
+                    let key_style = Style::default().fg(Color::Gray).add_modifier(ratatui::style::Modifier::BOLD);
+                    let desc_style = Style::default().fg(Color::DarkGray);
+                    let hint_line = Line::from(vec![
+                        Span::styled(" enter ", key_style),
+                        Span::styled("confirm  ", desc_style),
+                        Span::styled("esc ", key_style),
+                        Span::styled("cancel", desc_style),
+                    ]);
+                    frame.render_widget(Paragraph::new(hint_line), hint_area);
+                } else {
+                    frame.render_widget(textarea, inner);
+                }
             }
         }
         PopupState::Menu {

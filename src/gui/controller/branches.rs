@@ -203,7 +203,7 @@ fn new_branch(gui: &mut Gui) -> Result<()> {
             }
             Ok(())
         }),
-        is_commit: false,
+        is_commit: false, confirm_focused: false,
     };
     Ok(())
 }
@@ -508,7 +508,7 @@ fn rename_branch(gui: &mut Gui) -> Result<()> {
                 }
                 Ok(())
             }),
-            is_commit: false,
+            is_commit: false, confirm_focused: false,
         };
     }
     Ok(())

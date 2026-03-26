@@ -327,17 +327,16 @@ fn render_status_bar(frame: &mut Frame, area: Rect, state: &DiffModeState) {
         ]
     };
 
+    let key_style = Style::default()
+        .fg(Color::Gray)
+        .add_modifier(Modifier::BOLD);
+    let desc_style = Style::default().fg(Color::DarkGray);
     let spans: Vec<Span> = hints
         .iter()
         .flat_map(|(key, desc)| {
             vec![
-                Span::styled(
-                    format!(" {} ", key),
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(format!("{} ", desc), Style::default().fg(Color::DarkGray)),
+                Span::styled(format!(" {} ", key), key_style),
+                Span::styled(format!("{} ", desc), desc_style),
             ]
         })
         .collect();

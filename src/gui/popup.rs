@@ -27,6 +27,8 @@ pub enum PopupState {
         /// When true, this is a commit message editor — enables AI generation via <c-g>.
         #[allow(dead_code)]
         is_commit: bool,
+        /// When true, focus is on the Confirm button instead of the textarea.
+        confirm_focused: bool,
     },
     Menu {
         title: String,

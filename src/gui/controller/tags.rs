@@ -69,7 +69,7 @@ fn create_tag(gui: &mut Gui) -> Result<()> {
             }
             Ok(())
         }),
-        is_commit: false,
+        is_commit: false, confirm_focused: false,
     };
     Ok(())
 }

@@ -60,7 +60,7 @@ fn execute_custom_command(gui: &mut Gui, cmd: &CustomCommand) -> Result<()> {
                 run_command(gui, &final_cmd, show_output)?;
                 Ok(())
             }),
-            is_commit: false,
+            is_commit: false, confirm_focused: false,
         };
     }
 

@@ -192,7 +192,7 @@ fn open_commit_prompt(gui: &mut Gui) -> Result<()> {
                         }
                         Ok(())
                     }),
-                    is_commit: true,
+                    is_commit: true, confirm_focused: false,
                 };
                 Ok(())
             }),
@@ -210,7 +210,7 @@ fn open_commit_prompt(gui: &mut Gui) -> Result<()> {
             }
             Ok(())
         }),
-        is_commit: true,
+        is_commit: true, confirm_focused: false,
     };
     Ok(())
 }
@@ -462,7 +462,7 @@ fn open_stash_message_prompt(gui: &mut Gui, kind: StashKind) {
             gui.needs_refresh = true;
             Ok(())
         }),
-        is_commit: false,
+        is_commit: false, confirm_focused: false,
     };
 }
 
@@ -475,7 +475,7 @@ fn stash_changes(gui: &mut Gui) -> Result<()> {
             gui.needs_refresh = true;
             Ok(())
         }),
-        is_commit: false,
+        is_commit: false, confirm_focused: false,
     };
     Ok(())
 }
@@ -598,7 +598,7 @@ fn commit_with_editor(gui: &mut Gui) -> Result<()> {
             gui.needs_refresh = true;
             Ok(())
         }),
-        is_commit: false,
+        is_commit: false, confirm_focused: false,
     };
     Ok(())
 }

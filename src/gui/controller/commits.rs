@@ -147,7 +147,7 @@ fn reword_commit(gui: &mut Gui) -> Result<()> {
                 }
                 Ok(())
             }),
-            is_commit: false,
+            is_commit: false, confirm_focused: false,
         };
     }
     Ok(())
@@ -242,7 +242,7 @@ fn tag_commit(gui: &mut Gui) -> Result<()> {
                 }
                 Ok(())
             }),
-            is_commit: false,
+            is_commit: false, confirm_focused: false,
         };
     }
     Ok(())
