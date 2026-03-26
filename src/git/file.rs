@@ -106,6 +106,21 @@ impl GitCommands {
         std::fs::write(gitignore, contents)?;
         Ok(())
     }
+
+    pub fn exclude_file(&self, path: &str) -> Result<()> {
+        let exclude = self.repo_path().join(".git/info/exclude");
+        if let Some(parent) = exclude.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let mut contents = std::fs::read_to_string(&exclude).unwrap_or_default();
+        if !contents.ends_with('\n') && !contents.is_empty() {
+            contents.push('\n');
+        }
+        contents.push_str(path);
+        contents.push('\n');
+        std::fs::write(exclude, contents)?;
+        Ok(())
+    }
 }
 
 fn parse_status_codes(x: char, y: char) -> (bool, bool, bool, FileStatus) {

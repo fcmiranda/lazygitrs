@@ -145,6 +145,12 @@ pub struct Gui {
     remote_op_label: Option<String>,
     /// Timestamp when the last remote operation succeeded (for showing a temporary ✓).
     remote_op_success_at: Option<Instant>,
+    /// History of previously submitted commit messages (most recent first).
+    pub commit_message_history: Vec<String>,
+    /// Current index into commit_message_history when cycling (None = not cycling).
+    pub commit_history_idx: Option<usize>,
+    /// Stashed current draft when cycling through history.
+    commit_history_draft: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -175,6 +181,8 @@ impl Gui {
 
         let (initial_load_tx, initial_load_rx) = mpsc::channel();
         git.load_model_streaming(&initial_load_tx);
+
+        let commit_history = Self::load_commit_history(&config);
 
         Ok(Self {
             config: Arc::new(config),
@@ -228,6 +236,9 @@ impl Gui {
             spinner_frame: 0,
             remote_op_label: None,
             remote_op_success_at: None,
+            commit_message_history: commit_history,
+            commit_history_idx: None,
+            commit_history_draft: String::new(),
         })
     }
 
@@ -633,8 +644,52 @@ impl Gui {
                             self.diff_view.load_from_diff_output(&name, &diff);
                         }
                     }
+                } else if self.show_file_tree {
+                    // Directory node: show combined diff of all child files
+                    if let Some(node) = self.file_tree_nodes.get(selected) {
+                        if node.is_dir && !node.child_file_indices.is_empty() {
+                            let child_names: Vec<(String, bool, bool, bool)> = node
+                                .child_file_indices
+                                .iter()
+                                .filter_map(|&i| model.files.get(i))
+                                .map(|f| (f.name.clone(), f.has_unstaged_changes, f.has_staged_changes, f.tracked))
+                                .collect();
+                            let dir_name = node.name.clone();
+                            drop(model);
+
+                            let mut combined_diff = String::new();
+                            for (name, has_unstaged, has_staged, tracked) in &child_names {
+                                let diff = if *has_unstaged {
+                                    self.git.diff_file(name).unwrap_or_default()
+                                } else if *has_staged {
+                                    self.git.diff_file_staged(name).unwrap_or_default()
+                                } else if !tracked {
+                                    self.git.file_content(name).unwrap_or_default()
+                                } else {
+                                    String::new()
+                                };
+                                if !diff.is_empty() {
+                                    if !combined_diff.is_empty() {
+                                        combined_diff.push('\n');
+                                    }
+                                    combined_diff.push_str(&diff);
+                                }
+                            }
+
+                            if combined_diff.is_empty() {
+                                self.diff_view = DiffViewState::new();
+                            } else {
+                                self.diff_view.load_from_diff_output(&dir_name, &combined_diff);
+                            }
+                        } else {
+                            drop(model);
+                            self.diff_view = DiffViewState::new();
+                        }
+                    } else {
+                        drop(model);
+                        self.diff_view = DiffViewState::new();
+                    }
                 } else {
-                    // Directory node or no file selected — clear diff
                     drop(model);
                     self.diff_view = DiffViewState::new();
                 }
@@ -1440,8 +1495,18 @@ impl Gui {
                     || (!is_commit && key.code == KeyCode::Enter)
                 {
                     let popup = std::mem::replace(&mut self.popup, PopupState::None);
-                    if let PopupState::Input { textarea, on_confirm, .. } = popup {
+                    if let PopupState::Input { textarea, on_confirm, is_commit: was_commit, .. } = popup {
                         let text = textarea.lines().join("\n");
+                        // Save to commit history before calling on_confirm
+                        if was_commit && !text.trim().is_empty() {
+                            // Remove duplicate if it exists
+                            self.commit_message_history.retain(|m| m != &text);
+                            self.commit_message_history.insert(0, text.clone());
+                            // Keep history bounded
+                            self.commit_message_history.truncate(50);
+                            self.save_commit_history();
+                        }
+                        self.commit_history_idx = None;
                         if let Err(e) = on_confirm(self, &text) {
                             self.popup = PopupState::Message {
                                 title: "Error".to_string(),
@@ -1452,6 +1517,70 @@ impl Gui {
                     }
                 } else if key.code == KeyCode::Esc {
                     self.popup = PopupState::None;
+                    self.commit_history_idx = None;
+                } else if is_commit
+                    && (key.code == KeyCode::Up || key.code == KeyCode::Down)
+                    && !self.commit_message_history.is_empty()
+                {
+                    // Cycle through commit message history with Up/Down
+                    if let PopupState::Input { textarea, .. } = &mut self.popup {
+                        // Only cycle if on first line (Up) or last line (Down)
+                        let cursor_row = textarea.cursor().0;
+                        let line_count = textarea.lines().len();
+                        let should_cycle = match key.code {
+                            KeyCode::Up => cursor_row == 0,
+                            KeyCode::Down => cursor_row >= line_count.saturating_sub(1),
+                            _ => false,
+                        };
+
+                        if should_cycle {
+                            let history_len = self.commit_message_history.len();
+                            match key.code {
+                                KeyCode::Up => {
+                                    let new_idx = match self.commit_history_idx {
+                                        None => {
+                                            // Save current draft
+                                            self.commit_history_draft = textarea.lines().join("\n");
+                                            0
+                                        }
+                                        Some(idx) => (idx + 1).min(history_len - 1),
+                                    };
+                                    self.commit_history_idx = Some(new_idx);
+                                    let msg = &self.commit_message_history[new_idx];
+                                    let mut new_ta = popup::make_textarea("Enter commit message...");
+                                    new_ta.insert_str(msg);
+                                    *textarea = new_ta;
+                                }
+                                KeyCode::Down => {
+                                    match self.commit_history_idx {
+                                        Some(0) => {
+                                            // Go back to draft
+                                            self.commit_history_idx = None;
+                                            let draft = self.commit_history_draft.clone();
+                                            let mut new_ta = popup::make_textarea("Enter commit message...");
+                                            new_ta.insert_str(&draft);
+                                            *textarea = new_ta;
+                                        }
+                                        Some(idx) => {
+                                            let new_idx = idx - 1;
+                                            self.commit_history_idx = Some(new_idx);
+                                            let msg = &self.commit_message_history[new_idx];
+                                            let mut new_ta = popup::make_textarea("Enter commit message...");
+                                            new_ta.insert_str(msg);
+                                            *textarea = new_ta;
+                                        }
+                                        None => {
+                                            // Already at draft, do nothing
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        } else {
+                            // Not at boundary — forward to textarea for normal cursor movement
+                            textarea.input(key);
+                        }
+                    }
                 } else if is_commit
                     && key.code == KeyCode::Char('o')
                     && key.modifiers.contains(KeyModifiers::CONTROL)
@@ -3202,6 +3331,31 @@ impl Gui {
         } else {
             Some(selected)
         }
+    }
+
+    fn commit_history_path(config: &AppConfig) -> std::path::PathBuf {
+        config.config_dir.join("commit_message_history")
+    }
+
+    fn load_commit_history(config: &AppConfig) -> Vec<String> {
+        let path = Self::commit_history_path(config);
+        match std::fs::read_to_string(&path) {
+            Ok(contents) => contents
+                .split('\0')
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    fn save_commit_history(&self) {
+        let path = Self::commit_history_path(&self.config);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let contents = self.commit_message_history.join("\0");
+        let _ = std::fs::write(&path, contents);
     }
 
     pub fn update_file_tree_state(&mut self) {

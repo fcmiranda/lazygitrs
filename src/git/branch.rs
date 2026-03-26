@@ -52,6 +52,15 @@ impl GitCommands {
             });
         }
 
+        // Put HEAD branch first, keep the rest sorted by recency (committerdate)
+        let head_idx = branches.iter().position(|b| b.head);
+        if let Some(idx) = head_idx {
+            if idx > 0 {
+                let head_branch = branches.remove(idx);
+                branches.insert(0, head_branch);
+            }
+        }
+
         Ok(branches)
     }
 

@@ -22,6 +22,16 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) 
         return new_branch(gui);
     }
 
+    // c: checkout by name
+    if key.code == KeyCode::Char('c') {
+        return checkout_by_name(gui);
+    }
+
+    // -: checkout previous branch (git checkout -)
+    if key.code == KeyCode::Char('-') {
+        return checkout_previous(gui);
+    }
+
     if key.code == KeyCode::Char('d') {
         return delete_branch(gui);
     }
@@ -98,6 +108,28 @@ fn checkout_branch(gui: &mut Gui) -> Result<()> {
     Ok(())
 }
 
+fn checkout_previous(gui: &mut Gui) -> Result<()> {
+    gui.git.checkout_branch("-")?;
+    gui.needs_refresh = true;
+    Ok(())
+}
+
+fn checkout_by_name(gui: &mut Gui) -> Result<()> {
+    gui.popup = PopupState::Input {
+        title: "Checkout branch".to_string(),
+        textarea: make_textarea("Branch name"),
+        on_confirm: Box::new(|gui, name| {
+            if !name.is_empty() {
+                gui.git.checkout_branch(name)?;
+                gui.needs_refresh = true;
+            }
+            Ok(())
+        }),
+        is_commit: false,
+    };
+    Ok(())
+}
+
 fn new_branch(gui: &mut Gui) -> Result<()> {
     gui.popup = PopupState::Input {
         title: "New branch name".to_string(),
@@ -122,16 +154,114 @@ fn delete_branch(gui: &mut Gui) -> Result<()> {
             return Ok(()); // Can't delete current branch
         }
         let name = branch.name.clone();
+        let has_remote = branch.upstream.is_some();
+        let upstream = branch.upstream.clone();
         drop(model);
 
-        gui.popup = PopupState::Confirm {
-            title: "Delete branch".to_string(),
-            message: format!("Delete branch '{}'?", name),
-            on_confirm: Box::new(move |gui| {
-                gui.git.delete_branch(&name, false)?;
-                gui.needs_refresh = true;
-                Ok(())
-            }),
+        let name_local = name.clone();
+        let name_remote = name.clone();
+        let name_both = name.clone();
+        let upstream_for_remote = upstream.clone();
+        let upstream_for_both = upstream.clone();
+
+        let mut items = vec![
+            MenuItem {
+                label: "Delete local branch".to_string(),
+                description: String::new(),
+                key: Some("c".to_string()),
+                action: Some(Box::new(move |gui| {
+                    match gui.git.delete_branch(&name_local, false) {
+                        Ok(()) => {
+                            gui.needs_refresh = true;
+                        }
+                        Err(e) => {
+                            let err_msg = format!("{}", e);
+                            if err_msg.contains("not fully merged") {
+                                let name_force = name_local.clone();
+                                gui.popup = PopupState::Confirm {
+                                    title: "Force delete?".to_string(),
+                                    message: format!(
+                                        "'{}' is not fully merged. Are you sure you want to delete it?",
+                                        name_local
+                                    ),
+                                    on_confirm: Box::new(move |gui| {
+                                        gui.git.delete_branch(&name_force, true)?;
+                                        gui.needs_refresh = true;
+                                        Ok(())
+                                    }),
+                                };
+                            } else {
+                                return Err(e);
+                            }
+                        }
+                    }
+                    Ok(())
+                })),
+            },
+        ];
+
+        if has_remote {
+            items.push(MenuItem {
+                label: "Delete remote branch".to_string(),
+                description: String::new(),
+                key: Some("r".to_string()),
+                action: Some(Box::new(move |gui| {
+                    // Parse remote name from upstream (e.g. "origin/branch" -> "origin")
+                    let remote = upstream_for_remote
+                        .as_deref()
+                        .and_then(|u| u.split('/').next())
+                        .unwrap_or("origin");
+                    gui.git.delete_remote_branch(remote, &name_remote)?;
+                    gui.needs_refresh = true;
+                    Ok(())
+                })),
+            });
+        } else {
+            items.push(MenuItem {
+                label: "Delete remote branch".to_string(),
+                description: "No remote tracking branch".to_string(),
+                key: Some("r".to_string()),
+                action: None,
+            });
+        }
+
+        if has_remote {
+            items.push(MenuItem {
+                label: "Delete local and remote branch".to_string(),
+                description: String::new(),
+                key: Some("b".to_string()),
+                action: Some(Box::new(move |gui| {
+                    let remote = upstream_for_both
+                        .as_deref()
+                        .and_then(|u| u.split('/').next())
+                        .unwrap_or("origin");
+                    // Delete local first (force, since we're deleting remote too)
+                    gui.git.delete_branch(&name_both, true)?;
+                    gui.git.delete_remote_branch(remote, &name_both)?;
+                    gui.needs_refresh = true;
+                    Ok(())
+                })),
+            });
+        } else {
+            items.push(MenuItem {
+                label: "Delete local and remote branch".to_string(),
+                description: "No remote tracking branch".to_string(),
+                key: Some("b".to_string()),
+                action: None,
+            });
+        }
+
+        items.push(MenuItem {
+            label: "Cancel".to_string(),
+            description: String::new(),
+            key: None,
+            action: Some(Box::new(|_| Ok(()))),
+        });
+
+        gui.popup = PopupState::Menu {
+            title: format!("Delete branch '{}'?", name),
+            items,
+            selected: 0,
         };
     }
     Ok(())

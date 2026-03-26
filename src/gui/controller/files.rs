@@ -529,9 +529,42 @@ fn ignore_file(gui: &mut Gui) -> Result<()> {
     let model = gui.model.lock().unwrap();
     if let Some(file) = model.files.get(file_idx) {
         let name = file.name.clone();
+        let display = file.display_name.clone();
         drop(model);
-        gui.git.ignore_file(&name)?;
-        gui.needs_refresh = true;
+
+        let name_for_exclude = name.clone();
+        gui.popup = PopupState::Menu {
+            title: format!("Ignore '{}'", display),
+            items: vec![
+                MenuItem {
+                    label: "Add to .gitignore".to_string(),
+                    description: String::new(),
+                    key: Some("i".to_string()),
+                    action: Some(Box::new(move |gui| {
+                        gui.git.ignore_file(&name)?;
+                        gui.needs_refresh = true;
+                        Ok(())
+                    })),
+                },
+                MenuItem {
+                    label: "Add to .git/info/exclude".to_string(),
+                    description: String::new(),
+                    key: Some("e".to_string()),
+                    action: Some(Box::new(move |gui| {
+                        gui.git.exclude_file(&name_for_exclude)?;
+                        gui.needs_refresh = true;
+                        Ok(())
+                    })),
+                },
+                MenuItem {
+                    label: "Cancel".to_string(),
+                    description: String::new(),
+                    key: None,
+                    action: Some(Box::new(|_| Ok(()))),
+                },
+            ],
+            selected: 0,
+        };
     }
     Ok(())
 }

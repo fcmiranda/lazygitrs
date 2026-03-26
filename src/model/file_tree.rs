@@ -47,6 +47,24 @@ pub fn build_file_tree(files: &[File], collapsed_dirs: &HashSet<String>) -> Vec<
     }
 
     let mut nodes = Vec::new();
+
+    // Root node — represents the entire tree
+    let all_indices: Vec<usize> = (0..files.len()).collect();
+    let root_collapsed = collapsed_dirs.contains(".");
+    nodes.push(FileTreeNode {
+        depth: 0,
+        name: ".".to_string(),
+        path: ".".to_string(),
+        file_index: None,
+        is_dir: true,
+        child_file_indices: all_indices,
+    });
+
+    // If root is collapsed, return just the root node
+    if root_collapsed {
+        return nodes;
+    }
+
     let mut last_dirs: Vec<String> = Vec::new();
 
     for (parts, file_idx) in &entries {
@@ -85,7 +103,7 @@ pub fn build_file_tree(files: &[File], collapsed_dirs: &HashSet<String>) -> Vec<
             if !dir_hidden {
                 let children = dir_children.get(&dir_path).cloned().unwrap_or_default();
                 nodes.push(FileTreeNode {
-                    depth,
+                    depth: depth + 1, // +1 for root node
                     name: dir.to_string(),
                     path: dir_path.clone(),
                     file_index: None,
@@ -102,7 +120,7 @@ pub fn build_file_tree(files: &[File], collapsed_dirs: &HashSet<String>) -> Vec<
 
         if !hidden {
             nodes.push(FileTreeNode {
-                depth: dir_parts.len(),
+                depth: dir_parts.len() + 1, // +1 for root node
                 name: file_name.to_string(),
                 path: parts.join("/"),
                 file_index: Some(*file_idx),
@@ -148,6 +166,21 @@ pub fn build_commit_file_tree(
     entries.sort_by(|a, b| a.0.cmp(&b.0));
 
     let mut nodes = Vec::new();
+
+    // Root node
+    let root_collapsed = collapsed_dirs.contains(".");
+    nodes.push(CommitFileTreeNode {
+        depth: 0,
+        name: ".".to_string(),
+        path: ".".to_string(),
+        file_index: None,
+        is_dir: true,
+    });
+
+    if root_collapsed {
+        return nodes;
+    }
+
     let mut last_dirs: Vec<String> = Vec::new();
 
     for (parts, file_idx) in &entries {
@@ -178,7 +211,7 @@ pub fn build_commit_file_tree(
 
             if !dir_hidden {
                 nodes.push(CommitFileTreeNode {
-                    depth,
+                    depth: depth + 1, // +1 for root node
                     name: dir.to_string(),
                     path: dir_path.clone(),
                     file_index: None,
@@ -193,7 +226,7 @@ pub fn build_commit_file_tree(
 
         if !hidden {
             nodes.push(CommitFileTreeNode {
-                depth: dir_parts.len(),
+                depth: dir_parts.len() + 1, // +1 for root node
                 name: file_name.to_string(),
                 path: parts.join("/"),
                 file_index: Some(*file_idx),
