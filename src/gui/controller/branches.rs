@@ -22,9 +22,9 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) 
         return new_branch(gui);
     }
 
-    // c: checkout by name
+    // c: checkout (ref picker)
     if key.code == KeyCode::Char('c') {
-        return checkout_by_name(gui);
+        return checkout_picker(gui);
     }
 
     // -: checkout previous branch (git checkout -)
@@ -112,17 +112,66 @@ fn checkout_previous(gui: &mut Gui) -> Result<()> {
     Ok(())
 }
 
-fn checkout_by_name(gui: &mut Gui) -> Result<()> {
-    gui.popup = PopupState::Input {
-        title: "Checkout branch".to_string(),
-        textarea: make_textarea("Branch name"),
-        on_confirm: Box::new(|gui, name| {
-            if !name.is_empty() {
-                show_checkout_error_or_refresh(gui, name)?;
-            }
+fn checkout_picker(gui: &mut Gui) -> Result<()> {
+    use crate::gui::popup::{RefPickerItem, make_help_search_textarea};
+
+    let model = gui.model.lock().unwrap();
+    let mut items = Vec::new();
+
+    // Local branches (skip current)
+    for branch in &model.branches {
+        if branch.head {
+            continue;
+        }
+        items.push(RefPickerItem {
+            value: branch.name.clone(),
+            label: branch.name.clone(),
+            category: "Branches".to_string(),
+        });
+    }
+
+    // Remote branches
+    for remote in &model.remotes {
+        for branch in &remote.branches {
+            let full_name = format!("{}/{}", remote.name, branch.name);
+            items.push(RefPickerItem {
+                value: full_name.clone(),
+                label: full_name,
+                category: "Remote Branches".to_string(),
+            });
+        }
+    }
+
+    // Tags
+    for tag in &model.tags {
+        items.push(RefPickerItem {
+            value: tag.name.clone(),
+            label: tag.name.clone(),
+            category: "Tags".to_string(),
+        });
+    }
+
+    // Commits
+    for commit in &model.commits {
+        items.push(RefPickerItem {
+            value: commit.hash.clone(),
+            label: format!("{} {}", commit.short_hash(), commit.name),
+            category: "Commits".to_string(),
+        });
+    }
+
+    drop(model);
+
+    gui.popup = PopupState::RefPicker {
+        title: "Checkout".to_string(),
+        items,
+        selected: 0,
+        search_textarea: make_help_search_textarea(),
+        scroll_offset: 0,
+        on_confirm: Box::new(|gui, ref_name| {
+            show_checkout_error_or_refresh(gui, ref_name)?;
             Ok(())
         }),
-        is_commit: false,
     };
     Ok(())
 }

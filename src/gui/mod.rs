@@ -1919,7 +1919,7 @@ impl Gui {
         Ok(())
     }
 
-    fn show_interactive_rebase_picker(&mut self) {
+    pub fn show_interactive_rebase_picker(&mut self) {
         use crate::gui::popup::{RefPickerItem, make_help_search_textarea};
 
         let model = self.model.lock().unwrap();
@@ -2074,6 +2074,8 @@ impl Gui {
                 entries: vec![
                     HelpEntry { key: "<enter>".into(), description: "View branch commits".into() },
                     HelpEntry { key: "<space>".into(), description: "Checkout branch".into() },
+                    HelpEntry { key: "c".into(), description: "Checkout ref".into() },
+                    HelpEntry { key: "-".into(), description: "Checkout previous branch".into() },
                     HelpEntry { key: "n".into(), description: "New branch".into() },
                     HelpEntry { key: "d".into(), description: "Delete branch".into() },
                     HelpEntry { key: kb.branches.merge_into_current_branch.clone(), description: "Merge into current".into() },
