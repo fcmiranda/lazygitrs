@@ -33,6 +33,7 @@ impl DiffModeFocus {
 /// The kind of ref candidate shown in the search dropdown.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum RefKind {
+    RawRef,
     Branch,
     RemoteBranch,
     Tag,
@@ -275,15 +276,26 @@ impl DiffModeState {
             });
         }
 
-        // Jump cursor to best match
-        let q = self.query_text().to_lowercase();
+        // When there's a query, add a raw ref option at the top so the user
+        // can always select exactly what they typed (e.g. HEAD~1, HEAD^2).
+        let q = self.query_text();
         if !q.is_empty() {
-            // Find first item whose display or ref_value matches
-            if let Some(idx) = self.search_results.iter().position(|c| {
-                c.display.to_lowercase().contains(&q)
-                    || c.ref_value.to_lowercase().starts_with(&q)
+            self.search_results.insert(0, RefCandidate {
+                display: q.clone(),
+                ref_value: q.clone(),
+                kind: RefKind::RawRef,
+            });
+
+            // Jump cursor to best match among the real candidates (skip the raw ref at 0)
+            let q_lower = q.to_lowercase();
+            if let Some(idx) = self.search_results.iter().skip(1).position(|c| {
+                c.display.to_lowercase().contains(&q_lower)
+                    || c.ref_value.to_lowercase().starts_with(&q_lower)
             }) {
-                self.search_selected = idx;
+                self.search_selected = idx + 1; // +1 because we skipped raw ref
+            } else {
+                // No match — stay on the raw ref option
+                self.search_selected = 0;
             }
         } else {
             self.search_selected = 0;

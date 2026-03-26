@@ -338,6 +338,7 @@ fn render_dropdown(
         .take(visible_end - scroll)
         .map(|candidate| {
             let kind_label = match candidate.kind {
+                RefKind::RawRef => Span::styled("[ref] ", Style::default().fg(Color::White)),
                 RefKind::Branch => Span::styled("[branch] ", Style::default().fg(Color::Green)),
                 RefKind::RemoteBranch => {
                     Span::styled("[remote] ", Style::default().fg(Color::Magenta))
