@@ -221,14 +221,22 @@ impl DiffViewState {
 
     /// Load a diff from old/new content (single file).
     pub fn load(&mut self, filename: &str, old: &str, new: &str) {
+        // Preserve scroll position when reloading the same file (e.g. periodic refresh)
+        let same_file = self.filename == filename;
         self.filename = filename.to_string();
         self.old_content = old.to_string();
         self.new_content = new.to_string();
         self.lines = super::diff_algo::compute_side_by_side(old, new, self.tab_width);
         self.hunk_starts = super::diff_algo::find_hunk_starts(&self.lines);
-        self.scroll_offset = 0;
-        self.horizontal_scroll = 0;
-        self.selection = None;
+        if same_file {
+            // Clamp scroll in case the diff got shorter
+            let max = self.lines.len().saturating_sub(1);
+            self.scroll_offset = self.scroll_offset.min(max);
+        } else {
+            self.scroll_offset = 0;
+            self.horizontal_scroll = 0;
+            self.selection = None;
+        }
         // Preserve side_view across reloads so periodic refresh doesn't reset it
         // Single section with index 0
         self.sections = vec![FileSection {
@@ -254,14 +262,18 @@ impl DiffViewState {
         } else {
             // Multi-file diff — build per-section lines with highlighters
             let file_count = file_diffs.len();
-            self.filename = format!("{} ({} files)", filename, file_count);
+            let new_filename = format!("{} ({} files)", filename, file_count);
+            let same_file = self.filename == new_filename;
+            self.filename = new_filename;
             self.old_content = String::new();
             self.new_content = String::new();
             self.lines = Vec::new();
             self.sections = Vec::new();
-            self.scroll_offset = 0;
-            self.horizontal_scroll = 0;
-            self.selection = None;
+            if !same_file {
+                self.scroll_offset = 0;
+                self.horizontal_scroll = 0;
+                self.selection = None;
+            }
 
             for (section_idx, (file_name, file_diff)) in file_diffs.iter().enumerate() {
                 let (old, new) = parse_unified_diff(file_diff);
@@ -293,6 +305,12 @@ impl DiffViewState {
             }
 
             self.hunk_starts = super::diff_algo::find_hunk_starts(&self.lines);
+
+            if same_file {
+                // Clamp scroll in case the diff got shorter
+                let max = self.lines.len().saturating_sub(1);
+                self.scroll_offset = self.scroll_offset.min(max);
+            }
         }
     }
 
