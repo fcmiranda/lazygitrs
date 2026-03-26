@@ -673,7 +673,13 @@ fn render_status_sidebar<'a>(model: &Model, _config: &AppConfig, inner_width: us
     let head_branch = model.branches.iter().find(|b| b.head);
     let branch_name = head_branch
         .map(|b| b.name.clone())
-        .unwrap_or_else(|| "detached".to_string());
+        .unwrap_or_else(|| {
+            if model.head_branch_name.is_empty() {
+                "HEAD (no branch)".to_string()
+            } else {
+                model.head_branch_name.clone()
+            }
+        });
     let ahead_behind = head_branch.and_then(|b| b.ahead_behind());
 
     let repo_name = model.repo_name.clone();
@@ -777,7 +783,13 @@ fn render_status_main(
         .iter()
         .find(|b| b.head)
         .map(|b| b.name.as_str())
-        .unwrap_or("detached");
+        .unwrap_or_else(|| {
+            if model.head_branch_name.is_empty() {
+                "HEAD (no branch)"
+            } else {
+                model.head_branch_name.as_str()
+            }
+        });
 
     let logo = include_str!("../../logo.txt");
     let mut lines: Vec<Line> = logo

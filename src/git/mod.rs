@@ -15,11 +15,35 @@ pub mod tag;
 pub mod worktree;
 
 use std::path::{Path, PathBuf};
+use std::sync::{mpsc, Arc};
 
 use anyhow::Result;
 
-use crate::model::Model;
+use crate::model::{self, Model};
 use crate::os::cmd::CmdBuilder;
+
+/// A single piece of model data loaded from git. Each variant arrives
+/// independently so the UI can display whichever data is ready first.
+pub enum ModelPart {
+    Files(Vec<model::File>),
+    Branches(Vec<model::Branch>),
+    Commits(Vec<model::Commit>),
+    Stash(Vec<model::StashEntry>),
+    Remotes(Vec<model::Remote>),
+    Tags(Vec<model::Tag>),
+    Worktrees(Vec<model::Worktree>),
+    Reflog(Vec<model::Commit>),
+    DiffStats { added: usize, deleted: usize },
+    RepoStatus {
+        is_rebasing: bool,
+        is_merging: bool,
+        is_cherry_picking: bool,
+        is_bisecting: bool,
+    },
+}
+
+/// Total number of `ModelPart` variants that `load_model_streaming` sends.
+pub const MODEL_PART_COUNT: usize = 10;
 
 /// Facade for all git operations. Mirrors lazygit's GitCommand.
 pub struct GitCommands {
@@ -54,6 +78,7 @@ impl GitCommands {
 
         model.repo_name = self.repo_name();
         model.head_hash = self.head_hash().unwrap_or_default();
+        model.head_branch_name = self.current_branch_name().unwrap_or_default();
 
         // Run all independent git loads in parallel.
         std::thread::scope(|s| {
@@ -91,6 +116,64 @@ impl GitCommands {
 
             Ok(model)
         })
+    }
+
+    /// Load model data by spawning one thread per data type. Each thread
+    /// sends its result through `tx` as soon as it finishes, so the UI can
+    /// waterfall-display whichever data arrives first.
+    ///
+    /// The caller should also set `model.repo_name` and `model.head_hash`
+    /// synchronously since those are cheap.
+    pub fn load_model_streaming(self: &Arc<Self>, tx: &mpsc::Sender<ModelPart>) {
+        macro_rules! spawn_part {
+            ($tx:expr, $self:expr, $variant:ident, $expr:expr) => {{
+                let tx = $tx.clone();
+                let git = Arc::clone($self);
+                std::thread::spawn(move || {
+                    if let Ok(data) = $expr(&git) {
+                        let _ = tx.send(ModelPart::$variant(data));
+                    }
+                });
+            }};
+        }
+
+        spawn_part!(tx, self, Files, |g: &GitCommands| g.load_files());
+        spawn_part!(tx, self, Branches, |g: &GitCommands| g.load_branches());
+        spawn_part!(tx, self, Commits, |g: &GitCommands| g.load_commits(50));
+        spawn_part!(tx, self, Stash, |g: &GitCommands| g.load_stash());
+        spawn_part!(tx, self, Remotes, |g: &GitCommands| g.load_remotes());
+        spawn_part!(tx, self, Tags, |g: &GitCommands| g.load_tags());
+        spawn_part!(tx, self, Worktrees, |g: &GitCommands| g
+            .load_worktrees()
+            .or_else(|_| Ok::<_, anyhow::Error>(Vec::new())));
+        spawn_part!(tx, self, Reflog, |g: &GitCommands| g
+            .load_reflog(100)
+            .or_else(|_| Ok::<_, anyhow::Error>(Vec::new())));
+
+        // DiffStats and RepoStatus have different shapes, spawn them directly.
+        {
+            let tx = tx.clone();
+            let git = Arc::clone(self);
+            std::thread::spawn(move || {
+                if let Ok((added, deleted)) = git.diff_shortstat() {
+                    let _ = tx.send(ModelPart::DiffStats { added, deleted });
+                }
+            });
+        }
+        {
+            let tx = tx.clone();
+            let git = Arc::clone(self);
+            std::thread::spawn(move || {
+                if let Ok(status) = git.repo_status() {
+                    let _ = tx.send(ModelPart::RepoStatus {
+                        is_rebasing: status.is_rebasing,
+                        is_merging: status.is_merging,
+                        is_cherry_picking: status.is_cherry_picking,
+                        is_bisecting: status.is_bisecting,
+                    });
+                }
+            });
+        }
     }
 
     /// Refresh just the working tree files.

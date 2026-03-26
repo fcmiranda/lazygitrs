@@ -21,7 +21,7 @@ use ratatui::Terminal;
 
 use crate::config::AppConfig;
 use crate::config::keybindings::parse_key;
-use crate::git::GitCommands;
+use crate::git::{GitCommands, ModelPart, MODEL_PART_COUNT};
 use crate::model::Model;
 use crate::model::file_tree::{build_file_tree, CommitFileTreeNode, FileTreeNode};
 use crate::pager::side_by_side::{DiffPanel, DiffPanelLayout, DiffViewState, TextSelection};
@@ -125,6 +125,12 @@ pub struct Gui {
     pub sub_commits_parent_context: context::ContextId,
     /// Parent context to return to when pressing Esc from CommitFiles.
     pub commit_files_parent_context: Option<context::ContextId>,
+    /// Receiver for streamed model parts during initial load. Each git data
+    /// type arrives independently so the UI can waterfall-display results.
+    /// Set to `None` once all parts have been received.
+    initial_load_rx: Option<mpsc::Receiver<ModelPart>>,
+    /// How many model parts have arrived so far (out of MODEL_PART_COUNT).
+    initial_load_received: usize,
     /// Frame counter for the loading spinner animation.
     spinner_frame: usize,
     /// Label shown on the head branch during a remote operation (e.g. "Pushing", "Pulling").
@@ -142,7 +148,6 @@ pub enum ScreenMode {
 
 impl Gui {
     pub fn new(config: AppConfig, git: GitCommands) -> Result<Self> {
-        let model = git.load_model()?;
         let (diff_tx, diff_rx) = mpsc::channel();
         let (ai_commit_tx, ai_commit_rx) = mpsc::channel();
         let (remote_op_tx, remote_op_rx) = mpsc::channel();
@@ -151,10 +156,24 @@ impl Gui {
         let command_log = crate::os::cmd::new_command_log();
         crate::os::cmd::set_thread_command_log(command_log.clone());
 
+        // Start with an empty model — each piece of data loads in the
+        // background and streams in as it becomes ready, so the UI can
+        // paint immediately and waterfall-display results.
+        let git = Arc::new(git);
+        let mut model = Model::default();
+        model.repo_name = git.repo_name();
+        model.head_hash = git.head_hash().unwrap_or_default();
+        model.head_branch_name = git.current_branch_name().unwrap_or_default();
+
+        let (initial_load_tx, initial_load_rx) = mpsc::channel();
+        git.load_model_streaming(&initial_load_tx);
+
         Ok(Self {
             config: Arc::new(config),
-            git: Arc::new(git),
+            git,
             model: Arc::new(Mutex::new(model)),
+            initial_load_rx: Some(initial_load_rx),
+            initial_load_received: 0,
             context_mgr: ContextManager::new(),
             layout: LayoutState::default(),
             popup: PopupState::None,
@@ -202,12 +221,6 @@ impl Gui {
     }
 
     pub fn run(&mut self) -> Result<()> {
-        // Build initial file tree if tree view is enabled
-        if self.show_file_tree {
-            let model = self.model.lock().unwrap();
-            self.file_tree_nodes = build_file_tree(&model.files, &self.collapsed_dirs);
-            self.context_mgr.files_list_len_override = Some(self.file_tree_nodes.len());
-        }
         let mut terminal = setup_terminal()?;
 
         // Sync layout dimensions with actual terminal size so mouse handling
@@ -223,6 +236,53 @@ impl Gui {
 
     fn main_loop(&mut self, terminal: &mut Term) -> Result<()> {
         loop {
+            // Drain any model parts that have arrived from the background load.
+            if let Some(rx) = &self.initial_load_rx {
+                let mut got_files = false;
+                while let Ok(part) = rx.try_recv() {
+                    let mut model = self.model.lock().unwrap();
+                    match part {
+                        ModelPart::Files(v) => { model.files = v; got_files = true; }
+                        ModelPart::Branches(v) => model.branches = v,
+                        ModelPart::Commits(v) => model.commits = v,
+                        ModelPart::Stash(v) => model.stash_entries = v,
+                        ModelPart::Remotes(v) => model.remotes = v,
+                        ModelPart::Tags(v) => model.tags = v,
+                        ModelPart::Worktrees(v) => model.worktrees = v,
+                        ModelPart::Reflog(v) => model.reflog_commits = v,
+                        ModelPart::DiffStats { added, deleted } => {
+                            model.total_additions = added;
+                            model.total_deletions = deleted;
+                        }
+                        ModelPart::RepoStatus {
+                            is_rebasing, is_merging, is_cherry_picking, is_bisecting,
+                        } => {
+                            model.is_rebasing = is_rebasing;
+                            model.is_merging = is_merging;
+                            model.is_cherry_picking = is_cherry_picking;
+                            model.is_bisecting = is_bisecting;
+                        }
+                    }
+                    self.initial_load_received += 1;
+                }
+                // Rebuild file tree if files arrived this frame.
+                if got_files && self.show_file_tree {
+                    let model = self.model.lock().unwrap();
+                    self.file_tree_nodes =
+                        build_file_tree(&model.files, &self.collapsed_dirs);
+                    self.context_mgr.files_list_len_override =
+                        Some(self.file_tree_nodes.len());
+                }
+                // Trigger a diff load once any data arrives.
+                if self.initial_load_received > 0 {
+                    self.needs_diff_refresh = true;
+                }
+                // All parts received — done loading.
+                if self.initial_load_received >= MODEL_PART_COUNT {
+                    self.initial_load_rx = None;
+                }
+            }
+
             // Request diff loading on background thread if selection changed
             self.maybe_request_diff();
 

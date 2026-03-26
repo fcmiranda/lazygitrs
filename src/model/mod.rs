@@ -24,6 +24,9 @@ use std::collections::HashMap;
 pub struct Model {
     pub repo_name: String,
     pub head_hash: String,
+    /// Current branch name, fetched cheaply via `git branch --show-current`.
+    /// Empty string when HEAD is detached.
+    pub head_branch_name: String,
     pub files: Vec<File>,
     pub branches: Vec<Branch>,
     pub commits: Vec<Commit>,
