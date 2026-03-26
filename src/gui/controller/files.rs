@@ -225,12 +225,16 @@ fn copy_to_clipboard_menu(gui: &mut Gui) -> Result<()> {
     };
     let file_name = file.display_name.clone();
     let rel_path = file.name.clone();
+    let is_added = file.added;
+    let is_deleted = file.deleted;
     drop(model);
 
     let abs_path = gui.git.repo_path().join(&rel_path).to_string_lossy().to_string();
     let rel_for_diff = rel_path.clone();
     let file_name_copy = file_name.clone();
     let rel_path_copy = rel_path.clone();
+    let path_for_old = rel_path.clone();
+    let path_for_new = rel_path.clone();
 
     gui.popup = PopupState::Menu {
         title: "Copy to clipboard".to_string(),
@@ -261,6 +265,42 @@ fn copy_to_clipboard_menu(gui: &mut Gui) -> Result<()> {
                     Platform::copy_to_clipboard(&abs_path)?;
                     Ok(())
                 })),
+            },
+            MenuItem {
+                label: "Old content (HEAD)".to_string(),
+                description: if !is_added {
+                    String::new()
+                } else {
+                    "File is new — no old content".to_string()
+                },
+                key: Some("o".to_string()),
+                action: if !is_added {
+                    Some(Box::new(move |gui| {
+                        let content = gui.git.file_content_at_commit("HEAD", &path_for_old)?;
+                        Platform::copy_to_clipboard(&content)?;
+                        Ok(())
+                    }))
+                } else {
+                    None
+                },
+            },
+            MenuItem {
+                label: "New content (working tree)".to_string(),
+                description: if !is_deleted {
+                    String::new()
+                } else {
+                    "File was deleted — no new content".to_string()
+                },
+                key: Some("w".to_string()),
+                action: if !is_deleted {
+                    Some(Box::new(move |gui| {
+                        let content = gui.git.file_content(&path_for_new)?;
+                        Platform::copy_to_clipboard(&content)?;
+                        Ok(())
+                    }))
+                } else {
+                    None
+                },
             },
             MenuItem {
                 label: "Diff of selected file".to_string(),

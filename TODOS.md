@@ -74,7 +74,9 @@
 - [ ] Hot reloading of config (I can edit the config on the fly and the config is still read without restarting lazygit)
 - [x] Bug: in the diff exploration view, because of the 10s interval I think the position of which I scrolled at also seems to get reset. Ideally not. Just like how the [new] and [old] -- it used to have this bug but I fixed it.
 - [ ] Search feature inside the diff exploration view is much needed. Grep for all in diff_mode is good too.
-- [ ] In `?` help dialog, use tui-textarea so I can erase the input using opt-backspace.
+- [x] Search feature inside of diff mode. It works in the default view.
+- [x] In `?` help dialog, use tui-textarea so I can erase the input using opt-backspace.
+- [x] In 'Commit Files' view, in any, when I press `y`, it opens a Copy to clipboard dialog (same with other features). Some options I will see are: 'Copy filename', 'Copy old content', 'Copy new content'.
 
 ## Stuff I wanna do differently
 

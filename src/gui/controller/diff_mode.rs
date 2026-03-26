@@ -4,7 +4,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::config::keybindings::parse_key;
 use crate::gui::Gui;
 use crate::gui::modes::diff_mode::{DiffModeFocus, DiffModeSelector};
-use crate::gui::popup::{HelpEntry, HelpSection, PopupState};
+use crate::gui::popup::{HelpEntry, HelpSection, MenuItem, PopupState};
+use crate::model::FileChangeStatus;
+use crate::os::platform::Platform;
 
 pub fn handle_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
     // Popup takes priority (for ? help)
@@ -17,6 +19,11 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
         return handle_combobox_key(gui, key);
     }
 
+    // File search input mode takes priority
+    if gui.diff_mode.file_search_active {
+        return handle_file_search_key(gui, key);
+    }
+
     // q to exit diff mode
     if key.code == KeyCode::Char('q') {
         gui.diff_mode.exit();
@@ -27,6 +34,40 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
     if key.code == KeyCode::Char('?') {
         show_diff_mode_help(gui);
         return Ok(());
+    }
+
+    let keybindings = &gui.config.user_config.keybinding;
+
+    // Start file search (/)
+    if matches_key(key, &keybindings.universal.start_search) {
+        gui.diff_mode.file_search_active = true;
+        gui.diff_mode.file_search_query.clear();
+        gui.diff_mode.file_search_matches.clear();
+        gui.diff_mode.file_search_match_idx = 0;
+        let mut ta = tui_textarea::TextArea::default();
+        ta.set_cursor_line_style(ratatui::style::Style::default());
+        gui.diff_mode.file_search_textarea = Some(ta);
+        return Ok(());
+    }
+
+    // n/N to navigate search matches, Esc to dismiss search
+    if !gui.diff_mode.file_search_query.is_empty() {
+        if key.code == KeyCode::Esc {
+            gui.diff_mode.file_search_query.clear();
+            gui.diff_mode.file_search_matches.clear();
+            gui.diff_mode.file_search_match_idx = 0;
+            return Ok(());
+        }
+        if matches_key(key, &keybindings.universal.next_match) {
+            gui.diff_mode.goto_next_file_search_match();
+            gui.needs_diff_refresh = true;
+            return Ok(());
+        }
+        if matches_key(key, &keybindings.universal.prev_match) {
+            gui.diff_mode.goto_prev_file_search_match();
+            gui.needs_diff_refresh = true;
+            return Ok(());
+        }
     }
 
     // Tab to cycle focus
@@ -134,6 +175,37 @@ fn handle_combobox_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
     Ok(())
 }
 
+fn handle_file_search_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
+    if let Some(ref mut ta) = gui.diff_mode.file_search_textarea {
+        match key.code {
+            KeyCode::Esc => {
+                gui.diff_mode.file_search_active = false;
+                gui.diff_mode.file_search_query.clear();
+                gui.diff_mode.file_search_matches.clear();
+                gui.diff_mode.file_search_match_idx = 0;
+                gui.diff_mode.file_search_textarea = None;
+            }
+            KeyCode::Enter => {
+                gui.diff_mode.file_search_active = false;
+                // Jump to first match
+                if !gui.diff_mode.file_search_matches.is_empty() {
+                    gui.diff_mode.file_search_match_idx = 0;
+                    gui.diff_mode.diff_files_selected = gui.diff_mode.file_search_matches[0];
+                }
+                gui.diff_mode.file_search_textarea = None;
+                gui.needs_diff_refresh = true;
+            }
+            _ => {
+                ta.input(key);
+                gui.diff_mode.file_search_query = ta.lines().join("");
+                gui.diff_mode.update_file_search_matches();
+                gui.needs_diff_refresh = true;
+            }
+        }
+    }
+    Ok(())
+}
+
 fn handle_commit_files_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
     let keybindings = &gui.config.user_config.keybinding;
 
@@ -190,8 +262,102 @@ fn handle_commit_files_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
             gui.diff_mode.diff_files_selected = len.saturating_sub(1);
             gui.needs_diff_refresh = true;
         }
+        KeyCode::Char('y') => {
+            return show_commit_file_copy_menu(gui);
+        }
         _ => {}
     }
+    Ok(())
+}
+
+fn show_commit_file_copy_menu(gui: &mut Gui) -> Result<()> {
+    // Resolve file index (tree view maps node -> file index)
+    let selected = gui.diff_mode.diff_files_selected;
+    let file_idx = if gui.diff_mode.show_tree {
+        gui.diff_mode.tree_nodes.get(selected).and_then(|n| n.file_index)
+    } else {
+        Some(selected)
+    };
+
+    let Some(idx) = file_idx else { return Ok(()) };
+    let Some(file) = gui.diff_mode.diff_files.get(idx) else { return Ok(()) };
+
+    let file_name = file.name.clone();
+    let status = file.status;
+    let ref_a = gui.diff_mode.ref_a.clone();
+    let ref_b = gui.diff_mode.ref_b.clone();
+    let path_for_old = file_name.clone();
+    let path_for_new = file_name.clone();
+    let path_for_diff = file_name.clone();
+
+    // Added files have no old content, Deleted files have no new content
+    let has_old = !matches!(status, FileChangeStatus::Added);
+    let has_new = !matches!(status, FileChangeStatus::Deleted);
+
+    let ref_a_for_old = ref_a.clone();
+    let ref_b_for_new = ref_b.clone();
+    let ref_a_for_diff = ref_a.clone();
+    let ref_b_for_diff = ref_b.clone();
+
+    gui.popup = PopupState::Menu {
+        title: "Copy to clipboard".to_string(),
+        items: vec![
+            MenuItem {
+                label: "File name".to_string(),
+                description: String::new(),
+                key: Some("n".to_string()),
+                action: Some(Box::new(move |_gui| {
+                    Platform::copy_to_clipboard(&file_name)?;
+                    Ok(())
+                })),
+            },
+            MenuItem {
+                label: "Old content (from A)".to_string(),
+                description: if has_old { String::new() } else { "File was added — no old content".to_string() },
+                key: Some("o".to_string()),
+                action: if has_old {
+                    Some(Box::new(move |gui| {
+                        let content = gui.git.file_content_at_commit(&ref_a_for_old, &path_for_old)?;
+                        Platform::copy_to_clipboard(&content)?;
+                        Ok(())
+                    }))
+                } else {
+                    None
+                },
+            },
+            MenuItem {
+                label: "New content (from B)".to_string(),
+                description: if has_new { String::new() } else { "File was deleted — no new content".to_string() },
+                key: Some("w".to_string()),
+                action: if has_new {
+                    Some(Box::new(move |gui| {
+                        let content = gui.git.file_content_at_commit(&ref_b_for_new, &path_for_new)?;
+                        Platform::copy_to_clipboard(&content)?;
+                        Ok(())
+                    }))
+                } else {
+                    None
+                },
+            },
+            MenuItem {
+                label: "Diff".to_string(),
+                description: String::new(),
+                key: Some("d".to_string()),
+                action: Some(Box::new(move |gui| {
+                    let diff = gui.git.diff_refs_file(&ref_a_for_diff, &ref_b_for_diff, &path_for_diff)?;
+                    Platform::copy_to_clipboard(&diff)?;
+                    Ok(())
+                })),
+            },
+            MenuItem {
+                label: "Cancel".to_string(),
+                description: String::new(),
+                key: None,
+                action: Some(Box::new(|_| Ok(()))),
+            },
+        ],
+        selected: 0,
+    };
     Ok(())
 }
 
@@ -362,6 +528,9 @@ fn show_diff_mode_help(gui: &mut Gui) {
             HelpEntry { key: "{/}".into(), description: "Previous / next hunk".into() },
             HelpEntry { key: "[/]".into(), description: "Toggle old / new only view".into() },
             HelpEntry { key: "g/G".into(), description: "Go to top / bottom".into() },
+            HelpEntry { key: "/".into(), description: "Search commit files".into() },
+            HelpEntry { key: "n/N".into(), description: "Next / previous search match".into() },
+            HelpEntry { key: "y".into(), description: "Copy to clipboard".into() },
             HelpEntry { key: "?".into(), description: "Show this help".into() },
         ],
     };

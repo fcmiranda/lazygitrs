@@ -84,6 +84,13 @@ pub struct DiffModeState {
     pub show_tree: bool,
     pub tree_nodes: Vec<crate::model::file_tree::CommitFileTreeNode>,
     pub collapsed_dirs: std::collections::HashSet<String>,
+
+    // Search within commit files
+    pub file_search_active: bool,
+    pub file_search_query: String,
+    pub file_search_matches: Vec<usize>,
+    pub file_search_match_idx: usize,
+    pub file_search_textarea: Option<tui_textarea::TextArea<'static>>,
 }
 
 impl DiffModeState {
@@ -106,6 +113,11 @@ impl DiffModeState {
             show_tree: false,
             tree_nodes: Vec::new(),
             collapsed_dirs: std::collections::HashSet::new(),
+            file_search_active: false,
+            file_search_query: String::new(),
+            file_search_matches: Vec::new(),
+            file_search_match_idx: 0,
+            file_search_textarea: None,
         }
     }
 
@@ -127,6 +139,11 @@ impl DiffModeState {
         self.show_tree = false;
         self.tree_nodes.clear();
         self.collapsed_dirs.clear();
+        self.file_search_active = false;
+        self.file_search_query.clear();
+        self.file_search_matches.clear();
+        self.file_search_match_idx = 0;
+        self.file_search_textarea = None;
     }
 
     pub fn exit(&mut self) {
@@ -323,5 +340,60 @@ impl DiffModeState {
         } else {
             self.diff_files.len()
         }
+    }
+
+    /// Update file search matches based on current query.
+    pub fn update_file_search_matches(&mut self) {
+        self.file_search_matches.clear();
+        if self.file_search_query.is_empty() {
+            return;
+        }
+
+        let query = self.file_search_query.to_lowercase();
+
+        if self.show_tree {
+            for (i, node) in self.tree_nodes.iter().enumerate() {
+                if node.path.to_lowercase().contains(&query)
+                    || node.name.to_lowercase().contains(&query)
+                {
+                    self.file_search_matches.push(i);
+                }
+            }
+        } else {
+            for (i, file) in self.diff_files.iter().enumerate() {
+                if file.name.to_lowercase().contains(&query) {
+                    self.file_search_matches.push(i);
+                }
+            }
+        }
+
+        // Auto-jump to first match
+        if !self.file_search_matches.is_empty() {
+            self.file_search_match_idx = 0;
+            self.diff_files_selected = self.file_search_matches[0];
+        }
+    }
+
+    /// Go to next file search match.
+    pub fn goto_next_file_search_match(&mut self) {
+        if self.file_search_matches.is_empty() {
+            return;
+        }
+        self.file_search_match_idx =
+            (self.file_search_match_idx + 1) % self.file_search_matches.len();
+        self.diff_files_selected = self.file_search_matches[self.file_search_match_idx];
+    }
+
+    /// Go to previous file search match.
+    pub fn goto_prev_file_search_match(&mut self) {
+        if self.file_search_matches.is_empty() {
+            return;
+        }
+        if self.file_search_match_idx == 0 {
+            self.file_search_match_idx = self.file_search_matches.len() - 1;
+        } else {
+            self.file_search_match_idx -= 1;
+        }
+        self.diff_files_selected = self.file_search_matches[self.file_search_match_idx];
     }
 }

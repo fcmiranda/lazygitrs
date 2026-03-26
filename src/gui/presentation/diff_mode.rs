@@ -256,6 +256,58 @@ fn render_diff_panel(
 }
 
 fn render_status_bar(frame: &mut Frame, area: Rect, state: &DiffModeState) {
+    // If search is active or has results, show search bar instead of hints
+    if state.file_search_active {
+        if let Some(ref ta) = state.file_search_textarea {
+            let match_info = if !state.file_search_matches.is_empty() {
+                format!(
+                    " {}/{}",
+                    state.file_search_match_idx + 1,
+                    state.file_search_matches.len()
+                )
+            } else if !state.file_search_query.is_empty() {
+                " (no matches)".to_string()
+            } else {
+                String::new()
+            };
+
+            let prefix_width = 2u16; // " /"
+            let suffix_width = match_info.len() as u16;
+            let ta_width = area.width.saturating_sub(prefix_width + suffix_width);
+
+            let prefix_rect = Rect::new(area.x, area.y, prefix_width, 1);
+            let prefix = Paragraph::new(Span::styled(" /", Style::default().fg(Color::Yellow)));
+            frame.render_widget(prefix, prefix_rect);
+
+            let ta_rect = Rect::new(area.x + prefix_width, area.y, ta_width, 1);
+            frame.render_widget(&*ta, ta_rect);
+
+            if !match_info.is_empty() {
+                let suffix_rect = Rect::new(area.x + prefix_width + ta_width, area.y, suffix_width, 1);
+                let suffix = Paragraph::new(Span::styled(match_info, Style::default().fg(Color::Yellow)));
+                frame.render_widget(suffix, suffix_rect);
+            }
+            return;
+        }
+    } else if !state.file_search_query.is_empty() {
+        // Search dismissed but results persist — show query + match info
+        let match_info = if !state.file_search_matches.is_empty() {
+            format!(
+                " {}/{}",
+                state.file_search_match_idx + 1,
+                state.file_search_matches.len()
+            )
+        } else {
+            " (no matches)".to_string()
+        };
+        let bar = Paragraph::new(Span::styled(
+            format!(" /{}{}", state.file_search_query, match_info),
+            Style::default().fg(Color::Yellow),
+        ));
+        frame.render_widget(bar, area);
+        return;
+    }
+
     let hints = if state.editing.is_some() {
         vec![
             ("Enter", "select"),
