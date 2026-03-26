@@ -38,8 +38,11 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
 
     let keybindings = &gui.config.user_config.keybinding;
 
-    // Start file search (/)
-    if matches_key(key, &keybindings.universal.start_search) {
+    // Start file search (/) — only when NOT focused on diff exploration
+    // (diff exploration handles / for its own content search)
+    if gui.diff_mode.focus != DiffModeFocus::DiffExploration
+        && matches_key(key, &keybindings.universal.start_search)
+    {
         gui.diff_mode.file_search_active = true;
         gui.diff_mode.file_search_query.clear();
         gui.diff_mode.file_search_matches.clear();
@@ -50,8 +53,11 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
         return Ok(());
     }
 
-    // n/N to navigate search matches, Esc to dismiss search
-    if !gui.diff_mode.file_search_query.is_empty() {
+    // n/N to navigate file search matches, Esc to dismiss file search
+    // (skipped when diff exploration is focused — it has its own search)
+    if !gui.diff_mode.file_search_query.is_empty()
+        && gui.diff_mode.focus != DiffModeFocus::DiffExploration
+    {
         if key.code == KeyCode::Esc {
             gui.diff_mode.file_search_query.clear();
             gui.diff_mode.file_search_matches.clear();
@@ -361,7 +367,36 @@ fn show_commit_file_copy_menu(gui: &mut Gui) -> Result<()> {
     Ok(())
 }
 
+fn handle_diff_search_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
+    if let Some(ref mut ta) = gui.diff_view.search_textarea {
+        match key.code {
+            KeyCode::Esc => {
+                gui.diff_view.dismiss_search();
+            }
+            KeyCode::Enter => {
+                gui.diff_view.dismiss_search();
+                // Jump to first match
+                if !gui.diff_view.search_matches.is_empty() {
+                    gui.diff_view.search_match_idx = 0;
+                    gui.diff_view.scroll_to_current_match();
+                }
+            }
+            _ => {
+                ta.input(key);
+                gui.diff_view.search_query = ta.lines().join("");
+                gui.diff_view.update_search();
+            }
+        }
+    }
+    Ok(())
+}
+
 fn handle_diff_exploration_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
+    // Diff search input mode takes priority
+    if gui.diff_view.search_active {
+        return handle_diff_search_key(gui, key);
+    }
+
     // Handle text selection keys first (y to copy, Esc to dismiss)
     if gui.diff_view.selection.is_some() {
         match key.code {
@@ -383,9 +418,33 @@ fn handle_diff_exploration_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
         }
     }
 
+    let keybindings = &gui.config.user_config.keybinding;
+
+    // Start diff content search (/)
+    if matches_key(key, &keybindings.universal.start_search) {
+        gui.diff_view.start_search();
+        return Ok(());
+    }
+
+    // n/N to navigate diff search matches
+    if !gui.diff_view.search_query.is_empty() {
+        if matches_key(key, &keybindings.universal.next_match) {
+            gui.diff_view.next_search_match();
+            return Ok(());
+        }
+        if matches_key(key, &keybindings.universal.prev_match) {
+            gui.diff_view.prev_search_match();
+            return Ok(());
+        }
+    }
+
     match key.code {
         KeyCode::Esc => {
-            gui.diff_mode.focus = DiffModeFocus::CommitFiles;
+            if !gui.diff_view.search_query.is_empty() {
+                gui.diff_view.clear_search();
+            } else {
+                gui.diff_mode.focus = DiffModeFocus::CommitFiles;
+            }
         }
         KeyCode::Char('j') | KeyCode::Down => {
             gui.diff_view.scroll_down(1);
@@ -528,7 +587,7 @@ fn show_diff_mode_help(gui: &mut Gui) {
             HelpEntry { key: "{/}".into(), description: "Previous / next hunk".into() },
             HelpEntry { key: "[/]".into(), description: "Toggle old / new only view".into() },
             HelpEntry { key: "g/G".into(), description: "Go to top / bottom".into() },
-            HelpEntry { key: "/".into(), description: "Search commit files".into() },
+            HelpEntry { key: "/".into(), description: "Search (files or diff content)".into() },
             HelpEntry { key: "n/N".into(), description: "Next / previous search match".into() },
             HelpEntry { key: "y".into(), description: "Copy to clipboard".into() },
             HelpEntry { key: "?".into(), description: "Show this help".into() },

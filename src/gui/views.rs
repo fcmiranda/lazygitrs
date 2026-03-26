@@ -72,6 +72,8 @@ pub fn render(
             // Diff is focused: show diff fullscreen
             if !diff_view.is_empty() {
                 side_by_side::render_diff(frame, fl.main_panel, diff_view, &theme, true);
+                side_by_side::render_diff_search_highlights(frame, fl.main_panel, diff_view);
+                side_by_side::render_diff_search_bar(frame, fl.main_panel, diff_view);
             } else {
                 let block = Block::default()
                     .title(" Diff ")
@@ -476,6 +478,8 @@ pub fn render(
         render_status_main(frame, fl.main_panel, model, config, &theme);
     } else if !diff_view.is_empty() {
         side_by_side::render_diff(frame, fl.main_panel, diff_view, &theme, diff_focused);
+        side_by_side::render_diff_search_highlights(frame, fl.main_panel, diff_view);
+        side_by_side::render_diff_search_bar(frame, fl.main_panel, diff_view);
     } else {
         // Fallback: show info about selected item
         let block = Block::default()

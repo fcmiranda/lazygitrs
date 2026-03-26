@@ -236,6 +236,8 @@ fn render_diff_panel(
 
     if !diff_view.is_empty() {
         side_by_side::render_diff(frame, area, diff_view, theme, focused);
+        side_by_side::render_diff_search_highlights(frame, area, diff_view);
+        side_by_side::render_diff_search_bar(frame, area, diff_view);
     } else {
         let border = if focused {
             theme.active_border

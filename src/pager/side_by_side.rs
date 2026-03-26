@@ -175,6 +175,17 @@ pub enum DiffSideView {
     NewOnly,
 }
 
+/// A search match within the diff content, used for n/N navigation.
+#[derive(Clone, Debug)]
+pub struct DiffSearchMatch {
+    /// Index into `DiffViewState::lines`.
+    pub line_idx: usize,
+    /// Which panel the match is on.
+    pub panel: DiffPanel,
+    /// Character (byte) offset within the line text.
+    pub col: usize,
+}
+
 /// State for the diff view panel.
 pub struct DiffViewState {
     pub scroll_offset: usize,
@@ -191,6 +202,16 @@ pub struct DiffViewState {
     pub selection: Option<TextSelection>,
     /// Which side(s) of the diff to show (Both, OldOnly, NewOnly).
     pub side_view: DiffSideView,
+    /// Whether the search input is currently active (typing).
+    pub search_active: bool,
+    /// Current search query string.
+    pub search_query: String,
+    /// All matches found in the diff content.
+    pub search_matches: Vec<DiffSearchMatch>,
+    /// Index of the current match (for n/N navigation).
+    pub search_match_idx: usize,
+    /// Textarea widget for search input.
+    pub search_textarea: Option<tui_textarea::TextArea<'static>>,
 }
 
 impl Default for DiffViewState {
@@ -207,6 +228,11 @@ impl Default for DiffViewState {
             sections: Vec::new(),
             selection: None,
             side_view: DiffSideView::Both,
+            search_active: false,
+            search_query: String::new(),
+            search_matches: Vec::new(),
+            search_match_idx: 0,
+            search_textarea: None,
         }
     }
 }
@@ -216,6 +242,112 @@ impl DiffViewState {
         Self {
             tab_width: 4,
             ..Default::default()
+        }
+    }
+
+    /// Activate search mode with an empty query.
+    pub fn start_search(&mut self) {
+        self.search_active = true;
+        self.search_query.clear();
+        self.search_matches.clear();
+        self.search_match_idx = 0;
+        let mut ta = tui_textarea::TextArea::default();
+        ta.set_cursor_line_style(Style::default());
+        self.search_textarea = Some(ta);
+    }
+
+    /// Update search matches after the query changes.
+    pub fn update_search(&mut self) {
+        self.search_matches.clear();
+        if self.search_query.is_empty() {
+            self.search_match_idx = 0;
+            return;
+        }
+        let query_lower = self.search_query.to_lowercase();
+        for (line_idx, line) in self.lines.iter().enumerate() {
+            if line.file_header.is_some() {
+                continue;
+            }
+            // Search old side
+            if let Some((_, ref text)) = line.old_line {
+                let text_lower = text.to_lowercase();
+                let mut start = 0;
+                while let Some(pos) = text_lower[start..].find(&query_lower) {
+                    self.search_matches.push(DiffSearchMatch {
+                        line_idx,
+                        panel: DiffPanel::Old,
+                        col: start + pos,
+                    });
+                    start += pos + 1;
+                }
+            }
+            // Search new side
+            if let Some((_, ref text)) = line.new_line {
+                let text_lower = text.to_lowercase();
+                let mut start = 0;
+                while let Some(pos) = text_lower[start..].find(&query_lower) {
+                    self.search_matches.push(DiffSearchMatch {
+                        line_idx,
+                        panel: DiffPanel::New,
+                        col: start + pos,
+                    });
+                    start += pos + 1;
+                }
+            }
+        }
+        // Clamp match index
+        if self.search_matches.is_empty() {
+            self.search_match_idx = 0;
+        } else {
+            self.search_match_idx = self.search_match_idx.min(self.search_matches.len() - 1);
+        }
+    }
+
+    /// Dismiss search input but keep the query and highlights.
+    pub fn dismiss_search(&mut self) {
+        self.search_active = false;
+        self.search_textarea = None;
+    }
+
+    /// Clear search entirely.
+    pub fn clear_search(&mut self) {
+        self.search_active = false;
+        self.search_query.clear();
+        self.search_matches.clear();
+        self.search_match_idx = 0;
+        self.search_textarea = None;
+    }
+
+    /// Navigate to the next search match and scroll to it.
+    pub fn next_search_match(&mut self) {
+        if self.search_matches.is_empty() {
+            return;
+        }
+        self.search_match_idx = (self.search_match_idx + 1) % self.search_matches.len();
+        self.scroll_to_current_match();
+    }
+
+    /// Navigate to the previous search match and scroll to it.
+    pub fn prev_search_match(&mut self) {
+        if self.search_matches.is_empty() {
+            return;
+        }
+        if self.search_match_idx == 0 {
+            self.search_match_idx = self.search_matches.len() - 1;
+        } else {
+            self.search_match_idx -= 1;
+        }
+        self.scroll_to_current_match();
+    }
+
+    /// Scroll so the current search match is visible.
+    pub fn scroll_to_current_match(&mut self) {
+        if let Some(m) = self.search_matches.get(self.search_match_idx) {
+            let line = m.line_idx;
+            // Scroll so the match line is visible (roughly centered)
+            if line < self.scroll_offset || line >= self.scroll_offset + 20 {
+                self.scroll_offset = line.saturating_sub(5);
+            }
         }
     }
 
@@ -236,6 +368,7 @@ impl DiffViewState {
             self.scroll_offset = 0;
             self.horizontal_scroll = 0;
             self.selection = None;
+            self.clear_search();
         }
         // Preserve side_view across reloads so periodic refresh doesn't reset it
         // Single section with index 0
@@ -273,6 +406,7 @@ impl DiffViewState {
                 self.scroll_offset = 0;
                 self.horizontal_scroll = 0;
                 self.selection = None;
+                self.clear_search();
             }
 
             for (section_idx, (file_name, file_diff)) in file_diffs.iter().enumerate() {
@@ -801,6 +935,178 @@ fn build_word_diff_spans<'a>(
             }
         })
         .collect()
+}
+
+/// Render search highlights over the diff buffer by scanning visible content areas
+/// for occurrences of the search query and applying a highlight style.
+/// `current_match_line` is the line index of the currently selected match (for emphasis).
+pub fn render_diff_search_highlights(
+    frame: &mut Frame,
+    area: Rect,
+    state: &DiffViewState,
+) {
+    if state.search_query.is_empty() || state.search_matches.is_empty() {
+        return;
+    }
+
+    let pl = DiffPanelLayout::compute(area, state);
+    let query_lower = state.search_query.to_lowercase();
+    let query_len = query_lower.len();
+    let current_match_line = state
+        .search_matches
+        .get(state.search_match_idx)
+        .map(|m| m.line_idx);
+
+    let buf = frame.buffer_mut();
+    let buf_area = *buf.area();
+
+    // Scan each content area (old panel, new panel) for matches
+    let panel_ranges: Vec<(u16, u16)> = {
+        let mut ranges = Vec::new();
+        if pl.old_content_x > 0 && pl.old_content_end_x > pl.old_content_x {
+            ranges.push((pl.old_content_x, pl.old_content_end_x));
+        }
+        if pl.new_content_x > 0 && pl.new_content_end_x > pl.new_content_x {
+            ranges.push((pl.new_content_x, pl.new_content_end_x));
+        }
+        ranges
+    };
+
+    let visible_height = area.height.saturating_sub(2) as usize; // -2 for borders
+    let highlight_style = Style::default().bg(Color::Rgb(120, 100, 30)).fg(Color::White);
+    let current_highlight_style = Style::default()
+        .bg(Color::Rgb(200, 170, 40))
+        .fg(Color::Black)
+        .add_modifier(Modifier::BOLD);
+
+    for row_offset in 0..visible_height {
+        let line_idx = state.scroll_offset + row_offset;
+        let y = pl.inner_y + row_offset as u16;
+        if y >= pl.inner_end_y || y >= buf_area.y + buf_area.height {
+            break;
+        }
+
+        let is_current_line = current_match_line == Some(line_idx);
+
+        for &(range_start, range_end) in &panel_ranges {
+            // Read the row text from buffer cells in this range
+            let mut row_chars: Vec<(u16, char)> = Vec::new();
+            for x in range_start..range_end.min(buf_area.x + buf_area.width) {
+                if let Some(cell) = buf.cell((x, y)) {
+                    let ch = cell.symbol().chars().next().unwrap_or(' ');
+                    row_chars.push((x, ch));
+                }
+            }
+
+            // Build string for searching
+            let row_text: String = row_chars.iter().map(|(_, ch)| *ch).collect();
+            let row_lower = row_text.to_lowercase();
+
+            let mut start = 0;
+            while let Some(pos) = row_lower[start..].find(&query_lower) {
+                let match_start = start + pos;
+                let match_end = match_start + query_len;
+                let style = if is_current_line {
+                    current_highlight_style
+                } else {
+                    highlight_style
+                };
+                for i in match_start..match_end {
+                    if i < row_chars.len() {
+                        let x = row_chars[i].0;
+                        if let Some(cell) = buf.cell_mut((x, y)) {
+                            cell.set_style(style);
+                        }
+                    }
+                }
+                start = match_start + 1;
+            }
+        }
+    }
+}
+
+/// Render a search bar at the bottom of the diff panel area.
+pub fn render_diff_search_bar(
+    frame: &mut Frame,
+    area: Rect,
+    state: &DiffViewState,
+) {
+    // Only render if search is active (typing) or has a query (dismissed but results shown)
+    if !state.search_active && state.search_query.is_empty() {
+        return;
+    }
+
+    // Position at the bottom row of the panel (inside the border)
+    let bar_y = area.y + area.height.saturating_sub(2);
+    let bar_x = area.x + 1;
+    let bar_width = area.width.saturating_sub(2);
+
+    if bar_width < 10 {
+        return;
+    }
+
+    let bar_rect = Rect::new(bar_x, bar_y, bar_width, 1);
+
+    // Clear the bar area
+    let buf = frame.buffer_mut();
+    for x in bar_rect.x..bar_rect.x + bar_rect.width {
+        if let Some(cell) = buf.cell_mut((x, bar_y)) {
+            cell.set_char(' ');
+            cell.set_style(Style::default().bg(Color::Rgb(40, 40, 50)));
+        }
+    }
+
+    let match_info = if !state.search_matches.is_empty() {
+        format!(
+            " {}/{}",
+            state.search_match_idx + 1,
+            state.search_matches.len()
+        )
+    } else if !state.search_query.is_empty() {
+        " (no matches)".to_string()
+    } else {
+        String::new()
+    };
+
+    if state.search_active {
+        // Render with textarea
+        let prefix_width = 2u16; // " /"
+        let suffix_width = match_info.len() as u16;
+        let ta_width = bar_width.saturating_sub(prefix_width + suffix_width);
+
+        let prefix_rect = Rect::new(bar_rect.x, bar_y, prefix_width, 1);
+        let prefix = Paragraph::new(Span::styled(
+            " /",
+            Style::default().fg(Color::Yellow).bg(Color::Rgb(40, 40, 50)),
+        ));
+        frame.render_widget(prefix, prefix_rect);
+
+        if let Some(ref ta) = state.search_textarea {
+            let ta_rect = Rect::new(bar_rect.x + prefix_width, bar_y, ta_width, 1);
+            frame.render_widget(&*ta, ta_rect);
+        }
+
+        if !match_info.is_empty() {
+            let suffix_rect = Rect::new(bar_rect.x + prefix_width + ta_width, bar_y, suffix_width, 1);
+            let suffix = Paragraph::new(Span::styled(
+                match_info,
+                Style::default().fg(Color::Yellow).bg(Color::Rgb(40, 40, 50)),
+            ));
+            frame.render_widget(suffix, suffix_rect);
+        }
+    } else {
+        // Dismissed search — show query + match info
+        let text = format!(" /{}{}", state.search_query, match_info);
+        let style = Style::default().fg(Color::Yellow).bg(Color::Rgb(40, 40, 50));
+        buf_write_str(
+            frame.buffer_mut(),
+            bar_rect.x,
+            bar_y,
+            &text,
+            style,
+            bar_width,
+        );
+    }
 }
 
 /// Parse a multi-file unified diff into per-file sections.

@@ -1107,7 +1107,35 @@ impl Gui {
         Ok(())
     }
 
+    fn handle_diff_focused_search_key(&mut self, key: KeyEvent) -> Result<()> {
+        if let Some(ref mut ta) = self.diff_view.search_textarea {
+            match key.code {
+                KeyCode::Esc => {
+                    self.diff_view.dismiss_search();
+                }
+                KeyCode::Enter => {
+                    self.diff_view.dismiss_search();
+                    if !self.diff_view.search_matches.is_empty() {
+                        self.diff_view.search_match_idx = 0;
+                        self.diff_view.scroll_to_current_match();
+                    }
+                }
+                _ => {
+                    ta.input(key);
+                    self.diff_view.search_query = ta.lines().join("");
+                    self.diff_view.update_search();
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn handle_diff_focused_key(&mut self, key: KeyEvent) -> Result<()> {
+        // Diff search input mode takes priority
+        if self.diff_view.search_active {
+            return self.handle_diff_focused_search_key(key);
+        }
+
         // Handle text selection keys first (y to copy, Esc to dismiss)
         if self.diff_view.selection.is_some() {
             match key.code {
@@ -1142,6 +1170,24 @@ impl Gui {
             return Ok(());
         }
 
+        // Start diff content search (/)
+        if matches_key(key, &keybindings.universal.start_search) {
+            self.diff_view.start_search();
+            return Ok(());
+        }
+
+        // n/N to navigate diff search matches
+        if !self.diff_view.search_query.is_empty() {
+            if matches_key(key, &keybindings.universal.next_match) {
+                self.diff_view.next_search_match();
+                return Ok(());
+            }
+            if matches_key(key, &keybindings.universal.prev_match) {
+                self.diff_view.prev_search_match();
+                return Ok(());
+            }
+        }
+
         // Toggle command log (;)
         if key.code == KeyCode::Char(';') {
             self.show_command_log = !self.show_command_log;
@@ -1167,9 +1213,13 @@ impl Gui {
         }
 
         match key.code {
-            // Escape to unfocus diff, return to sidebar
+            // Escape: clear search first, then unfocus diff
             KeyCode::Esc => {
-                self.diff_focused = false;
+                if !self.diff_view.search_query.is_empty() {
+                    self.diff_view.clear_search();
+                } else {
+                    self.diff_focused = false;
+                }
             }
             // q quits the app (same as global behavior)
             KeyCode::Char('q') => {
@@ -1780,6 +1830,8 @@ impl Gui {
                 HelpEntry { key: "]".into(), description: "Toggle new-only view".into() },
                 HelpEntry { key: "g/G".into(), description: "Go to top / bottom".into() },
                 HelpEntry { key: "PgUp/PgDn".into(), description: "Page up / down".into() },
+                HelpEntry { key: "/".into(), description: "Search in diff".into() },
+                HelpEntry { key: "n/N".into(), description: "Next / previous search match".into() },
                 HelpEntry { key: "y".into(), description: "Copy selected text".into() },
                 HelpEntry { key: "+/_".into(), description: "Enlarge / shrink panel".into() },
                 HelpEntry { key: ";".into(), description: "Toggle command log".into() },
