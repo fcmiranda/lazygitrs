@@ -56,7 +56,7 @@ pub enum PopupState {
     Help {
         sections: Vec<HelpSection>,
         selected: usize,
-        search: String,
+        search_textarea: TextArea<'static>,
         scroll_offset: usize,
     },
 }
@@ -84,6 +84,15 @@ pub fn make_textarea(placeholder: &str) -> TextArea<'static> {
     ta.set_placeholder_text(placeholder);
     ta.set_cursor_line_style(Style::default());
     ta.set_placeholder_style(Style::default().fg(Color::DarkGray));
+    ta
+}
+
+pub fn make_help_search_textarea() -> TextArea<'static> {
+    use ratatui::style::{Color, Style};
+
+    let mut ta = make_textarea("Type to filter...");
+    ta.set_style(Style::default().fg(Color::Yellow));
+    ta.set_cursor_style(Style::default().fg(Color::Yellow).add_modifier(ratatui::style::Modifier::REVERSED));
     ta
 }
 

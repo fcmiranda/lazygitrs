@@ -1516,7 +1516,9 @@ impl Gui {
             }).sum()
         }
 
-        if let PopupState::Help { sections, selected, search, scroll_offset } = &mut self.popup {
+        if let PopupState::Help { sections, selected, search_textarea, scroll_offset } = &mut self.popup {
+            use crossterm::event::KeyModifiers;
+            let search = search_textarea.lines().join("");
             let search_lower = search.to_lowercase();
 
             // Estimate list viewport height from terminal
@@ -1524,11 +1526,11 @@ impl Gui {
             let list_height = popup_height.saturating_sub(5); // borders + search + sep + hint
 
             match key.code {
-                KeyCode::Esc | KeyCode::Char('?') => {
+                KeyCode::Esc | KeyCode::Char('?') if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
                     self.popup = PopupState::None;
                     return;
                 }
-                KeyCode::Down | KeyCode::Char('j') => {
+                KeyCode::Down | KeyCode::Char('j') if key.modifiers.is_empty() => {
                     let total = count_visible(sections, &search_lower);
                     if total > 0 {
                         *selected = (*selected + 1).min(total.saturating_sub(1));
@@ -1538,7 +1540,7 @@ impl Gui {
                         *scroll_offset = sdi.saturating_sub(list_height - 1);
                     }
                 }
-                KeyCode::Up | KeyCode::Char('k') => {
+                KeyCode::Up | KeyCode::Char('k') if key.modifiers.is_empty() => {
                     *selected = selected.saturating_sub(1);
                     if *selected == 0 {
                         // First item: always scroll to top so the section header is visible
@@ -1551,17 +1553,14 @@ impl Gui {
                         }
                     }
                 }
-                KeyCode::Backspace => {
-                    search.pop();
-                    *selected = 0;
-                    *scroll_offset = 0;
+                _ => {
+                    search_textarea.input(key);
+                    let new_search = search_textarea.lines().join("");
+                    if new_search != search {
+                        *selected = 0;
+                        *scroll_offset = 0;
+                    }
                 }
-                KeyCode::Char(c) => {
-                    search.push(c);
-                    *selected = 0;
-                    *scroll_offset = 0;
-                }
-                _ => {}
             }
         }
     }
@@ -1765,7 +1764,7 @@ impl Gui {
         self.popup = PopupState::Help {
             sections,
             selected: 0,
-            search: String::new(),
+            search_textarea: popup::make_help_search_textarea(),
             scroll_offset: 0,
         };
     }
@@ -1793,7 +1792,7 @@ impl Gui {
         self.popup = PopupState::Help {
             sections: vec![diff_section],
             selected: 0,
-            search: String::new(),
+            search_textarea: popup::make_help_search_textarea(),
             scroll_offset: 0,
         };
     }
@@ -2292,9 +2291,9 @@ impl Gui {
         }
 
         // Help popup intercepts mouse scroll
-        if let PopupState::Help { sections, scroll_offset, search, .. } = &mut self.popup {
+        if let PopupState::Help { sections, scroll_offset, search_textarea, .. } = &mut self.popup {
             // Compute total display rows so we can clamp scroll
-            let search_lower = search.to_lowercase();
+            let search_lower = search_textarea.lines().join("").to_lowercase();
             let has_search = !search_lower.is_empty();
             let total_rows: usize = sections.iter().map(|s| {
                 let visible = if has_search {
@@ -2426,8 +2425,8 @@ impl Gui {
         use self::modes::diff_mode::DiffModeFocus;
 
         // Help popup intercepts mouse scroll
-        if let PopupState::Help { sections, scroll_offset, search, .. } = &mut self.popup {
-            let search_lower = search.to_lowercase();
+        if let PopupState::Help { sections, scroll_offset, search_textarea, .. } = &mut self.popup {
+            let search_lower = search_textarea.lines().join("").to_lowercase();
             let has_search = !search_lower.is_empty();
             let total_rows: usize = sections.iter().map(|s| {
                 let visible = if has_search {

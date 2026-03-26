@@ -1594,10 +1594,11 @@ pub fn render_popup(frame: &mut Frame, popup: &PopupState, area: Rect, spinner_f
         PopupState::Help {
             sections,
             selected,
-            search,
+            search_textarea,
             scroll_offset,
         } => {
             // Collect all visible entries (filtered by search) as flat list with section headers
+            let search = search_textarea.lines().join("");
             let search_lower = search.to_lowercase();
             let has_search = !search_lower.is_empty();
 
@@ -1651,21 +1652,21 @@ pub fn render_popup(frame: &mut Frame, popup: &PopupState, area: Rect, spinner_f
                 return;
             }
 
-            // Search bar row
-            let search_area = Rect::new(inner.x, inner.y, inner.width, 1);
-            let search_display = if search.is_empty() {
-                Line::from(vec![
-                    Span::styled("  ", Style::default().fg(Color::DarkGray)),
-                    Span::styled("Type to filter...", Style::default().fg(Color::DarkGray)),
-                ])
+            // Search bar row: " " prefix + textarea
+            let prefix_width = 2u16; // "  "
+            let prefix_rect = Rect::new(inner.x, inner.y, prefix_width, 1);
+            let prefix_style = if search.is_empty() {
+                Style::default().fg(Color::DarkGray)
             } else {
-                Line::from(vec![
-                    Span::styled("  ", Style::default().fg(Color::Yellow)),
-                    Span::styled(search.clone(), Style::default().fg(Color::Yellow)),
-                    Span::styled("▏", Style::default().fg(Color::Yellow)),
-                ])
+                Style::default().fg(Color::Yellow)
             };
-            frame.render_widget(Paragraph::new(search_display), search_area);
+            frame.render_widget(
+                Paragraph::new(Span::styled("  ", prefix_style)),
+                prefix_rect,
+            );
+            let ta_width = inner.width.saturating_sub(prefix_width);
+            let ta_rect = Rect::new(inner.x + prefix_width, inner.y, ta_width, 1);
+            frame.render_widget(&*search_textarea, ta_rect);
 
             // Separator
             let sep_area = Rect::new(inner.x, inner.y + 1, inner.width, 1);

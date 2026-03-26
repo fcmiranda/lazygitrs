@@ -379,7 +379,7 @@ fn show_diff_mode_help(gui: &mut Gui) {
     gui.popup = PopupState::Help {
         sections: vec![diff_mode_section, combobox_section],
         selected: 0,
-        search: String::new(),
+        search_textarea: crate::gui::popup::make_help_search_textarea(),
         scroll_offset: 0,
     };
 }
