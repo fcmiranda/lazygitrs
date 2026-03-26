@@ -119,7 +119,7 @@
   - b Delete local and remote branch
   - And when I press 'c' to delete local branch, it asks me, 'branch' is not fully merged. Are you sure you want to delete it?
   - It also seems to be aware of the remote options so it strikethroughs if the remote is not there.. And the delete local and remote one.
-- [ ] In 'Files' when File Tree view is toggled on, in the original lazygit, there's a ▼ at the very root. I want that for our Files and Commit Files too.
-- [ ] In 'Files' show the diff for folders. We already have this for 'Commits' it shows a multifile diff preview.
-- [ ] In 'Files', pressing `i` shows a dialog, right now it immediately applies it.
-- [ ] In 'Branches', whichever is the 'checked-out' branch. Put it at the first of the list.
+- [x] In 'Files' when File Tree view is toggled on, in the original lazygit, there's a ▼ at the very root. I want that for our Files and Commit Files too.
+- [x] In 'Files' show the diff for folders. We already have this for 'Commits' it shows a multifile diff preview.
+- [x] In 'Files', pressing `i` shows a dialog, right now it immediately applies it.
+- [x] In 'Branches', whichever is the 'checked-out' branch. Put it at the first of the list.

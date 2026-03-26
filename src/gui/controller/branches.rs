@@ -102,15 +102,13 @@ fn checkout_branch(gui: &mut Gui) -> Result<()> {
         }
         let name = branch.name.clone();
         drop(model);
-        gui.git.checkout_branch(&name)?;
-        gui.needs_refresh = true;
+        show_checkout_error_or_refresh(gui, &name)?;
     }
     Ok(())
 }
 
 fn checkout_previous(gui: &mut Gui) -> Result<()> {
-    gui.git.checkout_branch("-")?;
-    gui.needs_refresh = true;
+    show_checkout_error_or_refresh(gui, "-")?;
     Ok(())
 }
 
@@ -120,13 +118,28 @@ fn checkout_by_name(gui: &mut Gui) -> Result<()> {
         textarea: make_textarea("Branch name"),
         on_confirm: Box::new(|gui, name| {
             if !name.is_empty() {
-                gui.git.checkout_branch(name)?;
-                gui.needs_refresh = true;
+                show_checkout_error_or_refresh(gui, name)?;
             }
             Ok(())
         }),
         is_commit: false,
     };
+    Ok(())
+}
+
+fn show_checkout_error_or_refresh(gui: &mut Gui, name: &str) -> Result<()> {
+    match gui.git.checkout_branch(name) {
+        Ok(()) => {
+            gui.needs_refresh = true;
+        }
+        Err(e) => {
+            gui.popup = PopupState::Message {
+                title: "Checkout error".to_string(),
+                message: format!("{}", e),
+                kind: MessageKind::Error,
+            };
+        }
+    }
     Ok(())
 }
 

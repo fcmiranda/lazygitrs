@@ -39,14 +39,22 @@ pub fn render_commit_file_tree<'a>(
             if node.is_dir {
                 let is_collapsed = collapsed_dirs.contains(&node.path);
                 let icon = if is_collapsed { "▶ " } else { "▼ " };
+                let is_root = node.path == ".";
 
-                let line = Line::from(vec![
-                    Span::styled(
-                        format!("  {}{}", indent, icon),
+                let line = if is_root {
+                    Line::from(Span::styled(
+                        format!("  {}", icon.trim_end()),
                         Style::default().fg(Color::White),
-                    ),
-                    Span::styled(node.name.clone(), Style::default().fg(Color::White)),
-                ]);
+                    ))
+                } else {
+                    Line::from(vec![
+                        Span::styled(
+                            format!("  {}{}", indent, icon),
+                            Style::default().fg(Color::White),
+                        ),
+                        Span::styled(node.name.clone(), Style::default().fg(Color::White)),
+                    ])
+                };
                 ListItem::new(line)
             } else if let Some(file_idx) = node.file_index {
                 let Some(file) = model.commit_files.get(file_idx) else {
