@@ -7,6 +7,12 @@ pub type ConfirmAction = Box<dyn FnOnce(&mut Gui) -> Result<()>>;
 pub type InputAction = Box<dyn FnOnce(&mut Gui, &str) -> Result<()>>;
 pub type MenuAction = Box<dyn Fn(&mut Gui) -> Result<()>>;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MessageKind {
+    Error,
+    Info,
+}
+
 pub enum PopupState {
     None,
     Confirm {
@@ -27,10 +33,11 @@ pub enum PopupState {
         items: Vec<MenuItem>,
         selected: usize,
     },
-    /// Informational message — dismissed by any key press.
+    /// Informational or error message — dismissed by any key press.
     Message {
         title: String,
         message: String,
+        kind: MessageKind,
     },
     /// Shown while a background operation (like AI commit generation) is running.
     Loading {

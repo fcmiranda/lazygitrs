@@ -1163,7 +1163,18 @@ fn render_popup(frame: &mut Frame, popup: &PopupState, area: Rect, spinner_frame
 
     match popup {
         PopupState::Confirm { title, message, .. } => {
-            let confirm_height = 6u16;
+            let inner_width = popup_width.saturating_sub(4) as usize; // borders + padding
+            let wrapped: Vec<std::borrow::Cow<'_, str>> = message
+                .lines()
+                .flat_map(|line| {
+                    if line.is_empty() {
+                        vec![std::borrow::Cow::Borrowed("")]
+                    } else {
+                        textwrap::wrap(line, inner_width)
+                    }
+                })
+                .collect();
+            let confirm_height = (wrapped.len() as u16) + 5; // border*2 + blank line + blank line + [y]es/[n]o
             let cy = (area.height.saturating_sub(confirm_height)) / 2;
             let popup_rect = Rect::new(x, cy, popup_width, confirm_height);
             frame.render_widget(Clear, popup_rect);
@@ -1172,21 +1183,22 @@ fn render_popup(frame: &mut Frame, popup: &PopupState, area: Rect, spinner_frame
                 .borders(Borders::ALL)
                 .border_style(Style::default().fg(Color::Yellow));
 
-            let text = vec![
-                Line::from(""),
-                Line::from(format!(" {}", message)),
-                Line::from(""),
-                Line::from(Span::styled(
-                    " [y]es / [n]o",
-                    Style::default().fg(Color::Yellow),
-                )),
-            ];
+            let mut text: Vec<Line> = Vec::new();
+            text.push(Line::from(""));
+            for line in &wrapped {
+                text.push(Line::from(format!(" {}", line)));
+            }
+            text.push(Line::from(""));
+            text.push(Line::from(Span::styled(
+                " [y]es / [n]o",
+                Style::default().fg(Color::Yellow),
+            )));
 
             let widget = Paragraph::new(text).block(block);
             frame.render_widget(widget, popup_rect);
         }
-        PopupState::Message { title, message } => {
-            let is_error = title == "Error";
+        PopupState::Message { title, message, kind } => {
+            let is_error = *kind == crate::gui::popup::MessageKind::Error;
             let icon = if is_error { "⚠ " } else { "" };
             let inner_width = popup_width.saturating_sub(4) as usize; // borders + padding
             let wrapped: Vec<std::borrow::Cow<'_, str>> = message

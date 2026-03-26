@@ -30,7 +30,7 @@ use self::context::{ContextId, ContextManager, SideWindow};
 use self::layout::LayoutState;
 use self::popup::{HelpEntry, HelpSection};
 use self::modes::patch_building::PatchBuildingState;
-use self::popup::PopupState;
+use self::popup::{MessageKind, PopupState};
 
 pub type Term = Terminal<CrosstermBackend<Stdout>>;
 
@@ -393,10 +393,10 @@ impl Gui {
                     if let Some(stashed) = self.pending_commit_popup.take() {
                         self.popup = stashed;
                     } else {
-                        self.popup = PopupState::Confirm {
+                        self.popup = PopupState::Message {
                             title: "AI generation failed".to_string(),
                             message: format!("{}", e),
-                            on_confirm: Box::new(|_| Ok(())),
+                            kind: MessageKind::Error,
                         };
                     }
                 }
@@ -415,10 +415,10 @@ impl Gui {
                     self.remote_op_success_at = Some(Instant::now());
                 }
                 Err(e) => {
-                    self.popup = PopupState::Confirm {
+                    self.popup = PopupState::Message {
                         title: "Error".to_string(),
                         message: format!("{}", e),
-                        on_confirm: Box::new(|_| Ok(())),
+                        kind: MessageKind::Error,
                     };
                 }
             }
@@ -1125,6 +1125,7 @@ impl Gui {
                             self.popup = PopupState::Message {
                                 title: "Error".to_string(),
                                 message: format!("{}", e),
+                                kind: MessageKind::Error,
                             };
                         }
                     }
@@ -1174,6 +1175,7 @@ impl Gui {
                                         self.popup = PopupState::Message {
                                             title: "Error".to_string(),
                                             message: format!("{}", e),
+                                            kind: MessageKind::Error,
                                         };
                                     }
                                 }
@@ -1204,6 +1206,7 @@ impl Gui {
                                             self.popup = PopupState::Message {
                                                 title: "Error".to_string(),
                                                 message: format!("{}", e),
+                                                kind: MessageKind::Error,
                                             };
                                         }
                                     }
@@ -1233,6 +1236,7 @@ impl Gui {
                             self.popup = PopupState::Message {
                                 title: "Error".to_string(),
                                 message: format!("{}", e),
+                                kind: MessageKind::Error,
                             };
                         }
                     }
@@ -1314,6 +1318,7 @@ impl Gui {
                                 self.popup = PopupState::Message {
                                     title: "Error".to_string(),
                                     message: format!("{}", e),
+                                    kind: MessageKind::Error,
                                 };
                             }
                         }

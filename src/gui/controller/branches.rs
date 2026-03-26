@@ -3,7 +3,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::config::KeybindingConfig;
 use crate::config::keybindings::parse_key;
-use crate::gui::popup::{MenuItem, PopupState, make_textarea};
+use crate::gui::popup::{MenuItem, MessageKind, PopupState, make_textarea};
 use crate::gui::Gui;
 use crate::os::platform::Platform;
 
@@ -284,6 +284,7 @@ fn copy_to_clipboard_menu(gui: &mut Gui) -> Result<()> {
                         gui.popup = PopupState::Message {
                             title: "No PR found".to_string(),
                             message: format!("No pull request found for branch '{}'", branch_for_pr),
+                            kind: MessageKind::Info,
                         };
                     }
                 }
@@ -346,6 +347,7 @@ fn open_in_browser_menu(gui: &mut Gui) -> Result<()> {
                         gui.popup = PopupState::Message {
                             title: "No PR found".to_string(),
                             message: format!("No pull request found for branch '{}'", branch_for_pr),
+                            kind: MessageKind::Info,
                         };
                     }
                 }

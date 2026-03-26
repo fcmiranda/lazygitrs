@@ -60,5 +60,5 @@
   - [ ] In 'Branches', the original lazygit has `<c-o>` to copy PR URL, we might already have this in the `y` menu but worth verifying the direct shortcut.
 
 - [ ] Improve the speeds still, very important for larger repos. Improve first-load speed. Either cache the data, or the render the TUI even before the git load model data isn't there yet. (perceived speed)
-- [ ] regular push behavior to essentially do `git push origin HEAD`
+- [x] regular push behavior to essentially do `git push origin HEAD`
 - [ ] Hot reloading of config (I can edit the config on the fly and the config is still read without restarting lazygit)

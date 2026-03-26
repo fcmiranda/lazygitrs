@@ -4,7 +4,7 @@ use crossterm::event::KeyEvent;
 use crate::config::keybindings::parse_key;
 use crate::config::user_config::CustomCommand;
 use crate::gui::context::ContextId;
-use crate::gui::popup::PopupState;
+use crate::gui::popup::{MessageKind, PopupState};
 use crate::gui::Gui;
 use crate::os::cmd::CmdBuilder;
 
@@ -78,16 +78,16 @@ fn run_command(gui: &mut Gui, command: &str, show_output: bool) -> Result<()> {
     }
 
     if show_output && !result.stdout.is_empty() {
-        gui.popup = PopupState::Confirm {
+        gui.popup = PopupState::Message {
             title: "Command output".to_string(),
             message: result.stdout_trimmed().to_string(),
-            on_confirm: Box::new(|_| Ok(())),
+            kind: MessageKind::Info,
         };
     } else if !result.success {
-        gui.popup = PopupState::Confirm {
+        gui.popup = PopupState::Message {
             title: "Command failed".to_string(),
             message: result.stderr.trim().to_string(),
-            on_confirm: Box::new(|_| Ok(())),
+            kind: MessageKind::Error,
         };
     }
 

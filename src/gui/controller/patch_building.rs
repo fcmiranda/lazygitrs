@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 
-use crate::gui::popup::{MenuItem, PopupState};
+use crate::gui::popup::{MenuItem, MessageKind, PopupState};
 use crate::gui::Gui;
 
 /// Enter patch building mode from the commits panel.
@@ -31,10 +31,10 @@ pub fn show_patch_menu(gui: &mut Gui) -> Result<()> {
     if gui.patch_building.active {
         // Already in patch building mode — show apply options
         if !gui.patch_building.has_selections() {
-            gui.popup = PopupState::Confirm {
+            gui.popup = PopupState::Message {
                 title: "No files selected".to_string(),
                 message: "Toggle files with space to include them in the patch.".to_string(),
-                on_confirm: Box::new(|_| Ok(())),
+                kind: MessageKind::Info,
             };
             return Ok(());
         }
