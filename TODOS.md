@@ -2,7 +2,7 @@
   - [x] Better graph view (enabled by default)
   - [x] Filter by branch
   - [x] Filter by commit message (handy if you prefix with ticket IDs)
-- [ ] ~Command palette (OpenCode-style) — still figuring this one out~
+- [x] ~Command palette (OpenCode-style) — still figuring this one out~ - It's `?`
 
 - [x] Stash viewer:
   - Can we add the same viewer for files in the '[5] Stash' sidebar tab? (the same way we currently do with Commits tab)
@@ -109,3 +109,17 @@
     - You can obviously exit and go back to the default lazygit UI.
     - You can press tab to cycle focus between the A and B comboboxes, Commit Fles, and diff exploration view.
     - Commit Files and Diff Exploration View actually already exist if you notice. So as expected, they'd have the same hotkeys sort of. Especially diff exploration view like `[]` `{}`.
+
+- [x] Pressing up or down in the commit messages, should cycle through previously submitted ones. Kinda like the up or down key in the commandline.
+- [x] In '3 Branches' git checkout -.
+- [x] In '3 Branches' git checkout by name. Pressing 'c'
+- [x] In '3 Branches'. pressing d, opens a 'Delete branch ?' dialog, and I can see options:
+  - c Delete local branch
+  - r Delete remote branch
+  - b Delete local and remote branch
+  - And when I press 'c' to delete local branch, it asks me, 'branch' is not fully merged. Are you sure you want to delete it?
+  - It also seems to be aware of the remote options so it strikethroughs if the remote is not there.. And the delete local and remote one.
+- [x] In 'Files' when File Tree view is toggled on, in the original lazygit, there's a ▼ at the very root. I want that for our Files and Commit Files too.
+- [x] In 'Files' show the diff for folders. We already have this for 'Commits' it shows a multifile diff preview.
+- [x] In 'Files', pressing `i` shows a dialog, right now it immediately applies it.
+- [x] In 'Branches', whichever is the 'checked-out' branch. Put it at the first of the list.

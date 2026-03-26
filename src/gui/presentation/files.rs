@@ -57,10 +57,15 @@ pub fn render_file_tree<'a>(
                     Style::default().fg(Color::White)
                 };
 
-                let line = Line::from(vec![
-                    Span::styled(format!("  {}{}", indent, icon), dir_style),
-                    Span::styled(node.name.clone(), dir_style),
-                ]);
+                let is_root = node.path == ".";
+                let line = if is_root {
+                    Line::from(Span::styled(format!("  {}", icon.trim_end()), dir_style))
+                } else {
+                    Line::from(vec![
+                        Span::styled(format!("  {}{}", indent, icon), dir_style),
+                        Span::styled(node.name.clone(), dir_style),
+                    ])
+                };
                 ListItem::new(line)
             } else if let Some(file_idx) = node.file_index {
                 let file = &model.files[file_idx];

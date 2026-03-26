@@ -22,6 +22,16 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) 
         return new_branch(gui);
     }
 
+    // c: checkout (ref picker)
+    if key.code == KeyCode::Char('c') {
+        return checkout_picker(gui);
+    }
+
+    // -: checkout previous branch (git checkout -)
+    if key.code == KeyCode::Char('-') {
+        return checkout_previous(gui);
+    }
+
     if key.code == KeyCode::Char('d') {
         return delete_branch(gui);
     }
@@ -92,8 +102,92 @@ fn checkout_branch(gui: &mut Gui) -> Result<()> {
         }
         let name = branch.name.clone();
         drop(model);
-        gui.git.checkout_branch(&name)?;
-        gui.needs_refresh = true;
+        show_checkout_error_or_refresh(gui, &name)?;
+    }
+    Ok(())
+}
+
+fn checkout_previous(gui: &mut Gui) -> Result<()> {
+    show_checkout_error_or_refresh(gui, "-")?;
+    Ok(())
+}
+
+fn checkout_picker(gui: &mut Gui) -> Result<()> {
+    use crate::gui::popup::{RefPickerItem, make_help_search_textarea};
+
+    let model = gui.model.lock().unwrap();
+    let mut items = Vec::new();
+
+    // Local branches (skip current)
+    for branch in &model.branches {
+        if branch.head {
+            continue;
+        }
+        items.push(RefPickerItem {
+            value: branch.name.clone(),
+            label: branch.name.clone(),
+            category: "Branches".to_string(),
+        });
+    }
+
+    // Remote branches
+    for remote in &model.remotes {
+        for branch in &remote.branches {
+            let full_name = format!("{}/{}", remote.name, branch.name);
+            items.push(RefPickerItem {
+                value: full_name.clone(),
+                label: full_name,
+                category: "Remote Branches".to_string(),
+            });
+        }
+    }
+
+    // Tags
+    for tag in &model.tags {
+        items.push(RefPickerItem {
+            value: tag.name.clone(),
+            label: tag.name.clone(),
+            category: "Tags".to_string(),
+        });
+    }
+
+    // Commits
+    for commit in &model.commits {
+        items.push(RefPickerItem {
+            value: commit.hash.clone(),
+            label: format!("{} {}", commit.short_hash(), commit.name),
+            category: "Commits".to_string(),
+        });
+    }
+
+    drop(model);
+
+    gui.popup = PopupState::RefPicker {
+        title: "Checkout".to_string(),
+        items,
+        selected: 0,
+        search_textarea: make_help_search_textarea(),
+        scroll_offset: 0,
+        on_confirm: Box::new(|gui, ref_name| {
+            show_checkout_error_or_refresh(gui, ref_name)?;
+            Ok(())
+        }),
+    };
+    Ok(())
+}
+
+fn show_checkout_error_or_refresh(gui: &mut Gui, name: &str) -> Result<()> {
+    match gui.git.checkout_branch(name) {
+        Ok(()) => {
+            gui.needs_refresh = true;
+        }
+        Err(e) => {
+            gui.popup = PopupState::Message {
+                title: "Checkout error".to_string(),
+                message: format!("{}", e),
+                kind: MessageKind::Error,
+            };
+        }
     }
     Ok(())
 }
@@ -122,16 +216,114 @@ fn delete_branch(gui: &mut Gui) -> Result<()> {
             return Ok(()); // Can't delete current branch
         }
         let name = branch.name.clone();
+        let has_remote = branch.upstream.is_some();
+        let upstream = branch.upstream.clone();
         drop(model);
 
-        gui.popup = PopupState::Confirm {
-            title: "Delete branch".to_string(),
-            message: format!("Delete branch '{}'?", name),
-            on_confirm: Box::new(move |gui| {
-                gui.git.delete_branch(&name, false)?;
-                gui.needs_refresh = true;
-                Ok(())
-            }),
+        let name_local = name.clone();
+        let name_remote = name.clone();
+        let name_both = name.clone();
+        let upstream_for_remote = upstream.clone();
+        let upstream_for_both = upstream.clone();
+
+        let mut items = vec![
+            MenuItem {
+                label: "Delete local branch".to_string(),
+                description: String::new(),
+                key: Some("c".to_string()),
+                action: Some(Box::new(move |gui| {
+                    match gui.git.delete_branch(&name_local, false) {
+                        Ok(()) => {
+                            gui.needs_refresh = true;
+                        }
+                        Err(e) => {
+                            let err_msg = format!("{}", e);
+                            if err_msg.contains("not fully merged") {
+                                let name_force = name_local.clone();
+                                gui.popup = PopupState::Confirm {
+                                    title: "Force delete?".to_string(),
+                                    message: format!(
+                                        "'{}' is not fully merged. Are you sure you want to delete it?",
+                                        name_local
+                                    ),
+                                    on_confirm: Box::new(move |gui| {
+                                        gui.git.delete_branch(&name_force, true)?;
+                                        gui.needs_refresh = true;
+                                        Ok(())
+                                    }),
+                                };
+                            } else {
+                                return Err(e);
+                            }
+                        }
+                    }
+                    Ok(())
+                })),
+            },
+        ];
+
+        if has_remote {
+            items.push(MenuItem {
+                label: "Delete remote branch".to_string(),
+                description: String::new(),
+                key: Some("r".to_string()),
+                action: Some(Box::new(move |gui| {
+                    // Parse remote name from upstream (e.g. "origin/branch" -> "origin")
+                    let remote = upstream_for_remote
+                        .as_deref()
+                        .and_then(|u| u.split('/').next())
+                        .unwrap_or("origin");
+                    gui.git.delete_remote_branch(remote, &name_remote)?;
+                    gui.needs_refresh = true;
+                    Ok(())
+                })),
+            });
+        } else {
+            items.push(MenuItem {
+                label: "Delete remote branch".to_string(),
+                description: "No remote tracking branch".to_string(),
+                key: Some("r".to_string()),
+                action: None,
+            });
+        }
+
+        if has_remote {
+            items.push(MenuItem {
+                label: "Delete local and remote branch".to_string(),
+                description: String::new(),
+                key: Some("b".to_string()),
+                action: Some(Box::new(move |gui| {
+                    let remote = upstream_for_both
+                        .as_deref()
+                        .and_then(|u| u.split('/').next())
+                        .unwrap_or("origin");
+                    // Delete local first (force, since we're deleting remote too)
+                    gui.git.delete_branch(&name_both, true)?;
+                    gui.git.delete_remote_branch(remote, &name_both)?;
+                    gui.needs_refresh = true;
+                    Ok(())
+                })),
+            });
+        } else {
+            items.push(MenuItem {
+                label: "Delete local and remote branch".to_string(),
+                description: "No remote tracking branch".to_string(),
+                key: Some("b".to_string()),
+                action: None,
+            });
+        }
+
+        items.push(MenuItem {
+            label: "Cancel".to_string(),
+            description: String::new(),
+            key: None,
+            action: Some(Box::new(|_| Ok(()))),
+        });
+
+        gui.popup = PopupState::Menu {
+            title: format!("Delete branch '{}'?", name),
+            items,
+            selected: 0,
         };
     }
     Ok(())
@@ -161,20 +353,139 @@ fn merge_branch(gui: &mut Gui) -> Result<()> {
 fn rebase_branch(gui: &mut Gui) -> Result<()> {
     let selected = gui.context_mgr.selected_active();
     let model = gui.model.lock().unwrap();
+    let current_branch = model.head_branch_name.clone();
     if let Some(branch) = model.branches.get(selected) {
         let name = branch.name.clone();
+        let is_same_branch = name == current_branch;
+        let name_for_simple = name.clone();
+        let name_for_interactive = name.clone();
+        let name_for_base = name.clone();
         drop(model);
 
-        gui.popup = PopupState::Confirm {
-            title: "Rebase".to_string(),
-            message: format!("Rebase onto '{}'?", name),
-            on_confirm: Box::new(move |gui| {
-                gui.git.rebase_branch(&name)?;
-                gui.needs_refresh = true;
-                Ok(())
-            }),
+        let items = vec![
+            MenuItem {
+                label: format!("Simple rebase onto '{}'", name_for_simple),
+                description: if is_same_branch { "Already on this branch".to_string() } else { String::new() },
+                key: Some("s".to_string()),
+                action: if is_same_branch { None } else { Some(Box::new(move |gui| {
+                    gui.git.rebase_branch(&name_for_simple)?;
+                    gui.needs_refresh = true;
+                    Ok(())
+                })) },
+            },
+            MenuItem {
+                label: format!("Interactive rebase onto '{}'", name_for_interactive),
+                description: if is_same_branch { "Already on this branch".to_string() } else { String::new() },
+                key: Some("i".to_string()),
+                action: if is_same_branch { None } else { Some(Box::new(move |gui| {
+                    enter_interactive_rebase_onto(gui, &name_for_interactive)?;
+                    Ok(())
+                })) },
+            },
+            MenuItem {
+                label: format!("Rebase onto base branch ({})", name_for_base),
+                description: String::new(),
+                key: Some("b".to_string()),
+                action: Some(Box::new(move |gui| {
+                    gui.git.rebase_branch(&name_for_base)?;
+                    gui.needs_refresh = true;
+                    Ok(())
+                })),
+            },
+            MenuItem {
+                label: "Cancel".to_string(),
+                description: String::new(),
+                key: None,
+                action: Some(Box::new(|_gui| Ok(()))),
+            },
+        ];
+
+        gui.popup = PopupState::Menu {
+            title: format!("Rebase '{}'", current_branch),
+            items,
+            selected: 0,
         };
     }
+    Ok(())
+}
+
+/// Enter interactive rebase mode onto a specific branch/ref.
+pub fn enter_interactive_rebase_onto(gui: &mut Gui, onto_ref: &str) -> Result<()> {
+    // Resolve the ref to a commit hash
+    let base_hash = gui.git.resolve_ref(onto_ref)?;
+
+    let model = gui.model.lock().unwrap();
+    let branch_name = model.head_branch_name.clone();
+
+    // Find the base commit in the model
+    let base_commit = model.commits.iter().find(|c| c.hash == base_hash).cloned();
+
+    // Get commits to rebase
+    let rebase_hashes = match gui.git.rebase_commit_range(&base_hash) {
+        Ok(h) => h,
+        Err(e) => {
+            gui.popup = PopupState::Message {
+                title: "Interactive rebase".to_string(),
+                message: format!("Failed to determine rebase range: {}", e),
+                kind: crate::gui::popup::MessageKind::Error,
+            };
+            drop(model);
+            return Ok(());
+        }
+    };
+
+    if rebase_hashes.is_empty() {
+        gui.popup = PopupState::Message {
+            title: "Interactive rebase".to_string(),
+            message: "No commits to rebase.".to_string(),
+            kind: crate::gui::popup::MessageKind::Error,
+        };
+        drop(model);
+        return Ok(());
+    }
+
+    let commits_to_rebase: Vec<_> = rebase_hashes
+        .iter()
+        .filter_map(|hash| model.commits.iter().find(|c| c.hash == *hash))
+        .cloned()
+        .collect();
+
+    if commits_to_rebase.is_empty() {
+        gui.popup = PopupState::Message {
+            title: "Interactive rebase".to_string(),
+            message: "Commits not found in current view.".to_string(),
+            kind: crate::gui::popup::MessageKind::Error,
+        };
+        drop(model);
+        return Ok(());
+    }
+
+    // Build a base commit — use model commit if available, otherwise create a minimal one
+    let base = match base_commit {
+        Some(c) => c,
+        None => {
+            // Base commit might not be in the loaded commits list — create a minimal one
+            let msg = gui.git.commit_subject(&base_hash).unwrap_or_default();
+            use crate::model::commit::{CommitStatus, Divergence};
+            crate::model::Commit {
+                hash: base_hash.clone(),
+                name: msg,
+                status: CommitStatus::Pushed,
+                action: String::new(),
+                tags: Vec::<String>::new(),
+                refs: Vec::<String>::new(),
+                extra_info: String::new(),
+                author_name: String::new(),
+                author_email: String::new(),
+                unix_timestamp: 0,
+                parents: Vec::new(),
+                divergence: Divergence::None,
+            }
+        }
+    };
+
+    gui.rebase_mode.enter(branch_name, &base, &commits_to_rebase);
+    drop(model);
     Ok(())
 }
 

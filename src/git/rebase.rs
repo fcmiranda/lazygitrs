@@ -24,6 +24,30 @@ impl RebaseAction {
             Self::Drop => "drop",
         }
     }
+
+    /// Cycle to the next action: Pick → Reword → Edit → Squash → Fixup → Drop → Pick.
+    pub fn next(&self) -> Self {
+        match self {
+            Self::Pick => Self::Reword,
+            Self::Reword => Self::Edit,
+            Self::Edit => Self::Squash,
+            Self::Squash => Self::Fixup,
+            Self::Fixup => Self::Drop,
+            Self::Drop => Self::Pick,
+        }
+    }
+
+    /// Cycle to the previous action.
+    pub fn prev(&self) -> Self {
+        match self {
+            Self::Pick => Self::Drop,
+            Self::Reword => Self::Pick,
+            Self::Edit => Self::Reword,
+            Self::Squash => Self::Edit,
+            Self::Fixup => Self::Squash,
+            Self::Drop => Self::Fixup,
+        }
+    }
 }
 
 impl GitCommands {
@@ -158,6 +182,186 @@ impl GitCommands {
         Ok(())
     }
 
+    /// Interactive rebase with a full todo list: apply multiple actions in one shot.
+    /// `actions` must be in rebase-todo order (oldest commit first, newest last).
+    /// Each entry is (commit_hash, action).
+    pub fn rebase_interactive_batch(
+        &self,
+        base_hash: &str,
+        actions: &[(String, RebaseAction)],
+    ) -> Result<()> {
+        // Build the replacement todo content.
+        // Each line: "<action> <short_hash>"
+        // Git will match the short hash to the full commit in the todo list.
+        let mut todo_lines = Vec::new();
+        for (hash, action) in actions {
+            let short = &hash[..7.min(hash.len())];
+            todo_lines.push(format!("{} {}", action.as_str(), short));
+        }
+        let todo_content = todo_lines.join("\n");
+
+        // The sequence editor script replaces the todo file with our content.
+        // Using printf for portability (avoids echo -e differences across platforms).
+        let editor_script = format!(
+            "printf '{}\\n' > \"$1\"",
+            todo_content.replace('\'', "'\\''")
+        );
+
+        let result = self.git()
+            .args(&["rebase", "-i", "--autostash", base_hash])
+            .env("GIT_SEQUENCE_EDITOR", &editor_script)
+            // Prevent git from opening an interactive editor for reword/edit
+            // actions. `true` exits 0 without modifying COMMIT_EDITMSG, so
+            // reword keeps the original message (reword message editing is
+            // handled in the TUI before execution).
+            .env("GIT_EDITOR", "true")
+            .run()?;
+
+        if !result.success {
+            // Exit code 1 with rebase-merge dir = rebase paused (edit/conflict).
+            // This is expected — the caller should refresh to detect InProgress.
+            let git_dir = self.repo_path().join(".git");
+            if git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists() {
+                // Rebase paused — not an error
+                return Ok(());
+            }
+            // Real failure
+            anyhow::bail!(
+                "Rebase failed (exit {}): {}",
+                result.exit_code.unwrap_or(-1),
+                result.stderr.trim()
+            );
+        }
+        Ok(())
+    }
+
+    /// Get the list of commit hashes that would be rebased when running
+    /// `git rebase -i <base>`. Returns hashes in newest-first order.
+    pub fn rebase_commit_range(&self, base_hash: &str) -> Result<Vec<String>> {
+        let result = self
+            .git()
+            .args(&["rev-list", "--reverse", &format!("{}..HEAD", base_hash)])
+            .run_expecting_success()?;
+        let hashes: Vec<String> = result
+            .stdout_trimmed()
+            .lines()
+            .rev() // reverse to newest-first for display
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
+        Ok(hashes)
+    }
+
+    /// Parse the state of a rebase that is currently in progress.
+    /// Returns `None` if no rebase is in progress.
+    pub fn parse_rebase_progress(&self) -> Option<RebaseProgress> {
+        let git_dir = self.repo_path().join(".git");
+
+        // Try rebase-merge first (interactive rebase), then rebase-apply
+        let rebase_dir = if git_dir.join("rebase-merge").exists() {
+            git_dir.join("rebase-merge")
+        } else if git_dir.join("rebase-apply").exists() {
+            git_dir.join("rebase-apply")
+        } else {
+            return None;
+        };
+
+        // Read head-name (branch being rebased)
+        let head_name = std::fs::read_to_string(rebase_dir.join("head-name"))
+            .ok()
+            .map(|s| s.trim().strip_prefix("refs/heads/").unwrap_or(s.trim()).to_string())
+            .unwrap_or_default();
+
+        // Read onto hash
+        let onto_hash = std::fs::read_to_string(rebase_dir.join("onto"))
+            .ok()
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+
+        let onto_short = onto_hash[..7.min(onto_hash.len())].to_string();
+
+        // Read onto message
+        let onto_message = if !onto_hash.is_empty() {
+            self.commit_subject(&onto_hash).unwrap_or_default()
+        } else {
+            String::new()
+        };
+
+        // Parse "done" file — already-processed entries
+        let done_entries = std::fs::read_to_string(rebase_dir.join("done"))
+            .ok()
+            .map(|content| parse_todo_entries(&content))
+            .unwrap_or_default();
+
+        // Parse "git-rebase-todo" — remaining entries
+        let todo_entries = std::fs::read_to_string(rebase_dir.join("git-rebase-todo"))
+            .ok()
+            .map(|content| parse_todo_entries(&content))
+            .unwrap_or_default();
+
+        // Read stopped-sha (the commit where rebase paused)
+        let stopped_sha = std::fs::read_to_string(rebase_dir.join("stopped-sha"))
+            .ok()
+            .map(|s| s.trim().to_string())
+            .unwrap_or_default();
+
+        Some(RebaseProgress {
+            head_name,
+            onto_hash,
+            onto_short,
+            onto_message,
+            done_entries,
+            todo_entries,
+            stopped_sha,
+        })
+    }
+
+    /// Hydrate todo entries with author name, timestamp, and full subject
+    /// from `git log`. Entries whose hash can't be resolved are left as-is.
+    pub fn hydrate_todo_entries(&self, entries: &mut [TodoEntry]) {
+        if entries.is_empty() {
+            return;
+        }
+        // Batch query: git log with all hashes
+        let hashes: Vec<&str> = entries.iter().map(|e| e.hash.as_str()).collect();
+        // Use --no-walk so we get exactly the commits we asked for
+        let mut cmd = self.git();
+        cmd = cmd.arg("log").arg("--no-walk").arg("--format=%H|%s|%an|%at");
+        for h in &hashes {
+            cmd = cmd.arg(*h);
+        }
+        let result = match cmd.run() {
+            Ok(r) if r.success => r,
+            _ => return,
+        };
+
+        // Build a lookup map: full_hash -> (subject, author, timestamp)
+        let mut info: std::collections::HashMap<String, (String, String, i64)> =
+            std::collections::HashMap::new();
+        for line in result.stdout.lines() {
+            let parts: Vec<&str> = line.splitn(4, '|').collect();
+            if parts.len() >= 4 {
+                let hash = parts[0].to_string();
+                let subject = parts[1].to_string();
+                let author = parts[2].to_string();
+                let ts = parts[3].parse::<i64>().unwrap_or(0);
+                info.insert(hash, (subject, author, ts));
+            }
+        }
+
+        for entry in entries.iter_mut() {
+            if let Some((subject, author, ts)) = info.get(&entry.hash) {
+                // Prefer the full subject from git log over the abbreviated one
+                // in the todo file (todo file may truncate long messages).
+                if !subject.is_empty() {
+                    entry.message = subject.clone();
+                }
+                entry.author_name = author.clone();
+                entry.unix_timestamp = *ts;
+            }
+        }
+    }
+
     /// Get the parent hash of a commit.
     fn commit_parent(&self, hash: &str) -> Result<String> {
         let result = self
@@ -166,4 +370,74 @@ impl GitCommands {
             .run_expecting_success()?;
         Ok(result.stdout_trimmed().to_string())
     }
+}
+
+/// Represents the state of a rebase in progress.
+#[derive(Debug, Clone)]
+pub struct RebaseProgress {
+    /// Branch being rebased (e.g. "my-feature").
+    pub head_name: String,
+    /// Full hash of the commit being rebased onto.
+    pub onto_hash: String,
+    /// Short hash of the onto commit.
+    pub onto_short: String,
+    /// Subject of the onto commit.
+    pub onto_message: String,
+    /// Entries that have already been processed.
+    pub done_entries: Vec<TodoEntry>,
+    /// Entries still to be processed.
+    pub todo_entries: Vec<TodoEntry>,
+    /// The commit hash where the rebase paused (conflict/edit).
+    pub stopped_sha: String,
+}
+
+/// A single entry from a rebase todo/done file.
+#[derive(Debug, Clone)]
+pub struct TodoEntry {
+    pub action: RebaseAction,
+    pub hash: String,
+    pub short_hash: String,
+    pub message: String,
+    pub author_name: String,
+    pub unix_timestamp: i64,
+}
+
+/// Parse a git rebase todo/done file into entries.
+/// Format: `<action> <hash> <message>`
+fn parse_todo_entries(content: &str) -> Vec<TodoEntry> {
+    content
+        .lines()
+        .filter_map(|line| {
+            let line = line.trim();
+            // Skip comments and empty lines
+            if line.is_empty() || line.starts_with('#') || line.starts_with("noop") {
+                return None;
+            }
+            let mut parts = line.splitn(3, ' ');
+            let action_str = parts.next()?;
+            let hash = parts.next().unwrap_or("").to_string();
+            let message = parts.next().unwrap_or("").to_string();
+
+            let action = match action_str {
+                "pick" | "p" => RebaseAction::Pick,
+                "reword" | "r" => RebaseAction::Reword,
+                "edit" | "e" => RebaseAction::Edit,
+                "squash" | "s" => RebaseAction::Squash,
+                "fixup" | "f" => RebaseAction::Fixup,
+                "drop" | "d" => RebaseAction::Drop,
+                _ => return None, // skip break, exec, label, etc.
+            };
+
+            let short_hash = hash[..7.min(hash.len())].to_string();
+
+            Some(TodoEntry {
+                action,
+                hash,
+                short_hash,
+                message,
+                author_name: String::new(),
+                unix_timestamp: 0,
+            })
+        })
+        .collect()
 }

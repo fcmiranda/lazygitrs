@@ -19,7 +19,7 @@ use crossterm::{execute, cursor};
 use ratatui::backend::CrosstermBackend;
 use ratatui::Terminal;
 
-use crate::config::AppConfig;
+use crate::config::{AppConfig, AppState};
 use crate::config::keybindings::parse_key;
 use crate::git::{GitCommands, ModelPart, MODEL_PART_COUNT};
 use crate::model::Model;
@@ -31,6 +31,7 @@ use self::layout::LayoutState;
 use self::popup::{HelpEntry, HelpSection};
 use self::modes::diff_mode::DiffModeState;
 use self::modes::patch_building::PatchBuildingState;
+use self::modes::rebase_mode::RebaseModeState;
 use self::popup::{MessageKind, PopupState};
 
 pub type Term = Terminal<CrosstermBackend<Stdout>>;
@@ -104,6 +105,8 @@ pub struct Gui {
     pub patch_building: PatchBuildingState,
     /// Diff/compare mode state.
     pub diff_mode: DiffModeState,
+    /// Interactive rebase mode state.
+    pub rebase_mode: RebaseModeState,
     /// Stashed commit editor popup while commit menu or AI generation is shown.
     pending_commit_popup: Option<PopupState>,
     /// Search bar textarea (1-line editor for search input).
@@ -142,6 +145,12 @@ pub struct Gui {
     remote_op_label: Option<String>,
     /// Timestamp when the last remote operation succeeded (for showing a temporary ✓).
     remote_op_success_at: Option<Instant>,
+    /// History of previously submitted commit messages (most recent first).
+    pub commit_message_history: Vec<String>,
+    /// Current index into commit_message_history when cycling (None = not cycling).
+    pub commit_history_idx: Option<usize>,
+    /// Stashed current draft when cycling through history.
+    commit_history_draft: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,7 +166,10 @@ impl Gui {
         let (ai_commit_tx, ai_commit_rx) = mpsc::channel();
         let (remote_op_tx, remote_op_rx) = mpsc::channel();
         let show_file_tree = config.user_config.gui.show_file_tree;
-        let show_command_log_default = config.user_config.gui.show_command_log;
+        let show_command_log_default = config
+            .app_state
+            .show_command_log
+            .unwrap_or(config.user_config.gui.show_command_log);
         let command_log = crate::os::cmd::new_command_log();
         crate::os::cmd::set_thread_command_log(command_log.clone());
 
@@ -172,6 +184,8 @@ impl Gui {
 
         let (initial_load_tx, initial_load_rx) = mpsc::channel();
         git.load_model_streaming(&initial_load_tx);
+
+        let commit_history = Self::load_commit_history(&config);
 
         Ok(Self {
             config: Arc::new(config),
@@ -208,6 +222,7 @@ impl Gui {
             undo_reflog_idx: 0,
             patch_building: PatchBuildingState::new(),
             diff_mode: DiffModeState::new(),
+            rebase_mode: RebaseModeState::new(),
             pending_commit_popup: None,
             search_textarea: None,
             last_refresh_at: Instant::now(),
@@ -224,6 +239,9 @@ impl Gui {
             spinner_frame: 0,
             remote_op_label: None,
             remote_op_success_at: None,
+            commit_message_history: commit_history,
+            commit_history_idx: None,
+            commit_history_draft: String::new(),
         })
     }
 
@@ -263,12 +281,13 @@ impl Gui {
                             model.total_deletions = deleted;
                         }
                         ModelPart::RepoStatus {
-                            is_rebasing, is_merging, is_cherry_picking, is_bisecting,
+                            is_rebasing, is_merging, is_cherry_picking, is_bisecting, rebase_onto_hash,
                         } => {
                             model.is_rebasing = is_rebasing;
                             model.is_merging = is_merging;
                             model.is_cherry_picking = is_cherry_picking;
                             model.is_bisecting = is_bisecting;
+                            model.rebase_onto_hash = rebase_onto_hash;
                         }
                     }
                     self.initial_load_received += 1;
@@ -308,7 +327,18 @@ impl Gui {
 
             // Render
             terminal.draw(|frame| {
-                if self.diff_mode.active {
+                if self.rebase_mode.active {
+                    let theme = self.config.user_config.theme();
+                    presentation::rebase_mode::render(
+                        frame,
+                        &self.rebase_mode,
+                        &theme,
+                    );
+                    // Render popup overlay on top of rebase mode
+                    if self.popup != PopupState::None {
+                        views::render_popup(frame, &self.popup, frame.area(), self.spinner_frame);
+                    }
+                } else if self.diff_mode.active {
                     let theme = self.config.user_config.theme();
                     presentation::diff_mode::render(
                         frame,
@@ -548,6 +578,11 @@ impl Gui {
 
     /// Request diff loading on a background thread if selection changed.
     fn maybe_request_diff(&mut self) {
+        // Rebase mode has no diff to load
+        if self.rebase_mode.active {
+            return;
+        }
+
         // Diff mode has its own diff loading
         if self.diff_mode.active {
             let diff_key = format!("diffmode:{}", self.diff_mode.diff_files_selected);
@@ -612,8 +647,52 @@ impl Gui {
                             self.diff_view.load_from_diff_output(&name, &diff);
                         }
                     }
+                } else if self.show_file_tree {
+                    // Directory node: show combined diff of all child files
+                    if let Some(node) = self.file_tree_nodes.get(selected) {
+                        if node.is_dir && !node.child_file_indices.is_empty() {
+                            let child_names: Vec<(String, bool, bool, bool)> = node
+                                .child_file_indices
+                                .iter()
+                                .filter_map(|&i| model.files.get(i))
+                                .map(|f| (f.name.clone(), f.has_unstaged_changes, f.has_staged_changes, f.tracked))
+                                .collect();
+                            let dir_name = node.name.clone();
+                            drop(model);
+
+                            let mut combined_diff = String::new();
+                            for (name, has_unstaged, has_staged, tracked) in &child_names {
+                                let diff = if *has_unstaged {
+                                    self.git.diff_file(name).unwrap_or_default()
+                                } else if *has_staged {
+                                    self.git.diff_file_staged(name).unwrap_or_default()
+                                } else if !tracked {
+                                    self.git.file_content(name).unwrap_or_default()
+                                } else {
+                                    String::new()
+                                };
+                                if !diff.is_empty() {
+                                    if !combined_diff.is_empty() {
+                                        combined_diff.push('\n');
+                                    }
+                                    combined_diff.push_str(&diff);
+                                }
+                            }
+
+                            if combined_diff.is_empty() {
+                                self.diff_view = DiffViewState::new();
+                            } else {
+                                self.diff_view.load_from_diff_output(&dir_name, &combined_diff);
+                            }
+                        } else {
+                            drop(model);
+                            self.diff_view = DiffViewState::new();
+                        }
+                    } else {
+                        drop(model);
+                        self.diff_view = DiffViewState::new();
+                    }
                 } else {
-                    // Directory node or no file selected — clear diff
                     drop(model);
                     self.diff_view = DiffViewState::new();
                 }
@@ -774,8 +853,63 @@ impl Gui {
                             payload,
                         });
                     });
+                } else if self.show_commit_file_tree {
+                    // Directory node in tree view: show combined diff of all child files
+                    if let Some(node) = self.commit_file_tree_nodes.get(selected) {
+                        if node.is_dir && !node.child_file_indices.is_empty() {
+                            let child_names: Vec<String> = node
+                                .child_file_indices
+                                .iter()
+                                .filter_map(|&i| model.commit_files.get(i))
+                                .map(|f| f.name.clone())
+                                .collect();
+                            let dir_name = node.name.clone();
+                            let hash = self.commit_files_hash.clone();
+                            drop(model);
+
+                            let git = Arc::clone(&self.git);
+                            let tx = self.diff_tx.clone();
+                            let gen_counter = Arc::clone(&self.diff_generation);
+
+                            std::thread::spawn(move || {
+                                if gen_counter.load(Ordering::Relaxed) != generation {
+                                    return;
+                                }
+                                let mut combined_diff = String::new();
+                                for name in &child_names {
+                                    if let Ok(diff) = git.diff_commit_file(&hash, name) {
+                                        if !diff.is_empty() {
+                                            if !combined_diff.is_empty() {
+                                                combined_diff.push('\n');
+                                            }
+                                            combined_diff.push_str(&diff);
+                                        }
+                                    }
+                                }
+                                let payload = if combined_diff.is_empty() {
+                                    DiffPayload::Empty
+                                } else {
+                                    DiffPayload::UnifiedDiff {
+                                        filename: dir_name,
+                                        diff_output: combined_diff,
+                                    }
+                                };
+                                let _ = tx.send(DiffResult {
+                                    generation,
+                                    diff_key,
+                                    payload,
+                                });
+                            });
+                        } else {
+                            drop(model);
+                            self.diff_view = DiffViewState::new();
+                        }
+                    } else {
+                        drop(model);
+                        self.diff_view = DiffViewState::new();
+                    }
                 } else {
-                    // Directory node or no file selected — clear diff
+                    // No file selected — clear diff
                     drop(model);
                     self.diff_view = DiffViewState::new();
                 }
@@ -795,6 +929,11 @@ impl Gui {
         // Search input mode takes priority
         if self.search_active {
             return self.handle_search_key(key);
+        }
+
+        // Rebase mode takes priority over everything
+        if self.rebase_mode.active {
+            return controller::rebase_mode::handle_key(self, key);
         }
 
         // Diff mode takes priority over normal UI
@@ -952,8 +1091,20 @@ impl Gui {
             let is_cherry_picking = model.is_cherry_picking;
             drop(model);
 
-            if is_rebasing || is_merging || is_cherry_picking {
-                return self.show_rebase_options_menu(is_rebasing, is_merging, is_cherry_picking);
+            // If rebasing, re-enter the interactive rebase view
+            if is_rebasing {
+                if !self.rebase_mode.active {
+                    if let Some(mut progress) = self.git.parse_rebase_progress() {
+                        self.git.hydrate_todo_entries(&mut progress.done_entries);
+                        self.git.hydrate_todo_entries(&mut progress.todo_entries);
+                        self.rebase_mode.enter_in_progress(&progress);
+                    }
+                }
+                return Ok(());
+            }
+
+            if is_merging || is_cherry_picking {
+                return self.show_rebase_options_menu(false, is_merging, is_cherry_picking);
             }
         }
 
@@ -989,6 +1140,7 @@ impl Gui {
         // Toggle command log (;)
         if key.code == KeyCode::Char(';') {
             self.show_command_log = !self.show_command_log;
+            self.persist_command_log_visibility();
             return Ok(());
         }
 
@@ -1043,6 +1195,12 @@ impl Gui {
                 self.goto_prev_search_match();
                 return Ok(());
             }
+        }
+
+        // Universal "I" key: interactive rebase picker
+        if key.code == KeyCode::Char('I') {
+            self.show_interactive_rebase_picker();
+            return Ok(());
         }
 
         // Context-specific keybindings
@@ -1191,6 +1349,7 @@ impl Gui {
         // Toggle command log (;)
         if key.code == KeyCode::Char(';') {
             self.show_command_log = !self.show_command_log;
+            self.persist_command_log_visibility();
             return Ok(());
         }
 
@@ -1396,8 +1555,18 @@ impl Gui {
                     || (!is_commit && key.code == KeyCode::Enter)
                 {
                     let popup = std::mem::replace(&mut self.popup, PopupState::None);
-                    if let PopupState::Input { textarea, on_confirm, .. } = popup {
+                    if let PopupState::Input { textarea, on_confirm, is_commit: was_commit, .. } = popup {
                         let text = textarea.lines().join("\n");
+                        // Save to commit history before calling on_confirm
+                        if was_commit && !text.trim().is_empty() {
+                            // Remove duplicate if it exists
+                            self.commit_message_history.retain(|m| m != &text);
+                            self.commit_message_history.insert(0, text.clone());
+                            // Keep history bounded
+                            self.commit_message_history.truncate(50);
+                            self.save_commit_history();
+                        }
+                        self.commit_history_idx = None;
                         if let Err(e) = on_confirm(self, &text) {
                             self.popup = PopupState::Message {
                                 title: "Error".to_string(),
@@ -1408,6 +1577,70 @@ impl Gui {
                     }
                 } else if key.code == KeyCode::Esc {
                     self.popup = PopupState::None;
+                    self.commit_history_idx = None;
+                } else if is_commit
+                    && (key.code == KeyCode::Up || key.code == KeyCode::Down)
+                    && !self.commit_message_history.is_empty()
+                {
+                    // Cycle through commit message history with Up/Down
+                    if let PopupState::Input { textarea, .. } = &mut self.popup {
+                        // Only cycle if on first line (Up) or last line (Down)
+                        let cursor_row = textarea.cursor().0;
+                        let line_count = textarea.lines().len();
+                        let should_cycle = match key.code {
+                            KeyCode::Up => cursor_row == 0,
+                            KeyCode::Down => cursor_row >= line_count.saturating_sub(1),
+                            _ => false,
+                        };
+
+                        if should_cycle {
+                            let history_len = self.commit_message_history.len();
+                            match key.code {
+                                KeyCode::Up => {
+                                    let new_idx = match self.commit_history_idx {
+                                        None => {
+                                            // Save current draft
+                                            self.commit_history_draft = textarea.lines().join("\n");
+                                            0
+                                        }
+                                        Some(idx) => (idx + 1).min(history_len - 1),
+                                    };
+                                    self.commit_history_idx = Some(new_idx);
+                                    let msg = &self.commit_message_history[new_idx];
+                                    let mut new_ta = popup::make_textarea("Enter commit message...");
+                                    new_ta.insert_str(msg);
+                                    *textarea = new_ta;
+                                }
+                                KeyCode::Down => {
+                                    match self.commit_history_idx {
+                                        Some(0) => {
+                                            // Go back to draft
+                                            self.commit_history_idx = None;
+                                            let draft = self.commit_history_draft.clone();
+                                            let mut new_ta = popup::make_textarea("Enter commit message...");
+                                            new_ta.insert_str(&draft);
+                                            *textarea = new_ta;
+                                        }
+                                        Some(idx) => {
+                                            let new_idx = idx - 1;
+                                            self.commit_history_idx = Some(new_idx);
+                                            let msg = &self.commit_message_history[new_idx];
+                                            let mut new_ta = popup::make_textarea("Enter commit message...");
+                                            new_ta.insert_str(msg);
+                                            *textarea = new_ta;
+                                        }
+                                        None => {
+                                            // Already at draft, do nothing
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            }
+                        } else {
+                            // Not at boundary — forward to textarea for normal cursor movement
+                            textarea.input(key);
+                        }
+                    }
                 } else if is_commit
                     && key.code == KeyCode::Char('o')
                     && key.modifiers.contains(KeyModifiers::CONTROL)
@@ -1513,12 +1746,18 @@ impl Gui {
                 // Block all input while loading — user must wait
             }
             PopupState::Help { .. } => {}
+            PopupState::RefPicker { .. } => {}
             PopupState::None => {}
         }
 
         // Help popup is handled separately to avoid borrow conflicts
         if matches!(self.popup, PopupState::Help { .. }) {
             self.handle_help_popup_key(key);
+        }
+
+        // RefPicker popup is handled separately to avoid borrow conflicts
+        if matches!(self.popup, PopupState::RefPicker { .. }) {
+            self.handle_ref_picker_key(key)?;
         }
 
         Ok(())
@@ -1615,6 +1854,193 @@ impl Gui {
         }
     }
 
+    fn handle_ref_picker_key(&mut self, key: KeyEvent) -> Result<()> {
+        use crate::gui::popup::RefPickerItem;
+
+        /// Compute the display row index for a given entry selection,
+        /// accounting for category header rows.
+        fn find_display_idx(items: &[RefPickerItem], sel: usize) -> usize {
+            let mut di = 0usize;
+            let mut last_cat = String::new();
+            for (ei, item) in items.iter().enumerate() {
+                if item.category != last_cat {
+                    di += 1; // header row
+                    last_cat = item.category.clone();
+                }
+                if ei == sel {
+                    return di;
+                }
+                di += 1;
+            }
+            di
+        }
+
+        if let PopupState::RefPicker { items, selected, search_textarea, scroll_offset, .. } = &mut self.popup {
+            let search = search_textarea.lines().join("");
+            let total = items.len();
+
+            // Must match the rendering formula exactly:
+            // popup_height = (height * 60 / 100).max(10).min(height - 4)
+            // inner.height = popup_height - 2 (borders)
+            // list_height = inner.height - 3 (search + sep + hint)
+            let h = self.layout.height as usize;
+            let popup_h = (h * 60 / 100).max(10).min(h.saturating_sub(4));
+            let list_height = popup_h.saturating_sub(2).saturating_sub(3);
+
+            match key.code {
+                KeyCode::Esc => {
+                    self.popup = PopupState::None;
+                    return Ok(());
+                }
+                KeyCode::Enter => {
+                    // Use selected item if available, otherwise use the raw
+                    // search text as a ref expression (e.g. HEAD~1, abc123~2).
+                    let value = if let Some(item) = items.get(*selected) {
+                        item.value.clone()
+                    } else if !search.trim().is_empty() {
+                        search.trim().to_string()
+                    } else {
+                        return Ok(());
+                    };
+                    let popup = std::mem::replace(&mut self.popup, PopupState::None);
+                    if let PopupState::RefPicker { on_confirm, .. } = popup {
+                        if let Err(e) = on_confirm(self, &value) {
+                            self.popup = PopupState::Message {
+                                title: "Error".to_string(),
+                                message: format!("{}", e),
+                                kind: MessageKind::Error,
+                            };
+                        }
+                    }
+                    return Ok(());
+                }
+                KeyCode::Down => {
+                    if total > 0 {
+                        *selected = (*selected + 1).min(total.saturating_sub(1));
+                    }
+                    let sdi = find_display_idx(items, *selected);
+                    if sdi >= *scroll_offset + list_height {
+                        *scroll_offset = sdi.saturating_sub(list_height - 1);
+                    }
+                }
+                KeyCode::Up => {
+                    *selected = selected.saturating_sub(1);
+                    if *selected == 0 {
+                        *scroll_offset = 0;
+                    } else {
+                        let sdi = find_display_idx(items, *selected);
+                        if sdi <= *scroll_offset {
+                            *scroll_offset = sdi.saturating_sub(1);
+                        }
+                    }
+                }
+                _ => {
+                    search_textarea.input(key);
+                    let new_search = search_textarea.lines().join("");
+                    if new_search != search {
+                        // Remove any previous raw-ref item at index 0
+                        if !items.is_empty() && items[0].category == "[ref]" {
+                            items.remove(0);
+                        }
+
+                        let new_lower = new_search.to_lowercase();
+                        if !new_lower.is_empty() {
+                            // Insert a raw-ref item at index 0 so the user
+                            // can always select exactly what they typed
+                            // (e.g. HEAD~4, abc123~1).
+                            items.insert(0, RefPickerItem {
+                                value: new_search.trim().to_string(),
+                                label: new_search.trim().to_string(),
+                                category: "[ref]".to_string(),
+                            });
+
+                            // Jump cursor to best match among real candidates
+                            // (skip the raw ref at index 0)
+                            if let Some(idx) = items.iter().skip(1).position(|i| {
+                                i.label.to_lowercase().contains(&new_lower)
+                                    || i.value.to_lowercase().contains(&new_lower)
+                            }) {
+                                *selected = idx + 1; // +1 to skip raw ref
+                            } else {
+                                // No match — stay on the raw ref option
+                                *selected = 0;
+                            }
+                            let sdi = find_display_idx(items, *selected);
+                            // Center the match in the viewport
+                            *scroll_offset = sdi.saturating_sub(list_height / 2);
+                        } else {
+                            *selected = 0;
+                            *scroll_offset = 0;
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn show_interactive_rebase_picker(&mut self) {
+        use crate::gui::popup::{RefPickerItem, make_help_search_textarea};
+
+        let model = self.model.lock().unwrap();
+        let mut items = Vec::new();
+
+        // Add branches (skip current branch)
+        for branch in &model.branches {
+            if branch.head {
+                continue;
+            }
+            items.push(RefPickerItem {
+                value: branch.name.clone(),
+                label: branch.name.clone(),
+                category: "Branches".to_string(),
+            });
+        }
+
+        // Add remote branches
+        for remote in &model.remotes {
+            for branch in &remote.branches {
+                let full_name = format!("{}/{}", remote.name, branch.name);
+                items.push(RefPickerItem {
+                    value: full_name.clone(),
+                    label: full_name,
+                    category: "Remote Branches".to_string(),
+                });
+            }
+        }
+
+        // Add tags
+        for tag in &model.tags {
+            items.push(RefPickerItem {
+                value: tag.name.clone(),
+                label: tag.name.clone(),
+                category: "Tags".to_string(),
+            });
+        }
+
+        // Add commits (skip HEAD)
+        for commit in model.commits.iter().skip(1) {
+            items.push(RefPickerItem {
+                value: commit.hash.clone(),
+                label: format!("{} {}", commit.short_hash(), commit.name),
+                category: "Commits".to_string(),
+            });
+        }
+
+        drop(model);
+
+        self.popup = PopupState::RefPicker {
+            title: "Interactive rebase current branch onto".to_string(),
+            items,
+            selected: 0,
+            search_textarea: make_help_search_textarea(),
+            scroll_offset: 0,
+            on_confirm: Box::new(|gui, ref_name| {
+                controller::branches::enter_interactive_rebase_onto(gui, ref_name)
+            }),
+        };
+    }
+
     fn show_help(&mut self) {
         let kb = &self.config.user_config.keybinding;
         let active = self.context_mgr.active();
@@ -1657,6 +2083,7 @@ impl Gui {
                 HelpEntry { key: "[/]".into(), description: "Toggle old/new only view".into() },
                 HelpEntry { key: ";".into(), description: "Toggle command log".into() },
                 HelpEntry { key: "W".into(), description: "Compare / Diff mode".into() },
+                HelpEntry { key: "I".into(), description: "Interactive rebase onto...".into() },
                 HelpEntry { key: "1-5".into(), description: "Jump to panel".into() },
                 HelpEntry { key: "?".into(), description: "Show this help".into() },
             ],
@@ -1707,6 +2134,8 @@ impl Gui {
                 entries: vec![
                     HelpEntry { key: "<enter>".into(), description: "View branch commits".into() },
                     HelpEntry { key: "<space>".into(), description: "Checkout branch".into() },
+                    HelpEntry { key: "c".into(), description: "Checkout ref".into() },
+                    HelpEntry { key: "-".into(), description: "Checkout previous branch".into() },
                     HelpEntry { key: "n".into(), description: "New branch".into() },
                     HelpEntry { key: "d".into(), description: "Delete branch".into() },
                     HelpEntry { key: kb.branches.merge_into_current_branch.clone(), description: "Merge into current".into() },
@@ -1740,6 +2169,7 @@ impl Gui {
                     HelpEntry { key: kb.commits.view_bisect_options.clone(), description: "Bisect options".into() },
                     HelpEntry { key: "o".into(), description: "Open in browser".into() },
                     HelpEntry { key: "y".into(), description: "Copy to clipboard menu".into() },
+                    HelpEntry { key: kb.commits.interactive_rebase.clone(), description: "Interactive rebase".into() },
                 ],
             },
             ContextId::Reflog => HelpSection {
@@ -2336,6 +2766,25 @@ impl Gui {
             return;
         }
 
+        // Rebase mode: basic scroll support
+        if self.rebase_mode.active {
+            match mouse.kind {
+                MouseEventKind::ScrollDown => {
+                    let len = self.rebase_mode.entries.len();
+                    if self.rebase_mode.selected + 1 < len {
+                        self.rebase_mode.selected += 1;
+                    }
+                }
+                MouseEventKind::ScrollUp => {
+                    if self.rebase_mode.selected > 0 {
+                        self.rebase_mode.selected -= 1;
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
+
         // Diff mode has its own mouse handling
         if self.diff_mode.active {
             self.handle_diff_mode_mouse(mouse);
@@ -2368,6 +2817,44 @@ impl Gui {
                 }
                 MouseEventKind::Down(MouseButton::Left) => {
                     // Clicking outside could close, but for now just ignore clicks
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // RefPicker popup intercepts mouse scroll — move selection like ↑/↓
+        if let PopupState::RefPicker { items, selected, scroll_offset, search_textarea, .. } = &mut self.popup {
+            let total = items.len();
+            match mouse.kind {
+                MouseEventKind::ScrollUp => {
+                    *selected = selected.saturating_sub(3);
+                    if *selected < *scroll_offset {
+                        *scroll_offset = *selected;
+                    }
+                }
+                MouseEventKind::ScrollDown => {
+                    *selected = (*selected + 3).min(total.saturating_sub(1));
+                    // Compute display idx to keep scroll in sync
+                    let mut di = 0usize;
+                    let mut ei = 0usize;
+                    let mut last_cat = String::new();
+                    for item in items.iter() {
+                        if item.category != last_cat {
+                            di += 1;
+                            last_cat = item.category.clone();
+                        }
+                        if ei == *selected { break; }
+                        ei += 1;
+                        di += 1;
+                    }
+                    let _ = search_textarea;
+                    let h = self.layout.height as usize;
+                    let popup_h = (h * 60 / 100).max(10).min(h.saturating_sub(4));
+                    let list_height = popup_h.saturating_sub(2).saturating_sub(3);
+                    if di >= *scroll_offset + list_height {
+                        *scroll_offset = di.saturating_sub(list_height - 1);
+                    }
                 }
                 _ => {}
             }
@@ -2495,6 +2982,42 @@ impl Gui {
             match mouse.kind {
                 MouseEventKind::ScrollUp => { *scroll_offset = scroll_offset.saturating_sub(3); }
                 MouseEventKind::ScrollDown => { *scroll_offset = (*scroll_offset + 3).min(total_rows.saturating_sub(1)); }
+                _ => {}
+            }
+            return;
+        }
+
+        // RefPicker popup intercepts mouse scroll — move selection like ↑/↓
+        if let PopupState::RefPicker { items, selected, scroll_offset, .. } = &mut self.popup {
+            let total = items.len();
+            match mouse.kind {
+                MouseEventKind::ScrollUp => {
+                    *selected = selected.saturating_sub(3);
+                    if *selected < *scroll_offset {
+                        *scroll_offset = *selected;
+                    }
+                }
+                MouseEventKind::ScrollDown => {
+                    *selected = (*selected + 3).min(total.saturating_sub(1));
+                    let mut di = 0usize;
+                    let mut ei = 0usize;
+                    let mut last_cat = String::new();
+                    for item in items.iter() {
+                        if item.category != last_cat {
+                            di += 1;
+                            last_cat = item.category.clone();
+                        }
+                        if ei == *selected { break; }
+                        ei += 1;
+                        di += 1;
+                    }
+                    let h = self.layout.height as usize;
+                    let popup_h = (h * 60 / 100).max(10).min(h.saturating_sub(4));
+                    let list_height = popup_h.saturating_sub(2).saturating_sub(3);
+                    if di >= *scroll_offset + list_height {
+                        *scroll_offset = di.saturating_sub(list_height - 1);
+                    }
+                }
                 _ => {}
             }
             return;
@@ -2822,6 +3345,39 @@ impl Gui {
             }
         }
 
+        let is_rebasing = model.is_rebasing;
+        drop(model);
+
+        // Auto-enter rebase InProgress mode when a rebase is detected on disk
+        // and we're not already in rebase mode.
+        if is_rebasing && !self.rebase_mode.active {
+            if let Some(mut progress) = self.git.parse_rebase_progress() {
+                // Hydrate entries with author/timestamp from git log
+                self.git.hydrate_todo_entries(&mut progress.done_entries);
+                self.git.hydrate_todo_entries(&mut progress.todo_entries);
+                self.rebase_mode.enter_in_progress(&progress);
+            }
+        }
+        // If rebase mode was active but the rebase completed, exit and show success.
+        if !is_rebasing && self.rebase_mode.active {
+            use crate::gui::modes::rebase_mode::RebasePhase;
+            if self.rebase_mode.phase == RebasePhase::InProgress {
+                let branch = self.rebase_mode.branch_name.clone();
+                let count = self.rebase_mode.total_count;
+                self.rebase_mode.exit();
+                self.popup = crate::gui::popup::PopupState::Message {
+                    title: "Rebase complete".to_string(),
+                    message: format!(
+                        "Successfully rebased '{}' ({} commit{}).",
+                        branch,
+                        count,
+                        if count == 1 { "" } else { "s" },
+                    ),
+                    kind: crate::gui::popup::MessageKind::Info,
+                };
+            }
+        }
+
         Ok(())
     }
 
@@ -2837,6 +3393,38 @@ impl Gui {
         } else {
             Some(selected)
         }
+    }
+
+    fn commit_history_path(config: &AppConfig) -> std::path::PathBuf {
+        config.config_dir.join("commit_message_history")
+    }
+
+    fn persist_command_log_visibility(&self) {
+        if let Ok(mut state) = AppState::load(&self.config.state_path) {
+            state.show_command_log = Some(self.show_command_log);
+            let _ = state.save(&self.config.state_path);
+        }
+    }
+
+    fn load_commit_history(config: &AppConfig) -> Vec<String> {
+        let path = Self::commit_history_path(config);
+        match std::fs::read_to_string(&path) {
+            Ok(contents) => contents
+                .split('\0')
+                .filter(|s| !s.is_empty())
+                .map(|s| s.to_string())
+                .collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
+    fn save_commit_history(&self) {
+        let path = Self::commit_history_path(&self.config);
+        if let Some(parent) = path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        let contents = self.commit_message_history.join("\0");
+        let _ = std::fs::write(&path, contents);
     }
 
     pub fn update_file_tree_state(&mut self) {
