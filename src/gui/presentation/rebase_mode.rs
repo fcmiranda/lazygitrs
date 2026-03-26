@@ -26,77 +26,104 @@ const ACTION_LABEL_WIDTH: usize = 9; // " {:7} " = 1 + 7 + 1
 pub fn render(frame: &mut Frame, state: &RebaseModeState, theme: &Theme) {
     let area = frame.area();
 
-    // Layout: Header (3) | Progress banner if InProgress (1-2) | List (fill) | Status bar (1)
-    let has_banner = state.phase == RebasePhase::InProgress;
-    let banner_height = if has_banner { 2 } else { 0 };
-
+    // Layout: Main bordered block (fill) | Status bar (1)
     let outer = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(3),                          // header
-            Constraint::Length(banner_height),              // progress banner
-            Constraint::Min(1),                             // list
-            Constraint::Length(1),                           // status bar
-        ])
+        .constraints([Constraint::Min(1), Constraint::Length(1)])
         .split(area);
 
-    render_header(frame, outer[0], state, theme);
-    if has_banner {
-        render_progress_banner(frame, outer[1], state);
-    }
-    render_list(frame, outer[2], state, theme);
-    render_status_bar(frame, outer[3], state);
+    render_main_block(frame, outer[0], state, theme);
+    render_status_bar(frame, outer[1], state, theme);
 }
 
-fn render_header(frame: &mut Frame, area: Rect, state: &RebaseModeState, theme: &Theme) {
+fn render_main_block(frame: &mut Frame, area: Rect, state: &RebaseModeState, theme: &Theme) {
+    // Build title line for the bordered block
     let mut title_spans = vec![
+        Span::raw(" "),
         Span::styled(
             "Interactive Rebase",
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::raw("  "),
-        Span::styled("⎇ ", Style::default().fg(Color::Cyan)),
-        Span::styled(
-            &state.branch_name,
-            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
-        ),
-        Span::raw("  "),
     ];
 
     match state.phase {
         RebasePhase::Planning => {
             title_spans.push(Span::styled(
-                format!("Rebasing {} commits onto ", state.entries.len()),
+                " ~ ",
                 Style::default().fg(Color::DarkGray),
             ));
             title_spans.push(Span::styled(
-                format!("◆ {}", state.base_short_hash),
-                Style::default().fg(Color::Yellow),
+                format!("{} commits", state.entries.len()),
+                Style::default().fg(Color::White),
             ));
         }
         RebasePhase::InProgress => {
             title_spans.push(Span::styled(
-                "onto ",
+                " ~ ",
                 Style::default().fg(Color::DarkGray),
             ));
             title_spans.push(Span::styled(
-                format!("◆ {}", state.base_short_hash),
-                Style::default().fg(Color::Yellow),
-            ));
-            title_spans.push(Span::raw("  "));
-            title_spans.push(Span::styled(
-                format!("{}/{} commits", state.done_count, state.total_count),
+                format!("{}/{}", state.done_count, state.total_count),
                 Style::default().fg(Color::White),
             ));
         }
     }
+    title_spans.push(Span::raw(" "));
 
     let block = Block::default()
+        .title(Line::from(title_spans))
         .borders(Borders::ALL)
         .border_style(theme.active_border);
-    let paragraph = Paragraph::new(Line::from(title_spans)).block(block);
+
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
+
+    // Inside the block: info line (1) | optional banner (2) | list (fill)
+    let has_banner = state.phase == RebasePhase::InProgress;
+    let banner_height = if has_banner { 2 } else { 0 };
+
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(1),              // branch + base info line
+            Constraint::Length(banner_height),   // progress banner (InProgress only)
+            Constraint::Min(1),                 // list
+        ])
+        .split(inner);
+
+    render_info_line(frame, sections[0], state);
+    if has_banner {
+        render_progress_banner(frame, sections[1], state);
+    }
+    render_list(frame, sections[2], state, theme);
+}
+
+fn render_info_line(frame: &mut Frame, area: Rect, state: &RebaseModeState) {
+    let mut spans = vec![
+        Span::styled(" ⎇ ", Style::default().fg(Color::Cyan)),
+        Span::styled(
+            &state.branch_name,
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::styled("  onto  ", Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            &state.base_short_hash,
+            Style::default().fg(Color::Yellow),
+        ),
+    ];
+
+    if !state.base_message.is_empty() {
+        spans.push(Span::styled(
+            format!(" {}", state.base_message),
+            Style::default().fg(Color::DarkGray),
+        ));
+    }
+
+    let paragraph = Paragraph::new(Line::from(spans));
     frame.render_widget(paragraph, area);
 }
 
@@ -106,6 +133,21 @@ fn render_progress_banner(frame: &mut Frame, area: Rect, state: &RebaseModeState
     let current = state.entries.iter().find(|e| e.status == EntryStatus::Current);
     let remaining = state.remaining_count();
 
+    // Separator line above the banner
+    let sep = "─".repeat(area.width as usize);
+    let sep_area = Rect { height: 1, ..area };
+    frame.render_widget(
+        Paragraph::new(Span::styled(&sep, Style::default().fg(Color::DarkGray))),
+        sep_area,
+    );
+
+    // Banner content on the second line
+    let banner_area = Rect {
+        y: area.y + 1,
+        height: 1,
+        ..area
+    };
+
     let mut spans = vec![
         Span::styled(
             " ⏸ ",
@@ -114,7 +156,7 @@ fn render_progress_banner(frame: &mut Frame, area: Rect, state: &RebaseModeState
                 .bg(Color::Yellow)
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(" Rebase paused", Style::default().fg(Color::Yellow)),
+        Span::styled(" Paused", Style::default().fg(Color::Yellow)),
     ];
 
     if let Some(entry) = current {
@@ -128,32 +170,27 @@ fn render_progress_banner(frame: &mut Frame, area: Rect, state: &RebaseModeState
             Style::default().fg(Color::Yellow),
         ));
         spans.push(Span::styled(
-            format!("◆ {}", entry.short_hash),
+            &entry.short_hash,
             Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
         ));
     }
 
-    // Right-aligned progress
-    let progress_text = format!(
-        "  ({}/{})  {} remaining",
-        state.done_count, state.total_count, remaining
-    );
     spans.push(Span::styled(
-        progress_text,
+        format!("  {} remaining", remaining),
         Style::default().fg(Color::DarkGray),
     ));
 
     let banner = Paragraph::new(Line::from(spans))
         .style(Style::default().bg(Color::Rgb(50, 40, 10)));
-    frame.render_widget(banner, area);
+    frame.render_widget(banner, banner_area);
 }
 
 /// Render entries + base commit as a single list so the base is always
 /// directly below the last entry (no gap).
 fn render_list(frame: &mut Frame, area: Rect, state: &RebaseModeState, theme: &Theme) {
-    let highlight_bg = Color::Rgb(40, 40, 60);
+    let sel_bg = theme.selected_line;
     let is_in_progress = state.phase == RebasePhase::InProgress;
 
     // Pre-compute which entries are squash/fixup targets (Planning phase only).
@@ -197,53 +234,31 @@ fn render_list(frame: &mut Frame, area: Rect, state: &RebaseModeState, theme: &T
 
             let is_pipe = !is_in_progress && (is_drop || action == RebaseAction::Squash);
             if is_pipe {
-                let pipe_color = ac;
-                let style = if is_selected {
-                    Style::default().fg(pipe_color).bg(highlight_bg)
-                } else {
-                    Style::default().fg(pipe_color)
-                };
-                spans.push(Span::styled(" │   ", style));
+                let style = Style::default().fg(ac);
+                spans.push(Span::styled(" │  ", style));
             } else if is_done {
-                // Checkmark for done entries
-                let style = if is_selected {
-                    Style::default().fg(Color::Green).bg(highlight_bg)
-                } else {
-                    Style::default().fg(Color::Green)
-                };
-                spans.push(Span::styled(" ✓   ", style));
+                spans.push(Span::styled(" ✓  ", Style::default().fg(Color::Green)));
             } else if is_current {
-                // Highlighted current entry
-                let style = if is_selected {
+                spans.push(Span::styled(
+                    " ▶  ",
                     Style::default()
                         .fg(Color::Yellow)
-                        .bg(highlight_bg)
-                        .add_modifier(Modifier::BOLD)
-                } else {
-                    Style::default()
-                        .fg(Color::Yellow)
-                        .add_modifier(Modifier::BOLD)
-                };
-                spans.push(Span::styled(" ▶   ", style));
+                        .add_modifier(Modifier::BOLD),
+                ));
             } else {
-                let style = if is_selected {
-                    Style::default().fg(node_color).bg(highlight_bg)
-                } else {
-                    Style::default().fg(node_color)
-                };
-                spans.push(Span::styled(" ◯   ", style));
+                spans.push(Span::styled(" ◯  ", Style::default().fg(node_color)));
             }
 
             // Action label
             let action_label = format!(" {:7} ", action.as_str());
             if is_done {
-                // Muted action for done entries
                 spans.push(Span::styled(
                     action_label,
-                    Style::default().fg(Color::DarkGray).bg(Color::Rgb(40, 40, 40)),
+                    Style::default()
+                        .fg(Color::DarkGray)
+                        .bg(Color::Rgb(40, 40, 40)),
                 ));
             } else if is_current {
-                // Yellow-tinted bg for current entry
                 spans.push(Span::styled(
                     action_label,
                     Style::default().fg(Color::Black).bg(Color::Yellow),
@@ -256,38 +271,29 @@ fn render_list(frame: &mut Frame, area: Rect, state: &RebaseModeState, theme: &T
             }
 
             // Separator
-            let sep_style = if is_selected {
-                Style::default().bg(highlight_bg)
-            } else {
-                Style::default()
-            };
-            spans.push(Span::styled("  ", sep_style));
+            spans.push(Span::raw(" "));
 
             // Short hash
             let hash_style = if is_done {
-                let s = Style::default().fg(Color::Rgb(80, 80, 80));
-                if is_selected { s.bg(highlight_bg) } else { s }
+                Style::default().fg(Color::Rgb(80, 80, 80))
             } else if is_current {
-                let s = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
-                if is_selected { s.bg(highlight_bg) } else { s }
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD)
             } else {
-                let s = Style::default().fg(Color::Yellow);
-                if is_selected { s.bg(highlight_bg) } else { s }
+                Style::default().fg(Color::Yellow)
             };
             spans.push(Span::styled(format!("{} ", entry.short_hash), hash_style));
 
             // Commit message
             let msg_style = if is_done {
-                let s = Style::default().fg(Color::DarkGray);
-                if is_selected { s.bg(highlight_bg) } else { s }
+                Style::default().fg(Color::DarkGray)
             } else if is_drop {
-                let s = Style::default()
+                Style::default()
                     .fg(Color::DarkGray)
-                    .add_modifier(Modifier::CROSSED_OUT);
-                if is_selected { s.bg(highlight_bg) } else { s }
+                    .add_modifier(Modifier::CROSSED_OUT)
             } else {
-                let s = Style::default().fg(Color::White);
-                if is_selected { s.bg(highlight_bg) } else { s }
+                Style::default().fg(Color::White)
             };
             spans.push(Span::styled(entry.message.clone(), msg_style));
 
@@ -295,8 +301,6 @@ fn render_list(frame: &mut Frame, area: Rect, state: &RebaseModeState, theme: &T
             if !entry.author_name.is_empty() {
                 let author_style = if is_done {
                     Style::default().fg(Color::Rgb(60, 60, 60))
-                } else if is_selected {
-                    theme.commit_author.bg(highlight_bg)
                 } else {
                     theme.commit_author
                 };
@@ -306,16 +310,25 @@ fn render_list(frame: &mut Frame, area: Rect, state: &RebaseModeState, theme: &T
                 ));
             }
 
-            ListItem::new(Line::from(spans))
+            let item = ListItem::new(Line::from(spans));
+            if is_selected {
+                item.style(sel_bg)
+            } else {
+                item
+            }
         })
         .collect();
 
     // Append the base commit as the last row (not selectable, just visual).
     {
-        let base_pad = " ".repeat(ACTION_LABEL_WIDTH + 2);
-        let base_node_color = if is_in_progress { Color::DarkGray } else { squash_target_color[len].unwrap_or(Color::DarkGray) };
+        let base_pad = " ".repeat(ACTION_LABEL_WIDTH + 1);
+        let base_node_color = if is_in_progress {
+            Color::DarkGray
+        } else {
+            squash_target_color[len].unwrap_or(Color::DarkGray)
+        };
         let base_spans = vec![
-            Span::styled(" ◯   ", Style::default().fg(base_node_color)),
+            Span::styled(" ◯  ", Style::default().fg(base_node_color)),
             Span::styled(base_pad, Style::default()),
             Span::styled(
                 format!("{} ", state.base_short_hash),
@@ -338,7 +351,7 @@ fn render_list(frame: &mut Frame, area: Rect, state: &RebaseModeState, theme: &T
     frame.render_stateful_widget(list, area, &mut list_state);
 }
 
-fn render_status_bar(frame: &mut Frame, area: Rect, state: &RebaseModeState) {
+fn render_status_bar(frame: &mut Frame, area: Rect, state: &RebaseModeState, theme: &Theme) {
     let hints: Vec<(&str, &str)> = match state.phase {
         RebasePhase::Planning => vec![
             ("p", "pick"),
@@ -363,20 +376,20 @@ fn render_status_bar(frame: &mut Frame, area: Rect, state: &RebaseModeState) {
         ],
     };
 
-    let spans: Vec<Span> = hints
-        .iter()
-        .flat_map(|(key, desc)| {
-            vec![
-                Span::styled(
-                    format!(" {} ", key),
-                    Style::default()
-                        .fg(Color::Cyan)
-                        .add_modifier(Modifier::BOLD),
-                ),
-                Span::styled(format!("{} ", desc), Style::default().fg(Color::DarkGray)),
-            ]
-        })
-        .collect();
+    let mut spans: Vec<Span> = vec![Span::raw(" ")];
+    for (i, (key, desc)) in hints.iter().enumerate() {
+        if i > 0 {
+            spans.push(Span::styled(" | ", Style::default().fg(Color::DarkGray)));
+        }
+        spans.push(Span::styled(
+            format!("{}", key),
+            Style::default().fg(Color::DarkGray),
+        ));
+        spans.push(Span::styled(
+            format!(": {}", desc),
+            theme.status_bar,
+        ));
+    }
 
     let bar = Paragraph::new(Line::from(spans));
     frame.render_widget(bar, area);
