@@ -22,7 +22,7 @@ pub fn set_thread_command_log(log: CommandLog) {
     CMD_LOG.with(|l| *l.borrow_mut() = Some(log));
 }
 
-fn log_command(desc: &str) {
+pub fn log_command(desc: &str) {
     CMD_LOG.with(|l| {
         if let Some(ref log) = *l.borrow() {
             if let Ok(mut entries) = log.lock() {

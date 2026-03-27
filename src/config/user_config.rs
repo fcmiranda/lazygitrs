@@ -250,6 +250,7 @@ impl OsConfig {
         if parts.is_empty() {
             anyhow::bail!("Empty command after template expansion");
         }
+        crate::os::cmd::log_command(&cmd_str);
         std::process::Command::new(parts[0])
             .args(&parts[1..])
             .spawn()?;
@@ -269,6 +270,7 @@ impl OsConfig {
         if parts.is_empty() {
             anyhow::bail!("Empty command after template expansion");
         }
+        crate::os::cmd::log_command(&cmd_str);
         std::process::Command::new(parts[0])
             .args(&parts[1..])
             .spawn()?;

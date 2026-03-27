@@ -698,6 +698,7 @@ impl Gui {
                                 self.diff_view = DiffViewState::new();
                             } else {
                                 self.diff_view.load_from_diff_output(&dir_name, &combined_diff);
+                                self.diff_view.file_exists_on_disk = false;
                             }
                         } else {
                             drop(model);
