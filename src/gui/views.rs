@@ -1211,9 +1211,10 @@ pub fn render_selection_overlay(frame: &mut Frame, diff_view: &mut DiffViewState
     };
 
     let (top_row, top_col, bot_row, bot_col) = selection.normalized();
+    let is_click = selection.is_click;
 
-    // Don't render if selection is empty (single point)
-    if top_row == bot_row && top_col == bot_col {
+    // For non-click selections, bail on empty (single point).
+    if !is_click && top_row == bot_row && top_col == bot_col {
         return;
     }
 
@@ -1221,8 +1222,63 @@ pub fn render_selection_overlay(frame: &mut Frame, diff_view: &mut DiffViewState
     let pl = DiffPanelLayout::compute(panel_rect, diff_view);
     let (content_start, content_end) = pl.content_range(selection.panel);
 
+    // Compute the actual file line number at the top of the selection/click for editAtLine.
+    let edit_line_number: Option<usize> = if top_row >= pl.inner_y {
+        let line_idx = diff_view.scroll_offset + (top_row - pl.inner_y) as usize;
+        diff_view.file_line_number(line_idx, selection.panel)
+    } else {
+        None
+    };
+    if let Some(ref mut sel) = diff_view.selection {
+        sel.edit_line_number = edit_line_number;
+    }
+
     let buf = frame.buffer_mut();
     let buf_area = *buf.area();
+
+    // --- Click state: just show the "e edit" tooltip, no text highlighting ---
+    if is_click {
+        if diff_view.file_exists_on_disk {
+            let tooltip_style = Style::default()
+                .bg(Color::Rgb(60, 60, 70))
+                .fg(Color::Rgb(200, 200, 210));
+            let key_style = Style::default()
+                .bg(Color::Rgb(60, 60, 70))
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD);
+
+            let parts: &[(&str, Style)] = &[
+                (" ", tooltip_style),
+                ("e", key_style),
+                (" edit ", tooltip_style),
+            ];
+            let tooltip_width: u16 = parts.iter().map(|(s, _)| s.len() as u16).sum();
+            let tooltip_x = top_col
+                .saturating_sub(tooltip_width / 2)
+                .max(content_start)
+                .min(content_end.saturating_sub(tooltip_width));
+            let tooltip_y = (top_row + 1).min(pl.inner_end_y.saturating_sub(1));
+
+            if tooltip_y < buf_area.y + buf_area.height {
+                let mut col = tooltip_x;
+                for (text, style) in parts {
+                    for ch in text.chars() {
+                        if col >= content_end {
+                            break;
+                        }
+                        if let Some(cell) = buf.cell_mut((col, tooltip_y)) {
+                            cell.set_char(ch);
+                            cell.set_style(*style);
+                        }
+                        col += 1;
+                    }
+                }
+            }
+        }
+        return;
+    }
+
+    // --- Drag selection: highlight text and show tooltip ---
     let mut extracted_text = String::new();
 
     let row_start = top_row.max(pl.inner_y);
@@ -1294,7 +1350,29 @@ pub fn render_selection_overlay(frame: &mut Frame, diff_view: &mut DiffViewState
 
     // Tooltip below the selection (only after drag finishes).
     if !selection.dragging {
-        let tooltip_width: u16 = 13; // " y copy  esc "
+        let tooltip_style = Style::default()
+            .bg(Color::Rgb(60, 60, 70))
+            .fg(Color::Rgb(200, 200, 210));
+        let key_style = Style::default()
+            .bg(Color::Rgb(60, 60, 70))
+            .fg(Color::Yellow)
+            .add_modifier(Modifier::BOLD);
+
+        // Build parts conditionally: include "e edit" only if file is on disk.
+        let mut parts: Vec<(&str, Style)> = Vec::new();
+        if diff_view.file_exists_on_disk {
+            parts.push((" ", tooltip_style));
+            parts.push(("e", key_style));
+            parts.push((" edit  ", tooltip_style));
+        } else {
+            parts.push((" ", tooltip_style));
+        }
+        parts.push(("y", key_style));
+        parts.push((" copy  ", tooltip_style));
+        parts.push(("esc", key_style));
+        parts.push((" ", tooltip_style));
+
+        let tooltip_width: u16 = parts.iter().map(|(s, _)| s.len() as u16).sum();
         let tooltip_x = bot_col
             .saturating_sub(tooltip_width / 2)
             .max(content_start)
@@ -1302,24 +1380,8 @@ pub fn render_selection_overlay(frame: &mut Frame, diff_view: &mut DiffViewState
         let tooltip_y = (bot_row + 1).min(pl.inner_end_y.saturating_sub(1));
 
         if tooltip_y < buf_area.y + buf_area.height {
-            let tooltip_style = Style::default()
-                .bg(Color::Rgb(60, 60, 70))
-                .fg(Color::Rgb(200, 200, 210));
-            let key_style = Style::default()
-                .bg(Color::Rgb(60, 60, 70))
-                .fg(Color::Yellow)
-                .add_modifier(Modifier::BOLD);
-
-            let parts: &[(&str, Style)] = &[
-                (" ", tooltip_style),
-                ("y", key_style),
-                (" copy  ", tooltip_style),
-                ("esc", key_style),
-                (" ", tooltip_style),
-            ];
-
             let mut col = tooltip_x;
-            for (text, style) in parts {
+            for (text, style) in &parts {
                 for ch in text.chars() {
                     if col >= content_end {
                         break;

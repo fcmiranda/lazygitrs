@@ -397,10 +397,28 @@ fn handle_diff_exploration_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
         return handle_diff_search_key(gui, key);
     }
 
-    // Handle text selection keys first (y to copy, Esc to dismiss)
+    // Handle text selection keys first (y to copy, e to edit, Esc to dismiss)
     if gui.diff_view.selection.is_some() {
+        let is_click = gui.diff_view.selection.as_ref().unwrap().is_click;
+        let can_edit = gui.diff_view.file_exists_on_disk;
         match key.code {
-            KeyCode::Char('y') => {
+            KeyCode::Char('e') if can_edit => {
+                let line = gui.diff_view.selection.as_ref().unwrap().edit_line_number;
+                gui.diff_view.selection = None;
+                let filename = gui.diff_view.filename.clone();
+                if !filename.is_empty() {
+                    let abs_path = gui.git.repo_path().join(&filename).to_string_lossy().to_string();
+                    let os = &gui.config.user_config.os;
+                    if let Some(ln) = line {
+                        let tpl = if !os.edit_at_line.is_empty() { &os.edit_at_line } else { &os.edit };
+                        let _ = crate::config::user_config::OsConfig::run_template_at_line(tpl, &abs_path, ln);
+                    } else {
+                        let _ = crate::config::user_config::OsConfig::run_template(&os.edit, &abs_path);
+                    }
+                }
+                return Ok(());
+            }
+            KeyCode::Char('y') if !is_click => {
                 let text = gui.diff_view.selection.as_ref().unwrap().text.clone();
                 gui.diff_view.selection = None;
                 if !text.is_empty() {
@@ -414,6 +432,9 @@ fn handle_diff_exploration_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
             }
             _ => {
                 gui.diff_view.selection = None;
+                if is_click {
+                    return Ok(());
+                }
             }
         }
     }
@@ -477,6 +498,10 @@ fn handle_diff_exploration_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
                 DiffSideView::OldOnly => DiffSideView::Both,
                 _ => DiffSideView::OldOnly,
             };
+        }
+        KeyCode::Char('z') => {
+            gui.diff_view.wrap = !gui.diff_view.wrap;
+            gui.diff_view.horizontal_scroll = 0;
         }
         KeyCode::PageDown => {
             gui.diff_view.scroll_down(20);
@@ -565,6 +590,7 @@ pub fn maybe_request_diff(gui: &mut Gui) {
                 gui.diff_view = crate::pager::side_by_side::DiffViewState::new();
             } else {
                 gui.diff_view.load_from_diff_output(&name, &diff);
+                gui.diff_view.file_exists_on_disk = gui.git.repo_path().join(&name).exists();
             }
         }
         Err(_) => {
@@ -586,6 +612,7 @@ fn show_diff_mode_help(gui: &mut Gui) {
             HelpEntry { key: "j/k".into(), description: "Navigate files / Scroll diff".into() },
             HelpEntry { key: "{/}".into(), description: "Previous / next hunk".into() },
             HelpEntry { key: "[/]".into(), description: "Toggle old / new only view".into() },
+            HelpEntry { key: "z".into(), description: "Toggle line wrap".into() },
             HelpEntry { key: "g/G".into(), description: "Go to top / bottom".into() },
             HelpEntry { key: "/".into(), description: "Search (files or diff content)".into() },
             HelpEntry { key: "n/N".into(), description: "Next / previous search match".into() },

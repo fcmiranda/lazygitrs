@@ -24,7 +24,7 @@ use crate::config::keybindings::parse_key;
 use crate::git::{GitCommands, ModelPart, MODEL_PART_COUNT};
 use crate::model::Model;
 use crate::model::file_tree::{build_file_tree, CommitFileTreeNode, FileTreeNode};
-use crate::pager::side_by_side::{DiffPanel, DiffPanelLayout, DiffViewState, TextSelection};
+use crate::pager::side_by_side::{DiffPanelLayout, DiffViewState, TextSelection};
 
 use self::context::{ContextId, ContextManager, SideWindow};
 use self::layout::LayoutState;
@@ -455,9 +455,13 @@ impl Gui {
             match result.payload {
                 DiffPayload::Content { filename, old, new } => {
                     self.diff_view.load(&filename, &old, &new);
+                    self.diff_view.file_exists_on_disk =
+                        self.git.repo_path().join(&filename).exists();
                 }
                 DiffPayload::UnifiedDiff { filename, diff_output } => {
                     self.diff_view.load_from_diff_output(&filename, &diff_output);
+                    self.diff_view.file_exists_on_disk =
+                        self.git.repo_path().join(&filename).exists();
                 }
                 DiffPayload::Empty => {
                     self.diff_view = DiffViewState::new();
@@ -644,6 +648,8 @@ impl Gui {
                             if let Ok(content) = self.git.file_content(&name) {
                                 if !content.is_empty() {
                                     self.diff_view.load(&name, "", &content);
+                                    self.diff_view.file_exists_on_disk =
+                                        self.git.repo_path().join(&name).exists();
                                 } else {
                                     self.diff_view = DiffViewState::new();
                                 }
@@ -652,6 +658,8 @@ impl Gui {
                             self.diff_view = DiffViewState::new();
                         } else {
                             self.diff_view.load_from_diff_output(&name, &diff);
+                            self.diff_view.file_exists_on_disk =
+                                self.git.repo_path().join(&name).exists();
                         }
                     }
                 } else if self.show_file_tree {
@@ -1301,10 +1309,28 @@ impl Gui {
             return self.handle_diff_focused_search_key(key);
         }
 
-        // Handle text selection keys first (y to copy, Esc to dismiss)
+        // Handle text selection keys first (y to copy, e to edit, Esc to dismiss)
         if self.diff_view.selection.is_some() {
+            let is_click = self.diff_view.selection.as_ref().unwrap().is_click;
+            let can_edit = self.diff_view.file_exists_on_disk;
             match key.code {
-                KeyCode::Char('y') => {
+                KeyCode::Char('e') if can_edit => {
+                    let line = self.diff_view.selection.as_ref().unwrap().edit_line_number;
+                    self.diff_view.selection = None;
+                    let filename = self.diff_view.filename.clone();
+                    if !filename.is_empty() {
+                        let abs_path = self.git.repo_path().join(&filename).to_string_lossy().to_string();
+                        let os = &self.config.user_config.os;
+                        if let Some(ln) = line {
+                            let tpl = if !os.edit_at_line.is_empty() { &os.edit_at_line } else { &os.edit };
+                            let _ = crate::config::user_config::OsConfig::run_template_at_line(tpl, &abs_path, ln);
+                        } else {
+                            let _ = crate::config::user_config::OsConfig::run_template(&os.edit, &abs_path);
+                        }
+                    }
+                    return Ok(());
+                }
+                KeyCode::Char('y') if !is_click => {
                     let text = self.diff_view.selection.as_ref().unwrap().text.clone();
                     self.diff_view.selection = None;
                     if !text.is_empty() {
@@ -1317,8 +1343,11 @@ impl Gui {
                     return Ok(());
                 }
                 _ => {
-                    // Any other key clears the selection and is handled normally
                     self.diff_view.selection = None;
+                    if is_click {
+                        // Don't propagate click-state dismissal as a real keypress
+                        return Ok(());
+                    }
                 }
             }
         }
@@ -1426,6 +1455,11 @@ impl Gui {
                     DiffSideView::OldOnly => DiffSideView::Both,
                     _ => DiffSideView::OldOnly,
                 };
+            }
+            // z toggles line wrapping
+            KeyCode::Char('z') => {
+                self.diff_view.wrap = !self.diff_view.wrap;
+                self.diff_view.horizontal_scroll = 0;
             }
             // Page up/down for larger scrolling
             KeyCode::PageDown => {
@@ -2275,6 +2309,7 @@ impl Gui {
                 HelpEntry { key: "{/}".into(), description: "Previous / next hunk".into() },
                 HelpEntry { key: "[".into(), description: "Toggle old-only view".into() },
                 HelpEntry { key: "]".into(), description: "Toggle new-only view".into() },
+                HelpEntry { key: "z".into(), description: "Toggle line wrap".into() },
                 HelpEntry { key: "g/G".into(), description: "Go to top / bottom".into() },
                 HelpEntry { key: "PgUp/PgDn".into(), description: "Page up / down".into() },
                 HelpEntry { key: "/".into(), description: "Search in diff".into() },
@@ -2902,7 +2937,9 @@ impl Gui {
                             end_col: mouse.column,
                             end_row: mouse.row,
                             dragging: true,
+                            is_click: false,
                             text: String::new(),
+                            edit_line_number: None,
                         });
                     } else {
                         self.diff_view.selection = None;
@@ -2931,9 +2968,14 @@ impl Gui {
                 // Finalize the selection
                 if let Some(ref mut sel) = self.diff_view.selection {
                     sel.dragging = false;
-                    // If start == end (just a click, no drag), clear the selection
+                    // If start == end (just a click, no drag)
                     if sel.start_col == sel.end_col && sel.start_row == sel.end_row {
-                        self.diff_view.selection = None;
+                        if self.diff_view.file_exists_on_disk {
+                            // Keep as click-state to show the edit tooltip
+                            sel.is_click = true;
+                        } else {
+                            self.diff_view.selection = None;
+                        }
                     }
                 }
             }
@@ -3083,7 +3125,9 @@ impl Gui {
                             end_col: col,
                             end_row: row,
                             dragging: true,
+                            is_click: false,
                             text: String::new(),
+                            edit_line_number: None,
                         });
                     } else {
                         self.diff_view.selection = None;
@@ -3135,7 +3179,11 @@ impl Gui {
                 if let Some(ref mut sel) = self.diff_view.selection {
                     sel.dragging = false;
                     if sel.start_col == sel.end_col && sel.start_row == sel.end_row {
-                        self.diff_view.selection = None;
+                        if self.diff_view.file_exists_on_disk {
+                            sel.is_click = true;
+                        } else {
+                            self.diff_view.selection = None;
+                        }
                     }
                 }
             }

@@ -38,8 +38,12 @@ pub struct TextSelection {
     pub end_row: u16,
     /// Whether the user is still dragging (selection in progress).
     pub dragging: bool,
+    /// True when the selection is a single click with no drag (shows edit tooltip only).
+    pub is_click: bool,
     /// The extracted selected text (populated after rendering).
     pub text: String,
+    /// The file line number at the top of the selection/click (populated after rendering).
+    pub edit_line_number: Option<usize>,
 }
 
 impl TextSelection {
@@ -202,6 +206,15 @@ pub struct DiffViewState {
     pub selection: Option<TextSelection>,
     /// Which side(s) of the diff to show (Both, OldOnly, NewOnly).
     pub side_view: DiffSideView,
+    /// Whether long lines are wrapped to fit the panel width.
+    pub wrap: bool,
+    /// Whether the currently viewed file exists in the working tree on disk.
+    pub file_exists_on_disk: bool,
+    /// Hunk line number offsets for unified diffs. Each entry is
+    /// `(first_diff_line_idx, old_offset, new_offset)`.
+    /// The offset is added to the 1-based content line number to get the
+    /// actual file line number. Empty for full-content diffs (no offset needed).
+    pub hunk_line_offsets: Vec<(usize, usize, usize)>,
     /// Whether the search input is currently active (typing).
     pub search_active: bool,
     /// Current search query string.
@@ -228,6 +241,9 @@ impl Default for DiffViewState {
             sections: Vec::new(),
             selection: None,
             side_view: DiffSideView::Both,
+            wrap: false,
+            file_exists_on_disk: false,
+            hunk_line_offsets: Vec::new(),
             search_active: false,
             search_query: String::new(),
             search_matches: Vec::new(),
@@ -243,6 +259,27 @@ impl DiffViewState {
             tab_width: 4,
             ..Default::default()
         }
+    }
+
+    /// Get the actual file line number for a DiffLine, applying hunk offsets.
+    /// Returns the display/file line number (e.g. for gutter or editAtLine).
+    pub fn file_line_number(&self, line_idx: usize, panel: DiffPanel) -> Option<usize> {
+        let dl = self.lines.get(line_idx)?;
+        let content_num = match panel {
+            DiffPanel::Old => dl.old_line.as_ref()?.0,
+            DiffPanel::New => dl.new_line.as_ref()?.0,
+        };
+        let offset = self
+            .hunk_line_offsets
+            .iter()
+            .rev()
+            .find(|(start_idx, _, _)| *start_idx <= line_idx)
+            .map(|(_, old_off, new_off)| match panel {
+                DiffPanel::Old => *old_off,
+                DiffPanel::New => *new_off,
+            })
+            .unwrap_or(0);
+        Some(content_num + offset)
     }
 
     /// Activate search mode with an empty query.
@@ -360,6 +397,7 @@ impl DiffViewState {
         self.new_content = new.to_string();
         self.lines = super::diff_algo::compute_side_by_side(old, new, self.tab_width);
         self.hunk_starts = super::diff_algo::find_hunk_starts(&self.lines);
+        self.hunk_line_offsets = Vec::new(); // Full content — no offsets needed
         if same_file {
             // Clamp scroll in case the diff got shorter
             let max = self.lines.len().saturating_sub(1);
@@ -392,6 +430,9 @@ impl DiffViewState {
                 .map(|(name, _)| name.as_str())
                 .unwrap_or(filename);
             self.load(actual_name, &old, &new);
+            // Compute hunk line offsets for correct file line numbers
+            let hunks = parse_hunk_headers(diff_output);
+            self.hunk_line_offsets = build_hunk_line_offsets(&hunks, &self.lines, 0);
         } else {
             // Multi-file diff — build per-section lines with highlighters
             let file_count = file_diffs.len();
@@ -409,10 +450,13 @@ impl DiffViewState {
                 self.clear_search();
             }
 
+            self.hunk_line_offsets = Vec::new();
+
             for (section_idx, (file_name, file_diff)) in file_diffs.iter().enumerate() {
                 let (old, new) = parse_unified_diff(file_diff);
 
                 // Add file header separator line
+                let _header_idx = self.lines.len();
                 self.lines.push(DiffLine {
                     old_line: None,
                     new_line: None,
@@ -424,12 +468,25 @@ impl DiffViewState {
                 });
 
                 // Compute diff lines for this file section
+                let section_start = self.lines.len();
                 let mut section_lines =
                     super::diff_algo::compute_side_by_side(&old, &new, self.tab_width);
                 for line in &mut section_lines {
                     line.section_index = section_idx;
                 }
                 self.lines.append(&mut section_lines);
+
+                // Compute hunk line offsets for this section
+                let hunks = parse_hunk_headers(file_diff);
+                let section_offsets = build_hunk_line_offsets(
+                    &hunks,
+                    &self.lines[section_start..],
+                    0,
+                );
+                // Adjust indices to be global (relative to self.lines)
+                for (idx, old_off, new_off) in section_offsets {
+                    self.hunk_line_offsets.push((section_start + idx, old_off, new_off));
+                }
 
                 // Create highlighters for this section
                 self.sections.push(FileSection {
@@ -567,19 +624,18 @@ pub fn render_diff(
         let show_panel = single_side.unwrap_or(DiffPanel::New); // new-file defaults to New
         let content_width = inner.width.saturating_sub(gutter_width);
 
-        for (row, diff_line) in state.lines[state.scroll_offset..]
-            .iter()
-            .take(visible_height)
-            .enumerate()
-        {
-            let y = inner.y + row as u16;
-            if y >= inner.y + inner.height {
+        let mut row = 0usize;
+        for (idx_offset, diff_line) in state.lines[state.scroll_offset..].iter().enumerate() {
+            if row >= visible_height {
                 break;
             }
+            let line_idx = state.scroll_offset + idx_offset;
 
             // Handle file header separator lines
             if let Some(ref header) = diff_line.file_header {
+                let y = inner.y + row as u16;
                 render_file_header(buf, inner.x, y, inner.width, header, theme);
+                row += 1;
                 continue;
             }
 
@@ -604,9 +660,6 @@ pub fn render_diff(
                 ),
             };
 
-            // Skip lines that only exist on the other side
-            // (e.g., Insert lines have no old_line, Delete lines have no new_line)
-            // Show them as blank with appropriate background
             let bg = if is_new_file {
                 theme.diff_add_bg
             } else {
@@ -619,16 +672,13 @@ pub fn render_diff(
                 }
             };
 
-            // Gutter
-            let line_num = line_data
-                .as_ref()
-                .map(|(n, _)| format!("{:>4} ", n))
+            let line_num = state
+                .file_line_number(line_idx, show_panel)
+                .map(|n| format!("{:>4} ", n))
                 .unwrap_or_else(|| "     ".to_string());
             let gutter_style = Style::default().fg(Color::DarkGray).bg(bg);
-            buf_write_str(buf, inner.x, y, &line_num, gutter_style, gutter_width);
 
-            // Content
-            if line_data.is_some() {
+            if state.wrap && line_data.is_some() {
                 let spans = build_content_spans(
                     line_data.as_ref().map(|(n, t)| (*n, t.as_str())),
                     segments,
@@ -637,13 +687,43 @@ pub fn render_diff(
                     highlighter,
                     bg,
                     theme,
-                    content_width as usize,
+                    usize::MAX / 2,
                 );
-                buf_write_spans(buf, inner.x + gutter_width, y, &spans, content_width, state.horizontal_scroll);
+                let wrapped = wrap_spans(&spans, content_width as usize);
+                for (chunk_idx, chunk) in wrapped.iter().enumerate() {
+                    if row >= visible_height {
+                        break;
+                    }
+                    let y = inner.y + row as u16;
+                    let gutter_text = if chunk_idx == 0 {
+                        line_num.clone()
+                    } else {
+                        "   · ".to_string()
+                    };
+                    buf_write_str(buf, inner.x, y, &gutter_text, gutter_style, gutter_width);
+                    buf_write_spans(buf, inner.x + gutter_width, y, chunk, content_width, 0);
+                    row += 1;
+                }
             } else {
-                // Empty line (this side has no content for this row)
-                let fill: String = std::iter::repeat(' ').take(content_width as usize).collect();
-                buf_write_str(buf, inner.x + gutter_width, y, &fill, Style::default().bg(bg), content_width);
+                let y = inner.y + row as u16;
+                buf_write_str(buf, inner.x, y, &line_num, gutter_style, gutter_width);
+                if line_data.is_some() {
+                    let spans = build_content_spans(
+                        line_data.as_ref().map(|(n, t)| (*n, t.as_str())),
+                        segments,
+                        diff_line.change_type,
+                        is_old_side,
+                        highlighter,
+                        bg,
+                        theme,
+                        content_width as usize,
+                    );
+                    buf_write_spans(buf, inner.x + gutter_width, y, &spans, content_width, state.horizontal_scroll);
+                } else {
+                    let fill: String = std::iter::repeat(' ').take(content_width as usize).collect();
+                    buf_write_str(buf, inner.x + gutter_width, y, &fill, Style::default().bg(bg), content_width);
+                }
+                row += 1;
             }
         }
     } else {
@@ -655,20 +735,25 @@ pub fn render_diff(
             inner.width
         };
         let panel_width = content_width / 2;
+        let div_x = inner.x + gutter_width + panel_width;
+        let right_gutter_x = div_x + divider_width;
+        let right_content_x = right_gutter_x + gutter_width;
+        let right_content_width = inner
+            .width
+            .saturating_sub(gutter_width * 2 + panel_width + divider_width);
 
-        for (row, diff_line) in state.lines[state.scroll_offset..]
-            .iter()
-            .take(visible_height)
-            .enumerate()
-        {
-            let y = inner.y + row as u16;
-            if y >= inner.y + inner.height {
+        let mut row = 0usize;
+        for (idx_offset, diff_line) in state.lines[state.scroll_offset..].iter().enumerate() {
+            if row >= visible_height {
                 break;
             }
+            let line_idx = state.scroll_offset + idx_offset;
 
             // Handle file header separator lines
             if let Some(ref header) = diff_line.file_header {
+                let y = inner.y + row as u16;
                 render_file_header(buf, inner.x, y, inner.width, header, theme);
+                row += 1;
                 continue;
             }
 
@@ -678,78 +763,161 @@ pub fn render_diff(
                 .unwrap_or((&default_hl, &default_hl));
 
             let (left_bg, right_bg) = line_bg_colors(diff_line.change_type, theme);
-
-            // Left gutter
-            let left_num = diff_line
-                .old_line
-                .as_ref()
-                .map(|(n, _)| format!("{:>4} ", n))
-                .unwrap_or_else(|| "     ".to_string());
             let gutter_style = Style::default().fg(Color::DarkGray).bg(left_bg);
-            buf_write_str(buf, inner.x, y, &left_num, gutter_style, gutter_width);
-
-            // Left content
-            let left_spans = if diff_line.change_type == ChangeType::Insert {
-                // Addition-only line: fill left side with slash pattern
-                let slash_fill: String = std::iter::repeat('/').take(panel_width as usize).collect();
-                vec![Span::styled(
-                    slash_fill,
-                    Style::default().fg(Color::Rgb(60, 60, 60)).bg(left_bg),
-                )]
-            } else {
-                build_content_spans(
-                    diff_line.old_line.as_ref().map(|(n, t)| (*n, t.as_str())),
-                    &diff_line.old_segments,
-                    diff_line.change_type,
-                    true,
-                    old_highlighter,
-                    left_bg,
-                    theme,
-                    panel_width as usize,
-                )
-            };
-            buf_write_spans(buf, inner.x + gutter_width, y, &left_spans, panel_width, state.horizontal_scroll);
-
-            // Divider
-            let div_x = inner.x + gutter_width + panel_width;
-            let divider_style = Style::default().fg(Color::DarkGray);
-            buf_write_str(buf, div_x, y, "│", divider_style, divider_width);
-
-            // Right gutter
-            let right_num = diff_line
-                .new_line
-                .as_ref()
-                .map(|(n, _)| format!("{:>4} ", n))
-                .unwrap_or_else(|| "     ".to_string());
             let right_gutter_style = Style::default().fg(Color::DarkGray).bg(right_bg);
-            let right_gutter_x = div_x + divider_width;
-            buf_write_str(buf, right_gutter_x, y, &right_num, right_gutter_style, gutter_width);
+            let divider_style = Style::default().fg(Color::DarkGray);
 
-            // Right content
-            let right_spans = if diff_line.change_type == ChangeType::Delete {
-                // Deletion-only line: fill right side with slash pattern
-                let slash_fill: String = std::iter::repeat('/').take(panel_width as usize).collect();
-                vec![Span::styled(
-                    slash_fill,
-                    Style::default().fg(Color::Rgb(60, 60, 60)).bg(right_bg),
-                )]
+            let left_num = state
+                .file_line_number(line_idx, DiffPanel::Old)
+                .map(|n| format!("{:>4} ", n))
+                .unwrap_or_else(|| "     ".to_string());
+            let right_num = state
+                .file_line_number(line_idx, DiffPanel::New)
+                .map(|n| format!("{:>4} ", n))
+                .unwrap_or_else(|| "     ".to_string());
+
+            let is_insert = diff_line.change_type == ChangeType::Insert;
+            let is_delete = diff_line.change_type == ChangeType::Delete;
+
+            if state.wrap {
+                // Build wrapped rows for each side
+                let left_wrapped: Vec<Vec<Span<'_>>> = if is_insert {
+                    vec![] // placeholder; slash fill rendered per row
+                } else {
+                    let spans = build_content_spans(
+                        diff_line.old_line.as_ref().map(|(n, t)| (*n, t.as_str())),
+                        &diff_line.old_segments,
+                        diff_line.change_type,
+                        true,
+                        old_highlighter,
+                        left_bg,
+                        theme,
+                        usize::MAX / 2,
+                    );
+                    wrap_spans(&spans, panel_width as usize)
+                };
+                let right_wrapped: Vec<Vec<Span<'_>>> = if is_delete {
+                    vec![] // placeholder; slash fill rendered per row
+                } else {
+                    let spans = build_content_spans(
+                        diff_line.new_line.as_ref().map(|(n, t)| (*n, t.as_str())),
+                        &diff_line.new_segments,
+                        diff_line.change_type,
+                        false,
+                        new_highlighter,
+                        right_bg,
+                        theme,
+                        usize::MAX / 2,
+                    );
+                    wrap_spans(&spans, right_content_width as usize)
+                };
+
+                let num_rows = if is_insert {
+                    right_wrapped.len().max(1)
+                } else if is_delete {
+                    left_wrapped.len().max(1)
+                } else {
+                    left_wrapped.len().max(right_wrapped.len()).max(1)
+                };
+
+                for chunk_idx in 0..num_rows {
+                    if row >= visible_height {
+                        break;
+                    }
+                    let y = inner.y + row as u16;
+
+                    let left_gutter_text = if chunk_idx == 0 { left_num.clone() } else { "   · ".to_string() };
+                    let right_gutter_text = if chunk_idx == 0 { right_num.clone() } else { "   · ".to_string() };
+
+                    // Left gutter + content
+                    buf_write_str(buf, inner.x, y, &left_gutter_text, gutter_style, gutter_width);
+                    if is_insert {
+                        let slash: String = std::iter::repeat('/').take(panel_width as usize).collect();
+                        buf_write_str(buf, inner.x + gutter_width, y, &slash,
+                            Style::default().fg(Color::Rgb(60, 60, 60)).bg(left_bg), panel_width);
+                    } else if let Some(chunk) = left_wrapped.get(chunk_idx) {
+                        buf_write_spans(buf, inner.x + gutter_width, y, chunk, panel_width, 0);
+                    } else {
+                        let fill: String = std::iter::repeat(' ').take(panel_width as usize).collect();
+                        buf_write_str(buf, inner.x + gutter_width, y, &fill,
+                            Style::default().bg(left_bg), panel_width);
+                    }
+
+                    // Divider
+                    buf_write_str(buf, div_x, y, "│", divider_style, divider_width);
+
+                    // Right gutter + content
+                    buf_write_str(buf, right_gutter_x, y, &right_gutter_text, right_gutter_style, gutter_width);
+                    if is_delete {
+                        let slash: String = std::iter::repeat('/').take(right_content_width as usize).collect();
+                        buf_write_str(buf, right_content_x, y, &slash,
+                            Style::default().fg(Color::Rgb(60, 60, 60)).bg(right_bg), right_content_width);
+                    } else if let Some(chunk) = right_wrapped.get(chunk_idx) {
+                        buf_write_spans(buf, right_content_x, y, chunk, right_content_width, 0);
+                    } else {
+                        let fill: String = std::iter::repeat(' ').take(right_content_width as usize).collect();
+                        buf_write_str(buf, right_content_x, y, &fill,
+                            Style::default().bg(right_bg), right_content_width);
+                    }
+
+                    row += 1;
+                }
             } else {
-                build_content_spans(
-                    diff_line.new_line.as_ref().map(|(n, t)| (*n, t.as_str())),
-                    &diff_line.new_segments,
-                    diff_line.change_type,
-                    false,
-                    new_highlighter,
-                    right_bg,
-                    theme,
-                    panel_width as usize,
-                )
-            };
-            let right_content_x = right_gutter_x + gutter_width;
-            let right_content_width = inner
-                .width
-                .saturating_sub(gutter_width * 2 + panel_width + divider_width);
-            buf_write_spans(buf, right_content_x, y, &right_spans, right_content_width, state.horizontal_scroll);
+                let y = inner.y + row as u16;
+
+                // Left gutter
+                buf_write_str(buf, inner.x, y, &left_num, gutter_style, gutter_width);
+
+                // Left content
+                let left_spans = if is_insert {
+                    let slash_fill: String = std::iter::repeat('/').take(panel_width as usize).collect();
+                    vec![Span::styled(
+                        slash_fill,
+                        Style::default().fg(Color::Rgb(60, 60, 60)).bg(left_bg),
+                    )]
+                } else {
+                    build_content_spans(
+                        diff_line.old_line.as_ref().map(|(n, t)| (*n, t.as_str())),
+                        &diff_line.old_segments,
+                        diff_line.change_type,
+                        true,
+                        old_highlighter,
+                        left_bg,
+                        theme,
+                        panel_width as usize,
+                    )
+                };
+                buf_write_spans(buf, inner.x + gutter_width, y, &left_spans, panel_width, state.horizontal_scroll);
+
+                // Divider
+                buf_write_str(buf, div_x, y, "│", divider_style, divider_width);
+
+                // Right gutter
+                buf_write_str(buf, right_gutter_x, y, &right_num, right_gutter_style, gutter_width);
+
+                // Right content
+                let right_spans = if is_delete {
+                    let slash_fill: String = std::iter::repeat('/').take(panel_width as usize).collect();
+                    vec![Span::styled(
+                        slash_fill,
+                        Style::default().fg(Color::Rgb(60, 60, 60)).bg(right_bg),
+                    )]
+                } else {
+                    build_content_spans(
+                        diff_line.new_line.as_ref().map(|(n, t)| (*n, t.as_str())),
+                        &diff_line.new_segments,
+                        diff_line.change_type,
+                        false,
+                        new_highlighter,
+                        right_bg,
+                        theme,
+                        panel_width as usize,
+                    )
+                };
+                buf_write_spans(buf, right_content_x, y, &right_spans, right_content_width, state.horizontal_scroll);
+
+                row += 1;
+            }
         }
     }
 }
@@ -841,6 +1009,68 @@ fn unicode_display_width(ch: char) -> usize {
         return 0;
     }
     unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1)
+}
+
+/// Split a list of styled spans into visual rows of at most `width` display columns each.
+/// Used by wrap mode to soft-wrap long diff lines.
+fn wrap_spans<'a>(spans: &[Span<'a>], width: usize) -> Vec<Vec<Span<'a>>> {
+    if width == 0 {
+        return vec![vec![]];
+    }
+
+    // Collect (char, style) pairs, skipping zero-width control chars
+    let pairs: Vec<(char, Style)> = spans
+        .iter()
+        .flat_map(|sp| {
+            let style = sp.style;
+            sp.content.chars().filter_map(move |ch| {
+                if unicode_display_width(ch) > 0 { Some((ch, style)) } else { None }
+            })
+        })
+        .collect();
+
+    if pairs.is_empty() {
+        return vec![vec![]];
+    }
+
+    let mut rows: Vec<Vec<Span<'a>>> = Vec::new();
+    let mut start = 0;
+
+    while start < pairs.len() {
+        let mut col_w = 0usize;
+        let mut end = start;
+
+        while end < pairs.len() {
+            let w = unicode_display_width(pairs[end].0);
+            if col_w + w > width {
+                break;
+            }
+            col_w += w;
+            end += 1;
+        }
+        // Avoid infinite loop when a single char is wider than `width`
+        if end == start {
+            end = start + 1;
+        }
+
+        // Group consecutive chars with the same style into spans
+        let mut row_spans: Vec<Span<'a>> = Vec::new();
+        let mut i = start;
+        while i < end {
+            let style = pairs[i].1;
+            let mut text = String::new();
+            while i < end && pairs[i].1 == style {
+                text.push(pairs[i].0);
+                i += 1;
+            }
+            row_spans.push(Span::styled(text, style));
+        }
+
+        rows.push(row_spans);
+        start = end;
+    }
+
+    rows
 }
 
 /// Get background colors for a diff line based on change type.
@@ -1185,4 +1415,98 @@ fn parse_unified_diff(diff: &str) -> (String, String) {
     }
 
     (old_lines.join("\n"), new_lines.join("\n"))
+}
+
+/// Parse hunk headers from a unified diff, returning
+/// `(old_start, new_start, old_count, new_count)` for each hunk.
+fn parse_hunk_headers(diff: &str) -> Vec<(usize, usize, usize, usize)> {
+    let mut hunks = Vec::new();
+    for line in diff.lines() {
+        if !line.starts_with("@@") {
+            continue;
+        }
+        // Format: @@ -OLD_START[,OLD_COUNT] +NEW_START[,NEW_COUNT] @@
+        let inner = line
+            .trim_start_matches('@')
+            .trim_start()
+            .split("@@")
+            .next()
+            .unwrap_or("");
+        let mut old_start = 1usize;
+        let mut old_count = 1usize;
+        let mut new_start = 1usize;
+        let mut new_count = 1usize;
+        for token in inner.split_whitespace() {
+            if let Some(rest) = token.strip_prefix('-') {
+                let mut parts = rest.splitn(2, ',');
+                old_start = parts.next().and_then(|s| s.parse().ok()).unwrap_or(1);
+                old_count = parts.next().and_then(|s| s.parse().ok()).unwrap_or(1);
+            } else if let Some(rest) = token.strip_prefix('+') {
+                let mut parts = rest.splitn(2, ',');
+                new_start = parts.next().and_then(|s| s.parse().ok()).unwrap_or(1);
+                new_count = parts.next().and_then(|s| s.parse().ok()).unwrap_or(1);
+            }
+        }
+        hunks.push((old_start, new_start, old_count, new_count));
+    }
+    hunks
+}
+
+/// Build the hunk line offset table from parsed hunk headers and
+/// computed DiffLines. Each entry is `(first_diff_line_idx, old_offset, new_offset)`.
+fn build_hunk_line_offsets(
+    hunks: &[(usize, usize, usize, usize)],
+    lines: &[DiffLine],
+    file_header_count: usize,
+) -> Vec<(usize, usize, usize)> {
+    if hunks.is_empty() {
+        return Vec::new();
+    }
+
+    let mut offsets = Vec::new();
+    let mut cumulative_old = 0usize; // content-relative old line count before this hunk
+    let mut cumulative_new = 0usize;
+
+    for (hunk_idx, &(old_start, new_start, old_count, new_count)) in hunks.iter().enumerate() {
+        // The content line numbers for this hunk start at cumulative + 1
+        let content_old_start = cumulative_old + 1;
+        let content_new_start = cumulative_new + 1;
+
+        // Find the first DiffLine that belongs to this hunk by matching
+        // content line numbers.
+        let first_line_idx = if hunk_idx == 0 {
+            // First hunk: starts at the first non-header DiffLine
+            file_header_count
+        } else {
+            // Find the first DiffLine whose old_line or new_line number
+            // matches the content start of this hunk.
+            lines
+                .iter()
+                .enumerate()
+                .skip(file_header_count)
+                .find(|(_, dl)| {
+                    dl.old_line
+                        .as_ref()
+                        .map(|(n, _)| *n >= content_old_start)
+                        .unwrap_or(false)
+                        || dl.new_line
+                            .as_ref()
+                            .map(|(n, _)| *n >= content_new_start)
+                            .unwrap_or(false)
+                })
+                .map(|(idx, _)| idx)
+                .unwrap_or(0)
+        };
+
+        // Offset: actual file line - content line
+        let old_offset = old_start.saturating_sub(content_old_start);
+        let new_offset = new_start.saturating_sub(content_new_start);
+
+        offsets.push((first_line_idx, old_offset, new_offset));
+
+        cumulative_old += old_count;
+        cumulative_new += new_count;
+    }
+
+    offsets
 }

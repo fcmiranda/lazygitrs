@@ -81,8 +81,8 @@
 
 ## Stuff I wanna do differently
 
-- [ ] Interactive Rebase should be more intuitive.
-  - [ ] I can see a commits list and then also see the commit it'll be merging into. Kinda exactly like VSCode's interactive rebase editor. https://user-images.githubusercontent.com/641685/102309169-31ba2a00-3f36-11eb-8b26-050c7d83fa3f.png but in TUI version. This could be a dialog on its own with its own focus groups. It'll look simpler and more interactive than the current lazygit.
+- [x] Interactive Rebase should be more intuitive.
+  - [x] I can see a commits list and then also see the commit it'll be merging into. Kinda exactly like VSCode's interactive rebase editor. https://user-images.githubusercontent.com/641685/102309169-31ba2a00-3f36-11eb-8b26-050c7d83fa3f.png but in TUI version. This could be a dialog on its own with its own focus groups. It'll look simpler and more interactive than the current lazygit.
     - Non-negotiables for me are:
       - I can press jk up down to switch between commits. I can h l left right to change the value to pick, squash, drop, edit.
       - The pick, drop, edit, squash options have semantic colors. The same w/ VSCode.
@@ -123,3 +123,7 @@
 - [x] In 'Files' show the diff for folders. We already have this for 'Commits' it shows a multifile diff preview.
 - [x] In 'Files', pressing `i` shows a dialog, right now it immediately applies it.
 - [x] In 'Branches', whichever is the 'checked-out' branch. Put it at the first of the list.
+
+- [x] Diff view textwrapping.
+- [x] Pressing 'e' to edit.
+- [x] Diff hunks now have offsetted line numbers.

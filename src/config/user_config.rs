@@ -255,6 +255,24 @@ impl OsConfig {
             .spawn()?;
         Ok(())
     }
+
+    /// Run a command template replacing `{{filename}}` and `{{line}}` with the given values.
+    pub fn run_template_at_line(template: &str, filename: &str, line: usize) -> anyhow::Result<()> {
+        if template.is_empty() {
+            anyhow::bail!("No command configured");
+        }
+        let cmd_str = template
+            .replace("{{filename}}", filename)
+            .replace("{{line}}", &line.to_string());
+        let parts: Vec<&str> = cmd_str.split_whitespace().collect();
+        if parts.is_empty() {
+            anyhow::bail!("Empty command after template expansion");
+        }
+        std::process::Command::new(parts[0])
+            .args(&parts[1..])
+            .spawn()?;
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
