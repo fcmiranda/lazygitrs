@@ -4,6 +4,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::config::keybindings::parse_key;
 use crate::gui::Gui;
 use crate::gui::modes::diff_mode::{DiffModeFocus, DiffModeSelector};
+use crate::pager::side_by_side::DiffPanelLayout;
 use crate::gui::popup::{HelpEntry, HelpSection, MenuItem, PopupState};
 use crate::model::FileChangeStatus;
 use crate::os::platform::Platform;
@@ -403,7 +404,27 @@ fn handle_diff_exploration_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
         let can_edit = gui.diff_view.file_exists_on_disk;
         match key.code {
             KeyCode::Char('e') if can_edit => {
-                let line = gui.diff_view.selection.as_ref().unwrap().edit_line_number;
+                let sel_ref = gui.diff_view.selection.as_ref().unwrap();
+                let line = sel_ref.edit_line_number;
+                // Compute column from terminal position using the same layout as the mouse handler
+                let (_, top_col, _, _) = sel_ref.normalized();
+                let area = ratatui::layout::Rect::new(0, 0, gui.layout.width, gui.layout.height);
+                let outer = ratatui::layout::Layout::default()
+                    .direction(ratatui::layout::Direction::Vertical)
+                    .constraints([ratatui::layout::Constraint::Min(1), ratatui::layout::Constraint::Length(1)])
+                    .split(area);
+                let content = ratatui::layout::Layout::default()
+                    .direction(ratatui::layout::Direction::Horizontal)
+                    .constraints([ratatui::layout::Constraint::Percentage(33), ratatui::layout::Constraint::Percentage(67)])
+                    .split(outer[0]);
+                let diff_rect = content[1];
+                let pl = DiffPanelLayout::compute(diff_rect, &gui.diff_view);
+                let (content_start, _) = pl.content_range(sel_ref.panel);
+                let column = if top_col >= content_start {
+                    (top_col - content_start) as usize + gui.diff_view.horizontal_scroll + 1
+                } else {
+                    1
+                };
                 gui.diff_view.selection = None;
                 let filename = gui.diff_view.filename.clone();
                 if !filename.is_empty() {
@@ -411,7 +432,7 @@ fn handle_diff_exploration_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
                     let os = &gui.config.user_config.os;
                     if let Some(ln) = line {
                         let tpl = if !os.edit_at_line.is_empty() { &os.edit_at_line } else { &os.edit };
-                        let _ = crate::config::user_config::OsConfig::run_template_at_line(tpl, &abs_path, ln);
+                        let _ = crate::config::user_config::OsConfig::run_template_at_line(tpl, &abs_path, ln, column);
                     } else {
                         let _ = crate::config::user_config::OsConfig::run_template(&os.edit, &abs_path);
                     }

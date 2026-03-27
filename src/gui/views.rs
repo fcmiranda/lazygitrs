@@ -1229,8 +1229,15 @@ pub fn render_selection_overlay(frame: &mut Frame, diff_view: &mut DiffViewState
     } else {
         None
     };
+    // Compute the file column number (1-based) from the terminal click position.
+    let edit_column_number: Option<usize> = if top_col >= content_start {
+        Some((top_col - content_start) as usize + diff_view.horizontal_scroll + 1)
+    } else {
+        Some(1)
+    };
     if let Some(ref mut sel) = diff_view.selection {
         sel.edit_line_number = edit_line_number;
+        sel.edit_column_number = edit_column_number;
     }
 
     let buf = frame.buffer_mut();

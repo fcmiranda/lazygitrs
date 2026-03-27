@@ -256,14 +256,15 @@ impl OsConfig {
         Ok(())
     }
 
-    /// Run a command template replacing `{{filename}}` and `{{line}}` with the given values.
-    pub fn run_template_at_line(template: &str, filename: &str, line: usize) -> anyhow::Result<()> {
+    /// Run a command template replacing `{{filename}}`, `{{line}}`, and `{{column}}` with the given values.
+    pub fn run_template_at_line(template: &str, filename: &str, line: usize, column: usize) -> anyhow::Result<()> {
         if template.is_empty() {
             anyhow::bail!("No command configured");
         }
         let cmd_str = template
             .replace("{{filename}}", filename)
-            .replace("{{line}}", &line.to_string());
+            .replace("{{line}}", &line.to_string())
+            .replace("{{column}}", &column.to_string());
         let parts: Vec<&str> = cmd_str.split_whitespace().collect();
         if parts.is_empty() {
             anyhow::bail!("Empty command after template expansion");

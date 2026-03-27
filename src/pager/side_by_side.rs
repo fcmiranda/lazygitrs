@@ -44,6 +44,8 @@ pub struct TextSelection {
     pub text: String,
     /// The file line number at the top of the selection/click (populated after rendering).
     pub edit_line_number: Option<usize>,
+    /// The file column number at the click position (1-based, populated after rendering).
+    pub edit_column_number: Option<usize>,
 }
 
 impl TextSelection {

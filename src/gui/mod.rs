@@ -1315,7 +1315,18 @@ impl Gui {
             let can_edit = self.diff_view.file_exists_on_disk;
             match key.code {
                 KeyCode::Char('e') if can_edit => {
-                    let line = self.diff_view.selection.as_ref().unwrap().edit_line_number;
+                    let sel_ref = self.diff_view.selection.as_ref().unwrap();
+                    let line = sel_ref.edit_line_number;
+                    // Compute column from terminal position using the same layout as the mouse handler
+                    let (_, top_col, _, _) = sel_ref.normalized();
+                    let main_panel = self.compute_main_panel_rect();
+                    let pl = DiffPanelLayout::compute(main_panel, &self.diff_view);
+                    let (content_start, _) = pl.content_range(sel_ref.panel);
+                    let column = if top_col >= content_start {
+                        (top_col - content_start) as usize + self.diff_view.horizontal_scroll + 1
+                    } else {
+                        1
+                    };
                     self.diff_view.selection = None;
                     let filename = self.diff_view.filename.clone();
                     if !filename.is_empty() {
@@ -1323,7 +1334,7 @@ impl Gui {
                         let os = &self.config.user_config.os;
                         if let Some(ln) = line {
                             let tpl = if !os.edit_at_line.is_empty() { &os.edit_at_line } else { &os.edit };
-                            let _ = crate::config::user_config::OsConfig::run_template_at_line(tpl, &abs_path, ln);
+                            let _ = crate::config::user_config::OsConfig::run_template_at_line(tpl, &abs_path, ln, column);
                         } else {
                             let _ = crate::config::user_config::OsConfig::run_template(&os.edit, &abs_path);
                         }
@@ -2940,6 +2951,7 @@ impl Gui {
                             is_click: false,
                             text: String::new(),
                             edit_line_number: None,
+                            edit_column_number: None,
                         });
                     } else {
                         self.diff_view.selection = None;
@@ -3128,6 +3140,7 @@ impl Gui {
                             is_click: false,
                             text: String::new(),
                             edit_line_number: None,
+                            edit_column_number: None,
                         });
                     } else {
                         self.diff_view.selection = None;
