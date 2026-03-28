@@ -1091,6 +1091,16 @@ impl Gui {
             return Ok(());
         }
 
+        // Horizontal scroll (H/L)
+        if matches_key(key, &keybindings.universal.scroll_left) {
+            self.diff_view.scroll_left(4);
+            return Ok(());
+        }
+        if matches_key(key, &keybindings.universal.scroll_right) {
+            self.diff_view.scroll_right(4);
+            return Ok(());
+        }
+
         // Next/prev hunk with { and }
         if key.code == KeyCode::Char('{') {
             self.diff_view.prev_hunk();
@@ -1432,6 +1442,16 @@ impl Gui {
                 self.context_mgr.set_window(window);
                 return Ok(());
             }
+        }
+
+        // Configured H/L scroll keybindings
+        if matches_key(key, &keybindings.universal.scroll_left) {
+            self.diff_view.scroll_left(4);
+            return Ok(());
+        }
+        if matches_key(key, &keybindings.universal.scroll_right) {
+            self.diff_view.scroll_right(4);
+            return Ok(());
         }
 
         match key.code {
@@ -2147,8 +2167,6 @@ impl Gui {
                 HelpEntry { key: kb.universal.scroll_down_main_alt1.clone(), description: "Scroll diff down".into() },
                 HelpEntry { key: kb.universal.scroll_left.clone(), description: "Scroll left".into() },
                 HelpEntry { key: kb.universal.scroll_right.clone(), description: "Scroll right".into() },
-                HelpEntry { key: kb.universal.edit.clone(), description: "Edit file".into() },
-                HelpEntry { key: kb.universal.open_file.clone(), description: "Open file".into() },
                 HelpEntry { key: kb.universal.undo.clone(), description: "Undo".into() },
                 HelpEntry { key: kb.universal.redo.clone(), description: "Redo".into() },
                 HelpEntry { key: kb.universal.refresh.clone(), description: "Refresh".into() },
@@ -2159,7 +2177,6 @@ impl Gui {
                 HelpEntry { key: kb.universal.create_rebase_options_menu.clone(), description: "Rebase options".into() },
                 HelpEntry { key: kb.universal.create_patch_options_menu.clone(), description: "Patch options".into() },
                 HelpEntry { key: "{/}".into(), description: "Previous/next hunk".into() },
-                HelpEntry { key: "[/]".into(), description: "Toggle old/new only view".into() },
                 HelpEntry { key: ";".into(), description: "Toggle command log".into() },
                 HelpEntry { key: "W".into(), description: "Compare / Diff mode".into() },
                 HelpEntry { key: "I".into(), description: "Interactive rebase onto...".into() },
@@ -2187,6 +2204,7 @@ impl Gui {
                     HelpEntry { key: "d".into(), description: "Discard changes".into() },
                     HelpEntry { key: kb.universal.edit.clone(), description: "Open in editor".into() },
                     HelpEntry { key: kb.universal.open_file.clone(), description: "Open in default program".into() },
+                    HelpEntry { key: "y".into(), description: "Copy to clipboard menu".into() },
                 ],
             },
             ContextId::Worktrees => HelpSection {
@@ -2208,7 +2226,7 @@ impl Gui {
                     HelpEntry { key: "i".into(), description: "Init submodules".into() },
                 ],
             },
-            ContextId::Branches | ContextId::BranchCommits | ContextId::BranchCommitFiles => HelpSection {
+            ContextId::Branches => HelpSection {
                 title: "Branches".into(),
                 entries: vec![
                     HelpEntry { key: "<enter>".into(), description: "View branch commits".into() },
@@ -2226,7 +2244,14 @@ impl Gui {
                     HelpEntry { key: kb.branches.create_pull_request.clone(), description: "Open in browser menu".into() },
                 ],
             },
-            ContextId::Commits | ContextId::CommitFiles => HelpSection {
+            ContextId::BranchCommits | ContextId::BranchCommitFiles => HelpSection {
+                title: "Branch Commits".into(),
+                entries: vec![
+                    HelpEntry { key: "<enter>".into(), description: "View commit files".into() },
+                    HelpEntry { key: "<esc>".into(), description: "Back to branches".into() },
+                ],
+            },
+            ContextId::Commits => HelpSection {
                 title: "Commits".into(),
                 entries: vec![
                     HelpEntry { key: "<enter>".into(), description: "View commit files".into() },
@@ -2249,7 +2274,16 @@ impl Gui {
                     HelpEntry { key: "o".into(), description: "Open in browser".into() },
                     HelpEntry { key: "y".into(), description: "Copy to clipboard menu".into() },
                     HelpEntry { key: kb.commits.interactive_rebase.clone(), description: "Interactive rebase".into() },
+                    HelpEntry { key: kb.commits.open_log_menu.clone(), description: "Filter by branch".into() },
+                ],
+            },
+            ContextId::CommitFiles => HelpSection {
+                title: "Commit Files".into(),
+                entries: vec![
+                    HelpEntry { key: "<enter>".into(), description: "Toggle dir / Focus diff".into() },
+                    HelpEntry { key: "<esc>".into(), description: "Back to commits".into() },
                     HelpEntry { key: kb.files.toggle_tree_view.clone(), description: "Toggle tree view".into() },
+                    HelpEntry { key: "y".into(), description: "Copy to clipboard menu".into() },
                 ],
             },
             ContextId::Reflog => HelpSection {
@@ -2262,7 +2296,7 @@ impl Gui {
                     HelpEntry { key: "y".into(), description: "Copy to clipboard menu".into() },
                 ],
             },
-            ContextId::Stash | ContextId::StashFiles => HelpSection {
+            ContextId::Stash => HelpSection {
                 title: "Stash".into(),
                 entries: vec![
                     HelpEntry { key: "<enter>".into(), description: "View stash files".into() },
@@ -2270,6 +2304,15 @@ impl Gui {
                     HelpEntry { key: kb.stash.pop_stash.clone(), description: "Pop stash".into() },
                     HelpEntry { key: kb.stash.rename_stash.clone(), description: "Rename stash".into() },
                     HelpEntry { key: "d".into(), description: "Drop stash".into() },
+                ],
+            },
+            ContextId::StashFiles => HelpSection {
+                title: "Stash Files".into(),
+                entries: vec![
+                    HelpEntry { key: "<enter>".into(), description: "Toggle dir / Focus diff".into() },
+                    HelpEntry { key: "<esc>".into(), description: "Back to stash".into() },
+                    HelpEntry { key: kb.files.toggle_tree_view.clone(), description: "Toggle tree view".into() },
+                    HelpEntry { key: "y".into(), description: "Copy to clipboard menu".into() },
                 ],
             },
             ContextId::Remotes => HelpSection {
@@ -2307,7 +2350,6 @@ impl Gui {
                 title: "Status".into(),
                 entries: vec![
                     HelpEntry { key: "<enter>".into(), description: "Recent repos".into() },
-                    HelpEntry { key: kb.status.all_branches_log_graph.clone(), description: "All branches log".into() },
                 ],
             },
             _ => HelpSection {
@@ -2333,7 +2375,7 @@ impl Gui {
         let diff_section = HelpSection {
             title: "Diff Viewer".into(),
             entries: vec![
-                HelpEntry { key: "j/k".into(), description: "Scroll up / down".into() },
+                HelpEntry { key: "j/k".into(), description: "Scroll down / up".into() },
                 HelpEntry { key: "h/l".into(), description: "Scroll left / right".into() },
                 HelpEntry { key: "{/}".into(), description: "Previous / next hunk".into() },
                 HelpEntry { key: "[".into(), description: "Toggle old-only view".into() },
@@ -2343,7 +2385,9 @@ impl Gui {
                 HelpEntry { key: "PgUp/PgDn".into(), description: "Page up / down".into() },
                 HelpEntry { key: "/".into(), description: "Search in diff".into() },
                 HelpEntry { key: "n/N".into(), description: "Next / previous search match".into() },
+                HelpEntry { key: "e".into(), description: "Edit file at line".into() },
                 HelpEntry { key: "y".into(), description: "Copy selected text".into() },
+                HelpEntry { key: "q".into(), description: "Quit".into() },
                 HelpEntry { key: "+/_".into(), description: "Enlarge / shrink panel".into() },
                 HelpEntry { key: ";".into(), description: "Toggle command log".into() },
                 HelpEntry { key: "1-5".into(), description: "Jump to sidebar panel".into() },
