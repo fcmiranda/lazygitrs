@@ -46,6 +46,8 @@ pub fn render(
     spinner_frame: usize,
     remote_op_label: Option<&str>,
     remote_op_success: bool,
+    cherry_pick_clipboard: &[String],
+    range_select_anchor: Option<usize>,
 ) {
     let area = frame.area();
     let theme = config.user_config.theme();
@@ -151,8 +153,9 @@ pub fn render(
                     render_list(frame, fl.main_panel, block, items, selected, true, &theme);
                 }
                 ContextId::Commits => {
-                    let items = presentation::commits::render_commit_list(model, &theme);
-                    render_list(frame, fl.main_panel, block, items, selected, true, &theme);
+                    let items = presentation::commits::render_commit_list(model, &theme, cherry_pick_clipboard);
+                    let range = range_select_anchor.map(|a| (a.min(selected), a.max(selected)));
+                    render_list_with_range(frame, fl.main_panel, block, items, selected, true, &theme, range);
                 }
                 ContextId::Stash => {
                     let items = presentation::stash::render_stash_list(model, &theme);
@@ -399,8 +402,9 @@ pub fn render(
                         render_list(frame, rect, cf_block, items, cf_selected, is_active, &theme);
                     }
                 } else {
-                    let items = presentation::commits::render_commit_list(model, &theme);
-                    render_list(frame, rect, block, items, selected, is_active, &theme);
+                    let items = presentation::commits::render_commit_list(model, &theme, cherry_pick_clipboard);
+                    let range = if is_active { range_select_anchor.map(|a| (a.min(selected), a.max(selected))) } else { None };
+                    render_list_with_range(frame, rect, block, items, selected, is_active, &theme, range);
                 }
             }
             ContextId::Reflog => {
@@ -980,6 +984,19 @@ fn render_list(
     is_active: bool,
     theme: &crate::config::Theme,
 ) {
+    render_list_with_range(frame, rect, block, items, selected, is_active, theme, None);
+}
+
+fn render_list_with_range(
+    frame: &mut Frame,
+    rect: Rect,
+    block: Block<'_>,
+    items: Vec<ListItem<'_>>,
+    selected: usize,
+    is_active: bool,
+    theme: &crate::config::Theme,
+    range: Option<(usize, usize)>,
+) {
     if items.is_empty() {
         frame.render_widget(block, rect);
         return;
@@ -999,8 +1016,11 @@ fn render_list(
         .skip(offset)
         .enumerate()
         .map(|(i, item)| {
-            if is_active && i + offset == selected {
+            let idx = i + offset;
+            if is_active && idx == selected {
                 item.style(theme.selected_line)
+            } else if is_active && range.map_or(false, |(lo, hi)| idx >= lo && idx <= hi) {
+                item.style(Style::default().bg(Color::Indexed(236)))
             } else {
                 item
             }

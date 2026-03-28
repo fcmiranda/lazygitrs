@@ -8,6 +8,18 @@ use crate::gui::Gui;
 use crate::os::platform::Platform;
 
 pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) -> Result<()> {
+    // Esc: cancel range select first, then clear clipboard
+    if key.code == crossterm::event::KeyCode::Esc {
+        if gui.range_select_anchor.is_some() {
+            gui.range_select_anchor = None;
+            return Ok(());
+        }
+        if !gui.cherry_pick_clipboard.is_empty() {
+            gui.cherry_pick_clipboard.clear();
+            return Ok(());
+        }
+    }
+
     // Enter: open commit files subview
     if key.code == crossterm::event::KeyCode::Enter {
         return enter_commit_files(gui);
@@ -27,6 +39,14 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) 
 
     if matches_key(key, &keybindings.commits.cherry_pick_copy) {
         return cherry_pick_copy(gui);
+    }
+
+    if matches_key(key, &keybindings.commits.paste_commits) {
+        return paste_commits(gui);
+    }
+
+    if matches_key(key, &keybindings.commits.squash_above_commits) {
+        return squash_above_commits_menu(gui);
     }
 
     if matches_key(key, &keybindings.commits.tag_commit) {
@@ -96,6 +116,11 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) 
     // Interactive rebase
     if matches_key(key, &keybindings.commits.interactive_rebase) {
         return enter_interactive_rebase(gui);
+    }
+
+    // Toggle range select
+    if key.code == crossterm::event::KeyCode::Char('v') {
+        return toggle_range_select(gui);
     }
 
     Ok(())
@@ -206,22 +231,138 @@ fn show_reset_menu(gui: &mut Gui) -> Result<()> {
 
 fn cherry_pick_copy(gui: &mut Gui) -> Result<()> {
     let selected = gui.context_mgr.selected_active();
-    let model = gui.model.lock().unwrap();
-    if let Some(commit) = model.commits.get(selected) {
-        let hash = commit.hash.clone();
-        let short = commit.short_hash().to_string();
-        drop(model);
+    let (lo, hi) = if let Some(anchor) = gui.range_select_anchor {
+        (anchor.min(selected), anchor.max(selected))
+    } else {
+        (selected, selected)
+    };
 
-        gui.popup = PopupState::Confirm {
-            title: "Cherry-pick".to_string(),
-            message: format!("Cherry-pick commit {}?", short),
-            on_confirm: Box::new(move |gui| {
-                gui.git.cherry_pick(&[hash.clone()])?;
-                gui.needs_refresh = true;
-                Ok(())
-            }),
-        };
+    let model = gui.model.lock().unwrap();
+    let mut added = 0;
+    for i in lo..=hi {
+        if let Some(commit) = model.commits.get(i) {
+            if !gui.cherry_pick_clipboard.contains(&commit.hash) {
+                gui.cherry_pick_clipboard.push(commit.hash.clone());
+                added += 1;
+            }
+        }
     }
+    drop(model);
+
+    // Exit range select after copying
+    gui.range_select_anchor = None;
+
+    let n = gui.cherry_pick_clipboard.len();
+    gui.popup = PopupState::Message {
+        title: "Cherry-pick".to_string(),
+        message: format!(
+            "Copied {} commit{} ({} total)",
+            added,
+            if added == 1 { "" } else { "s" },
+            n,
+        ),
+        kind: crate::gui::popup::MessageKind::Info,
+    };
+    Ok(())
+}
+
+fn toggle_range_select(gui: &mut Gui) -> Result<()> {
+    if gui.range_select_anchor.is_some() {
+        gui.range_select_anchor = None;
+    } else {
+        gui.range_select_anchor = Some(gui.context_mgr.selected_active());
+    }
+    Ok(())
+}
+
+fn paste_commits(gui: &mut Gui) -> Result<()> {
+    if gui.cherry_pick_clipboard.is_empty() {
+        gui.popup = PopupState::Message {
+            title: "Cherry-pick".to_string(),
+            message: "No commits copied. Use cherry-pick copy (C) first.".to_string(),
+            kind: crate::gui::popup::MessageKind::Error,
+        };
+        return Ok(());
+    }
+
+    let n = gui.cherry_pick_clipboard.len();
+    let hashes = gui.cherry_pick_clipboard.clone();
+
+    gui.popup = PopupState::Confirm {
+        title: "Cherry-pick".to_string(),
+        message: format!(
+            "Cherry-pick {} copied commit{} onto this branch?",
+            n,
+            if n == 1 { "" } else { "s" }
+        ),
+        on_confirm: Box::new(move |gui| {
+            gui.git.cherry_pick(&hashes)?;
+            gui.cherry_pick_clipboard.clear();
+            gui.needs_refresh = true;
+            Ok(())
+        }),
+    };
+    Ok(())
+}
+
+fn squash_above_commits_menu(gui: &mut Gui) -> Result<()> {
+    let selected = gui.context_mgr.selected_active();
+    let model = gui.model.lock().unwrap();
+    let commit = match model.commits.get(selected) {
+        Some(c) => c.clone(),
+        None => return Ok(()),
+    };
+    let commits_len = model.commits.len();
+    drop(model);
+
+    let hash_above = commit.hash.clone();
+
+    // Find "in current branch" base: last commit before a merge-base boundary.
+    // Use the last commit in the list as a simple heuristic.
+    let model = gui.model.lock().unwrap();
+    let last_hash = model
+        .commits
+        .last()
+        .map(|c| c.hash.clone())
+        .unwrap_or_default();
+    drop(model);
+
+    let last_hash_clone = last_hash.clone();
+
+    gui.popup = PopupState::Menu {
+        title: "Apply fixup commits".to_string(),
+        items: vec![
+            MenuItem {
+                label: "Above the selected commit".to_string(),
+                description: format!("Autosquash fixup! commits above {}", commit.short_hash()),
+                key: Some("a".to_string()),
+                action: if commits_len > 0 {
+                    Some(Box::new(move |gui| {
+                        gui.git.rebase_autosquash(&format!("{}^", hash_above))?;
+                        gui.needs_refresh = true;
+                        Ok(())
+                    }))
+                } else {
+                    None
+                },
+            },
+            MenuItem {
+                label: "In current branch".to_string(),
+                description: "Autosquash all fixup! commits in the branch".to_string(),
+                key: Some("b".to_string()),
+                action: if !last_hash.is_empty() {
+                    Some(Box::new(move |gui| {
+                        gui.git.rebase_autosquash(&format!("{}^", last_hash_clone))?;
+                        gui.needs_refresh = true;
+                        Ok(())
+                    }))
+                } else {
+                    None
+                },
+            },
+        ],
+        selected: 0,
+    };
     Ok(())
 }
 

@@ -260,7 +260,7 @@ impl GitCommands {
 
     pub fn cherry_pick(&self, hashes: &[String]) -> Result<()> {
         let mut cmd = self.git();
-        cmd = cmd.arg("cherry-pick");
+        cmd = cmd.arg("cherry-pick").arg("--allow-empty");
         for hash in hashes {
             cmd = cmd.arg(hash.as_str());
         }

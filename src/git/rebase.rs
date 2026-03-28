@@ -168,7 +168,14 @@ impl GitCommands {
     /// Autosquash: rebase with --autosquash to apply fixup/squash commits.
     pub fn rebase_autosquash(&self, base_hash: &str) -> Result<()> {
         self.git()
-            .args(&["rebase", "-i", "--autosquash", base_hash])
+            .args(&[
+                "rebase",
+                "-i",
+                "--autosquash",
+                "--autostash",
+                "--rebase-merges",
+                base_hash,
+            ])
             .env("GIT_SEQUENCE_EDITOR", "true")
             .run_expecting_success()?;
         Ok(())

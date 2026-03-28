@@ -146,6 +146,10 @@ pub struct Gui {
     remote_op_label: Option<String>,
     /// Timestamp when the last remote operation succeeded (for showing a temporary ✓).
     remote_op_success_at: Option<Instant>,
+    /// Copied commit hashes for cherry-pick paste (newest first).
+    pub cherry_pick_clipboard: Vec<String>,
+    /// Anchor index for range selection in commits list (None = not in range mode).
+    pub range_select_anchor: Option<usize>,
     /// History of previously submitted commit messages (most recent first).
     pub commit_message_history: Vec<String>,
     /// Current index into commit_message_history when cycling (None = not cycling).
@@ -249,6 +253,8 @@ impl Gui {
             spinner_frame: 0,
             remote_op_label: None,
             remote_op_success_at: None,
+            cherry_pick_clipboard: Vec::new(),
+            range_select_anchor: None,
             commit_message_history: commit_history,
             commit_history_idx: None,
             commit_history_draft: String::new(),
@@ -402,6 +408,8 @@ impl Gui {
                         self.remote_op_success_at
                             .map(|t| t.elapsed() < std::time::Duration::from_secs(5))
                             .unwrap_or(false),
+                        &self.cherry_pick_clipboard,
+                        self.range_select_anchor,
                     );
                 }
             })?;
@@ -2260,7 +2268,7 @@ impl Gui {
                     HelpEntry { key: kb.commits.view_reset_options.clone(), description: "Reset options".into() },
                     HelpEntry { key: kb.commits.mark_commit_as_fixup.clone(), description: "Fixup commit".into() },
                     HelpEntry { key: kb.commits.create_fixup_commit.clone(), description: "Create fixup commit".into() },
-                    HelpEntry { key: kb.commits.squash_above_commits.clone(), description: "Squash above commits".into() },
+                    HelpEntry { key: kb.commits.squash_above_commits.clone(), description: "Apply fixup commits".into() },
                     HelpEntry { key: kb.commits.move_up_commit.clone(), description: "Move commit up".into() },
                     HelpEntry { key: kb.commits.move_down_commit.clone(), description: "Move commit down".into() },
                     HelpEntry { key: kb.commits.amend_to_commit.clone(), description: "Amend to commit".into() },
@@ -2268,6 +2276,7 @@ impl Gui {
                     HelpEntry { key: kb.commits.revert_commit.clone(), description: "Revert commit".into() },
                     HelpEntry { key: kb.commits.cherry_pick_copy.clone(), description: "Cherry-pick copy".into() },
                     HelpEntry { key: kb.commits.paste_commits.clone(), description: "Paste commits".into() },
+                    HelpEntry { key: "v".into(), description: "Toggle range select".into() },
                     HelpEntry { key: kb.commits.tag_commit.clone(), description: "Tag commit".into() },
                     HelpEntry { key: kb.commits.checkout_commit.clone(), description: "Checkout commit".into() },
                     HelpEntry { key: kb.commits.view_bisect_options.clone(), description: "Bisect options".into() },
@@ -3624,6 +3633,7 @@ impl Gui {
     /// Exit sub-contexts (like CommitFiles) back to their parent context
     /// before navigating away to another window.
     fn exit_sub_contexts(&mut self) {
+        self.range_select_anchor = None;
         if self.context_mgr.active() == ContextId::CommitFiles {
             self.context_mgr.set_active(ContextId::Commits);
         }

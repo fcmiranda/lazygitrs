@@ -4,19 +4,28 @@ use ratatui::widgets::ListItem;
 
 use crate::config::Theme;
 use crate::model::Model;
-use crate::model::commit::Commit;
+use crate::model::commit::{Commit, CommitStatus};
 
 use super::graph;
 
 pub fn render_sub_commit_list<'a>(model: &Model, theme: &Theme) -> Vec<ListItem<'a>> {
-    render_commits(&model.sub_commits, &model.head_hash, theme)
+    render_commits(&model.sub_commits, &model.head_hash, theme, &[])
 }
 
-pub fn render_commit_list<'a>(model: &Model, theme: &Theme) -> Vec<ListItem<'a>> {
-    render_commits(&model.commits, &model.head_hash, theme)
+pub fn render_commit_list<'a>(
+    model: &Model,
+    theme: &Theme,
+    cherry_picked: &[String],
+) -> Vec<ListItem<'a>> {
+    render_commits(&model.commits, &model.head_hash, theme, cherry_picked)
 }
 
-fn render_commits<'a>(commits: &[Commit], head_hash: &str, theme: &Theme) -> Vec<ListItem<'a>> {
+fn render_commits<'a>(
+    commits: &[Commit],
+    head_hash: &str,
+    theme: &Theme,
+    cherry_picked: &[String],
+) -> Vec<ListItem<'a>> {
     // Build graph data from commits.
     let graph_input: Vec<(String, Vec<String>)> = commits
         .iter()
@@ -42,10 +51,21 @@ fn render_commits<'a>(commits: &[Commit], head_hash: &str, theme: &Theme) -> Vec
                 vec![Span::raw(" ".repeat(max_graph_width * 2))]
             };
 
-            // Hash
+            // Hash — color by push status, overridden to cyan+bold if cherry-picked
+            let is_cherry_picked = cherry_picked.iter().any(|h| *h == commit.hash);
+            let hash_style = if is_cherry_picked {
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            } else {
+                match commit.status {
+                    CommitStatus::Unpushed => Style::default().fg(Color::Yellow),
+                    CommitStatus::Pushed => Style::default().fg(Color::Rgb(102, 102, 102)),
+                    CommitStatus::Merged => Style::default().fg(Color::Rgb(80, 80, 80)),
+                    _ => Style::default().fg(Color::Yellow),
+                }
+            };
             spans.push(Span::styled(
                 format!("{} ", commit.short_hash()),
-                Style::default().fg(Color::Yellow),
+                hash_style,
             ));
 
             // Ref decorations (HEAD -> main, origin/main, etc.)

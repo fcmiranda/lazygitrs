@@ -156,14 +156,15 @@ fn cherry_pick_reflog_entry(gui: &mut Gui) -> Result<()> {
         let short = commit.short_hash().to_string();
         drop(model);
 
-        gui.popup = PopupState::Confirm {
+        if !gui.cherry_pick_clipboard.contains(&hash) {
+            gui.cherry_pick_clipboard.push(hash);
+        }
+
+        let n = gui.cherry_pick_clipboard.len();
+        gui.popup = PopupState::Message {
             title: "Cherry-pick".to_string(),
-            message: format!("Cherry-pick commit {}?", short),
-            on_confirm: Box::new(move |gui| {
-                gui.git.cherry_pick(&[hash.clone()])?;
-                gui.needs_refresh = true;
-                Ok(())
-            }),
+            message: format!("Copied commit {} ({} commit{} copied)", short, n, if n == 1 { "" } else { "s" }),
+            kind: crate::gui::popup::MessageKind::Info,
         };
     }
     Ok(())
