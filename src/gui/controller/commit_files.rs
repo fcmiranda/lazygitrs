@@ -55,7 +55,9 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) 
     // Toggle file tree view
     if matches_key(key, &keybindings.files.toggle_tree_view) {
         gui.show_commit_file_tree = !gui.show_commit_file_tree;
+        gui.show_file_tree = gui.show_commit_file_tree;
         update_commit_file_tree_state(gui);
+        gui.persist_file_tree_visibility();
         gui.context_mgr.set_selection(0);
         return Ok(());
     }

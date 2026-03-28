@@ -166,11 +166,15 @@ impl Gui {
         let (diff_tx, diff_rx) = mpsc::channel();
         let (ai_commit_tx, ai_commit_rx) = mpsc::channel();
         let (remote_op_tx, remote_op_rx) = mpsc::channel();
-        let show_file_tree = config.user_config.gui.show_file_tree;
+        let show_file_tree = config
+            .app_state
+            .show_file_tree
+            .unwrap_or(config.user_config.gui.show_file_tree);
         let show_command_log_default = config
             .app_state
             .show_command_log
             .unwrap_or(config.user_config.gui.show_command_log);
+        let diff_line_wrap = config.app_state.diff_line_wrap.unwrap_or(false);
         let command_log = crate::os::cmd::new_command_log();
         crate::os::cmd::set_thread_command_log(command_log.clone());
 
@@ -197,7 +201,11 @@ impl Gui {
             context_mgr: ContextManager::new(),
             layout: LayoutState::default(),
             popup: PopupState::None,
-            diff_view: DiffViewState::new(),
+            diff_view: {
+                let mut dv = DiffViewState::new();
+                dv.wrap = diff_line_wrap;
+                dv
+            },
             command_log,
             show_command_log: show_command_log_default,
             should_quit: false,
@@ -1479,6 +1487,7 @@ impl Gui {
             KeyCode::Char('z') => {
                 self.diff_view.wrap = !self.diff_view.wrap;
                 self.diff_view.horizontal_scroll = 0;
+                self.persist_diff_line_wrap();
             }
             // Page up/down for larger scrolling
             KeyCode::PageDown => {
@@ -2240,6 +2249,7 @@ impl Gui {
                     HelpEntry { key: "o".into(), description: "Open in browser".into() },
                     HelpEntry { key: "y".into(), description: "Copy to clipboard menu".into() },
                     HelpEntry { key: kb.commits.interactive_rebase.clone(), description: "Interactive rebase".into() },
+                    HelpEntry { key: kb.files.toggle_tree_view.clone(), description: "Toggle tree view".into() },
                 ],
             },
             ContextId::Reflog => HelpSection {
@@ -3517,6 +3527,20 @@ impl Gui {
     fn persist_command_log_visibility(&self) {
         if let Ok(mut state) = AppState::load(&self.config.state_path) {
             state.show_command_log = Some(self.show_command_log);
+            let _ = state.save(&self.config.state_path);
+        }
+    }
+
+    pub fn persist_file_tree_visibility(&self) {
+        if let Ok(mut state) = AppState::load(&self.config.state_path) {
+            state.show_file_tree = Some(self.show_file_tree);
+            let _ = state.save(&self.config.state_path);
+        }
+    }
+
+    pub fn persist_diff_line_wrap(&self) {
+        if let Ok(mut state) = AppState::load(&self.config.state_path) {
+            state.diff_line_wrap = Some(self.diff_view.wrap);
             let _ = state.save(&self.config.state_path);
         }
     }

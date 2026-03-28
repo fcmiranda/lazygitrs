@@ -530,6 +530,7 @@ fn handle_diff_exploration_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
         KeyCode::Char('z') => {
             gui.diff_view.wrap = !gui.diff_view.wrap;
             gui.diff_view.horizontal_scroll = 0;
+            gui.persist_diff_line_wrap();
         }
         KeyCode::PageDown => {
             gui.diff_view.scroll_down(20);

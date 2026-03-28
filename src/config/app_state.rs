@@ -12,6 +12,10 @@ pub struct AppState {
     pub startup_popup_version: u32,
     #[serde(rename = "showCommandLog", skip_serializing_if = "Option::is_none")]
     pub show_command_log: Option<bool>,
+    #[serde(rename = "showFileTree", skip_serializing_if = "Option::is_none")]
+    pub show_file_tree: Option<bool>,
+    #[serde(rename = "diffLineWrap", skip_serializing_if = "Option::is_none")]
+    pub diff_line_wrap: Option<bool>,
 }
 
 impl AppState {

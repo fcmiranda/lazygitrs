@@ -74,7 +74,9 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) 
     // Toggle file tree view
     if matches_key(key, &keybindings.files.toggle_tree_view) {
         gui.show_file_tree = !gui.show_file_tree;
+        gui.show_commit_file_tree = gui.show_file_tree;
         gui.update_file_tree_state();
+        gui.persist_file_tree_visibility();
         // Reset selection when toggling view modes
         gui.context_mgr.set_selection(0);
         return Ok(());
