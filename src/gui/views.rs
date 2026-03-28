@@ -1657,12 +1657,12 @@ pub fn render_popup(frame: &mut Frame, popup: &PopupState, area: Rect, spinner_f
                     body_label_area,
                 );
 
-                // Body textarea (remaining space minus hint line)
-                let body_height = inner.height.saturating_sub(5); // 1 summary label + 1 summary + 1 gap + 1 body label + 1 hint
+                // Body textarea (remaining space minus hint line and padding)
+                let body_height = inner.height.saturating_sub(6); // 1 summary label + 1 summary + 1 gap + 1 body label + 1 hint + 1 padding
                 let body_area = Rect::new(inner.x, inner.y + 4, inner.width, body_height);
                 frame.render_widget(body_textarea, body_area);
 
-                // Hint line at bottom
+                // Hint line at bottom (1 line padding above)
                 let hint_area = Rect::new(inner.x, inner.y + inner.height - 1, inner.width, 1);
                 let key_style = Style::default().fg(Color::Gray).add_modifier(Modifier::BOLD);
                 let desc_style = Style::default().fg(Color::DarkGray);
