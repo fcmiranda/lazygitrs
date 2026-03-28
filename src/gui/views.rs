@@ -15,7 +15,7 @@ use crate::pager::side_by_side::{self, DiffPanel, DiffPanelLayout, DiffViewState
 use super::ScreenMode;
 use super::context::{ContextId, ContextManager, SideWindow};
 use super::layout::{self, LayoutState};
-use super::popup::PopupState;
+use super::popup::{CommitInputFocus, PopupState};
 use super::presentation;
 
 pub fn render(
@@ -1603,6 +1603,83 @@ pub fn render_popup(frame: &mut Frame, popup: &PopupState, area: Rect, spinner_f
                 } else {
                     frame.render_widget(textarea, inner);
                 }
+            }
+        }
+        PopupState::CommitInput {
+            summary_textarea,
+            body_textarea,
+            focus,
+            ..
+        } => {
+            // Two-field commit editor: summary (1 line) + body (multi-line)
+            // Layout: border, summary label, summary input, body label, body textarea, hint, border
+            let ta_height = 16u16;
+            let ta_y = (area.height.saturating_sub(ta_height)) / 2;
+            let ta_rect = Rect::new(x, ta_y, popup_width, ta_height);
+            frame.render_widget(Clear, ta_rect);
+
+            let border_color = match focus {
+                CommitInputFocus::Summary => Color::Cyan,
+                CommitInputFocus::Body => Color::Cyan,
+            };
+            let outer = Block::default()
+                .title(" Commit message ")
+                .borders(Borders::ALL)
+                .border_style(Style::default().fg(border_color));
+            frame.render_widget(outer, ta_rect);
+
+            let inner = ta_rect.inner(ratatui::layout::Margin {
+                horizontal: 1,
+                vertical: 1,
+            });
+
+            if inner.height > 6 {
+                let focused_style = Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD);
+                let unfocused_style = Style::default().fg(Color::DarkGray);
+
+                // Summary label
+                let summary_label_area = Rect::new(inner.x, inner.y, inner.width, 1);
+                let summary_label_style = if *focus == CommitInputFocus::Summary { focused_style } else { unfocused_style };
+                frame.render_widget(
+                    Paragraph::new(Line::from(Span::styled("Summary", summary_label_style))),
+                    summary_label_area,
+                );
+
+                // Summary input (1 line)
+                let summary_area = Rect::new(inner.x, inner.y + 1, inner.width, 1);
+                frame.render_widget(summary_textarea, summary_area);
+
+                // Body label
+                let body_label_area = Rect::new(inner.x, inner.y + 3, inner.width, 1);
+                let body_label_style = if *focus == CommitInputFocus::Body { focused_style } else { unfocused_style };
+                frame.render_widget(
+                    Paragraph::new(Line::from(Span::styled("Description", body_label_style))),
+                    body_label_area,
+                );
+
+                // Body textarea (remaining space minus hint line)
+                let body_height = inner.height.saturating_sub(5); // 1 summary label + 1 summary + 1 gap + 1 body label + 1 hint
+                let body_area = Rect::new(inner.x, inner.y + 4, inner.width, body_height);
+                frame.render_widget(body_textarea, body_area);
+
+                // Hint line at bottom
+                let hint_area = Rect::new(inner.x, inner.y + inner.height - 1, inner.width, 1);
+                let key_style = Style::default().fg(Color::Gray).add_modifier(Modifier::BOLD);
+                let desc_style = Style::default().fg(Color::DarkGray);
+                let hint_line = Line::from(vec![
+                    Span::styled(" enter ", key_style),
+                    Span::styled("confirm  ", desc_style),
+                    Span::styled("tab ", key_style),
+                    Span::styled("switch  ", desc_style),
+                    Span::styled("ctrl+o ", key_style),
+                    Span::styled("menu  ", desc_style),
+                    Span::styled("esc ", key_style),
+                    Span::styled("cancel", desc_style),
+                ]);
+                frame.render_widget(Paragraph::new(hint_line), hint_area);
+            } else {
+                // Fallback: just render summary
+                frame.render_widget(summary_textarea, inner);
             }
         }
         PopupState::Menu {

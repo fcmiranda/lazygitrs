@@ -3,7 +3,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::config::KeybindingConfig;
 use crate::config::keybindings::parse_key;
-use crate::gui::popup::{MenuItem, PopupState, make_textarea};
+use crate::gui::popup::{CommitInputFocus, MenuItem, PopupState, make_textarea, make_commit_summary_textarea, make_commit_body_textarea};
 use crate::gui::Gui;
 use crate::os::platform::Platform;
 
@@ -184,9 +184,10 @@ fn open_commit_prompt(gui: &mut Gui) -> Result<()> {
             message: "You have not staged any files. Commit all files?".to_string(),
             on_confirm: Box::new(|gui| {
                 gui.git.stage_all()?;
-                gui.popup = PopupState::Input {
-                    title: "Commit message".to_string(),
-                    textarea: make_textarea("Enter commit message..."),
+                gui.popup = PopupState::CommitInput {
+                    summary_textarea: make_commit_summary_textarea(),
+                    body_textarea: make_commit_body_textarea(),
+                    focus: CommitInputFocus::Summary,
                     on_confirm: Box::new(|gui, message| {
                         if !message.is_empty() {
                             gui.git.create_commit(message, false)?;
@@ -194,7 +195,6 @@ fn open_commit_prompt(gui: &mut Gui) -> Result<()> {
                         }
                         Ok(())
                     }),
-                    is_commit: true, confirm_focused: false,
                 };
                 Ok(())
             }),
@@ -202,9 +202,10 @@ fn open_commit_prompt(gui: &mut Gui) -> Result<()> {
         return Ok(());
     }
 
-    gui.popup = PopupState::Input {
-        title: "Commit message".to_string(),
-        textarea: make_textarea("Enter commit message..."),
+    gui.popup = PopupState::CommitInput {
+        summary_textarea: make_commit_summary_textarea(),
+        body_textarea: make_commit_body_textarea(),
+        focus: CommitInputFocus::Summary,
         on_confirm: Box::new(|gui, message| {
             if !message.is_empty() {
                 gui.git.create_commit(message, false)?;
@@ -212,7 +213,6 @@ fn open_commit_prompt(gui: &mut Gui) -> Result<()> {
             }
             Ok(())
         }),
-        is_commit: true, confirm_focused: false,
     };
     Ok(())
 }

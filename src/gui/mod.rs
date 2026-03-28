@@ -496,27 +496,51 @@ impl Gui {
                     let config_width = self.config.user_config.git.commit.auto_wrap_width;
                     let wrap = if config_width > 0 { popup_inner.min(config_width) } else { popup_inner };
 
+                    // Split AI message into summary (first line) and body (rest)
+                    let (summary, body) = match message.find('\n') {
+                        Some(idx) => {
+                            let s = message[..idx].to_string();
+                            let b = message[idx + 1..].trim_start_matches('\n').to_string();
+                            (s, b)
+                        }
+                        None => (message.clone(), String::new()),
+                    };
+
+                    // Helper to populate the two textareas
+                    let fill_commit = |stashed: &mut PopupState| {
+                        if let PopupState::CommitInput { summary_textarea, body_textarea, .. } = stashed {
+                            summary_textarea.select_all();
+                            summary_textarea.cut();
+                            summary_textarea.insert_str(&summary);
+                            body_textarea.select_all();
+                            body_textarea.cut();
+                            if !body.is_empty() {
+                                body_textarea.insert_str(&body);
+                                if wrap > 0 {
+                                    auto_wrap_textarea(body_textarea, wrap);
+                                }
+                            }
+                        }
+                    };
+
                     // Restore the stashed commit editor, replacing its textarea content
                     if let Some(mut stashed) = self.pending_commit_popup.take() {
-                        if let PopupState::Input { ref mut textarea, ref mut title, .. } = stashed {
-                            textarea.select_all();
-                            textarea.cut();
-                            textarea.insert_str(&message);
-                            if wrap > 0 {
-                                auto_wrap_textarea(textarea, wrap);
-                            }
-                            *title = "Commit message".to_string();
-                        }
+                        fill_commit(&mut stashed);
                         self.popup = stashed;
                     } else {
-                        let mut ta = popup::make_textarea("Enter commit message...");
-                        ta.insert_str(&message);
-                        if wrap > 0 {
-                            auto_wrap_textarea(&mut ta, wrap);
+                        let mut summary_ta = popup::make_commit_summary_textarea();
+                        summary_ta.insert_str(&summary);
+                        let mut body_ta = popup::make_commit_body_textarea();
+                        if !body.is_empty() {
+                            body_ta.insert_str(&body);
+                            if wrap > 0 {
+                                auto_wrap_textarea(&mut body_ta, wrap);
+                            }
                         }
-                        self.popup = PopupState::Input {
-                            title: "Commit message".to_string(),
-                            textarea: ta,
+                        self.popup = PopupState::CommitInput {
+                            summary_textarea: summary_ta,
+                            body_textarea: body_ta,
+                            focus: popup::CommitInputFocus::Summary,
                             on_confirm: Box::new(|gui, msg| {
                                 if !msg.is_empty() {
                                     gui.git.create_commit(msg, false)?;
@@ -524,7 +548,6 @@ impl Gui {
                                 }
                                 Ok(())
                             }),
-                            is_commit: true, confirm_focused: false,
                         };
                     }
                 }
@@ -1774,6 +1797,166 @@ impl Gui {
                     }
                 }
             }
+            PopupState::CommitInput { focus, .. } => {
+                use crossterm::event::KeyModifiers;
+                let focus = *focus;
+
+                // Tab toggles focus between summary and body
+                if key.code == KeyCode::Tab {
+                    if let PopupState::CommitInput { focus, summary_textarea, body_textarea, .. } = &mut self.popup {
+                        *focus = match *focus {
+                            popup::CommitInputFocus::Summary => popup::CommitInputFocus::Body,
+                            popup::CommitInputFocus::Body => popup::CommitInputFocus::Summary,
+                        };
+                        // Update cursor visibility based on focus
+                        let visible = ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::REVERSED);
+                        let hidden = ratatui::style::Style::default();
+                        match *focus {
+                            popup::CommitInputFocus::Summary => {
+                                summary_textarea.set_cursor_style(visible);
+                                body_textarea.set_cursor_style(hidden);
+                            }
+                            popup::CommitInputFocus::Body => {
+                                summary_textarea.set_cursor_style(hidden);
+                                body_textarea.set_cursor_style(visible);
+                            }
+                        }
+                    }
+                }
+                // Enter on summary: submit the commit
+                else if focus == popup::CommitInputFocus::Summary && key.code == KeyCode::Enter {
+                    let popup = std::mem::replace(&mut self.popup, PopupState::None);
+                    if let PopupState::CommitInput { summary_textarea, body_textarea, on_confirm, .. } = popup {
+                        let summary = summary_textarea.lines().join("");
+                        let body = body_textarea.lines().join("\n").trim().to_string();
+                        let text = if body.is_empty() {
+                            summary
+                        } else {
+                            format!("{}\n\n{}", summary, body)
+                        };
+                        // Save to commit history
+                        if !text.trim().is_empty() {
+                            self.commit_message_history.retain(|m| m != &text);
+                            self.commit_message_history.insert(0, text.clone());
+                            self.commit_message_history.truncate(50);
+                            self.save_commit_history();
+                        }
+                        self.commit_history_idx = None;
+                        if let Err(e) = on_confirm(self, &text) {
+                            self.popup = PopupState::Message {
+                                title: "Error".to_string(),
+                                message: format!("{}", e),
+                                kind: MessageKind::Error,
+                            };
+                        }
+                    }
+                }
+                // Esc: cancel
+                else if key.code == KeyCode::Esc {
+                    self.popup = PopupState::None;
+                    self.commit_history_idx = None;
+                }
+                // Ctrl+O: open commit menu
+                else if key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    self.show_commit_editor_menu()?;
+                }
+                // Up/Down on summary: cycle commit history
+                else if focus == popup::CommitInputFocus::Summary
+                    && (key.code == KeyCode::Up || key.code == KeyCode::Down)
+                    && !self.commit_message_history.is_empty()
+                {
+                    if let PopupState::CommitInput { summary_textarea, body_textarea, .. } = &mut self.popup {
+                        let history_len = self.commit_message_history.len();
+                        match key.code {
+                            KeyCode::Up => {
+                                let new_idx = match self.commit_history_idx {
+                                    None => {
+                                        // Save current draft
+                                        let s = summary_textarea.lines().join("");
+                                        let b = body_textarea.lines().join("\n");
+                                        self.commit_history_draft = if b.trim().is_empty() {
+                                            s
+                                        } else {
+                                            format!("{}\n\n{}", s, b)
+                                        };
+                                        0
+                                    }
+                                    Some(idx) => (idx + 1).min(history_len - 1),
+                                };
+                                self.commit_history_idx = Some(new_idx);
+                                let msg = &self.commit_message_history[new_idx];
+                                let (summary, body) = split_commit_message(msg);
+                                let mut new_summary = popup::make_commit_summary_textarea();
+                                new_summary.insert_str(&summary);
+                                *summary_textarea = new_summary;
+                                let mut new_body = popup::make_commit_body_textarea();
+                                if !body.is_empty() {
+                                    new_body.insert_str(&body);
+                                }
+                                *body_textarea = new_body;
+                            }
+                            KeyCode::Down => {
+                                match self.commit_history_idx {
+                                    Some(0) => {
+                                        self.commit_history_idx = None;
+                                        let draft = self.commit_history_draft.clone();
+                                        let (summary, body) = split_commit_message(&draft);
+                                        let mut new_summary = popup::make_commit_summary_textarea();
+                                        new_summary.insert_str(&summary);
+                                        *summary_textarea = new_summary;
+                                        let mut new_body = popup::make_commit_body_textarea();
+                                        if !body.is_empty() {
+                                            new_body.insert_str(&body);
+                                        }
+                                        *body_textarea = new_body;
+                                    }
+                                    Some(idx) => {
+                                        let new_idx = idx - 1;
+                                        self.commit_history_idx = Some(new_idx);
+                                        let msg = &self.commit_message_history[new_idx];
+                                        let (summary, body) = split_commit_message(msg);
+                                        let mut new_summary = popup::make_commit_summary_textarea();
+                                        new_summary.insert_str(&summary);
+                                        *summary_textarea = new_summary;
+                                        let mut new_body = popup::make_commit_body_textarea();
+                                        if !body.is_empty() {
+                                            new_body.insert_str(&body);
+                                        }
+                                        *body_textarea = new_body;
+                                    }
+                                    None => {}
+                                }
+                            }
+                            _ => {}
+                        }
+                    }
+                }
+                // All other keys: forward to the focused textarea
+                else {
+                    if let PopupState::CommitInput { summary_textarea, body_textarea, focus, .. } = &mut self.popup {
+                        match focus {
+                            popup::CommitInputFocus::Summary => {
+                                summary_textarea.input(key);
+                            }
+                            popup::CommitInputFocus::Body => {
+                                body_textarea.input(key);
+                                // Auto-wrap body
+                                let popup_width = (self.layout.width * 60 / 100).min(60).max(30);
+                                let popup_inner = popup_width.saturating_sub(4) as usize;
+                                let config_width = self.config.user_config.git.commit.auto_wrap_width;
+                                let effective_width = if config_width > 0 {
+                                    popup_inner.min(config_width)
+                                } else {
+                                    popup_inner
+                                };
+                                if effective_width > 0 {
+                                    auto_wrap_textarea(body_textarea, effective_width);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
             PopupState::Checklist { items, selected, search, .. } => {
                 use crossterm::event::KeyModifiers;
                 // Ctrl+A: clear all checks
@@ -2517,9 +2700,9 @@ impl Gui {
                         on_confirm: Box::new(move |gui, coauthor| {
                             if let Some(mut editor) = stashed {
                                 if !coauthor.is_empty() {
-                                    // Append co-author trailer to the commit message
-                                    if let PopupState::Input { ref mut textarea, .. } = editor {
-                                        textarea.insert_str(&format!("\n\nCo-authored-by: {}", coauthor));
+                                    // Append co-author trailer to the body textarea
+                                    if let PopupState::CommitInput { ref mut body_textarea, .. } = editor {
+                                        body_textarea.insert_str(&format!("\n\nCo-authored-by: {}", coauthor));
                                     }
                                 }
                                 gui.popup = editor;
@@ -2540,17 +2723,30 @@ impl Gui {
                     if let Some(mut editor) = gui.pending_commit_popup.take() {
                         if let Some(text) = clipboard_text {
                             if !text.is_empty() {
-                                if let PopupState::Input { ref mut textarea, .. } = editor {
-                                    textarea.select_all();
-                                    textarea.cut();
-                                    textarea.insert_str(&text);
-                                    // Auto-wrap the pasted text
-                                    let popup_width = (gui.layout.width * 60 / 100).min(60).max(30);
-                                    let popup_inner = popup_width.saturating_sub(4) as usize;
-                                    let config_width = gui.config.user_config.git.commit.auto_wrap_width;
-                                    let wrap = if config_width > 0 { popup_inner.min(config_width) } else { popup_inner };
-                                    if wrap > 0 {
-                                        auto_wrap_textarea(textarea, wrap);
+                                if let PopupState::CommitInput { ref mut summary_textarea, ref mut body_textarea, .. } = editor {
+                                    // Split pasted text: first line → summary, rest → body
+                                    let (summary, body) = match text.find('\n') {
+                                        Some(idx) => {
+                                            let s = text[..idx].to_string();
+                                            let b = text[idx + 1..].trim_start_matches('\n').to_string();
+                                            (s, b)
+                                        }
+                                        None => (text.clone(), String::new()),
+                                    };
+                                    summary_textarea.select_all();
+                                    summary_textarea.cut();
+                                    summary_textarea.insert_str(&summary);
+                                    body_textarea.select_all();
+                                    body_textarea.cut();
+                                    if !body.is_empty() {
+                                        body_textarea.insert_str(&body);
+                                        let popup_width = (gui.layout.width * 60 / 100).min(60).max(30);
+                                        let popup_inner = popup_width.saturating_sub(4) as usize;
+                                        let config_width = gui.config.user_config.git.commit.auto_wrap_width;
+                                        let wrap = if config_width > 0 { popup_inner.min(config_width) } else { popup_inner };
+                                        if wrap > 0 {
+                                            auto_wrap_textarea(body_textarea, wrap);
+                                        }
                                     }
                                 }
                             }
@@ -3665,6 +3861,19 @@ impl Gui {
             ScreenMode::Half => ScreenMode::Normal,
             ScreenMode::Full => ScreenMode::Half,
         };
+    }
+}
+
+/// Split a commit message into (summary, body).
+/// The summary is the first line; the body is everything after the first blank line separator.
+fn split_commit_message(msg: &str) -> (String, String) {
+    match msg.find('\n') {
+        Some(idx) => {
+            let summary = msg[..idx].to_string();
+            let rest = msg[idx + 1..].trim_start_matches('\n').to_string();
+            (summary, rest)
+        }
+        None => (msg.to_string(), String::new()),
     }
 }
 

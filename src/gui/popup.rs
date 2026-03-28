@@ -13,6 +13,13 @@ pub enum MessageKind {
     Info,
 }
 
+/// Which field is focused in the commit input popup.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommitInputFocus {
+    Summary,
+    Body,
+}
+
 pub enum PopupState {
     None,
     Confirm {
@@ -29,6 +36,13 @@ pub enum PopupState {
         is_commit: bool,
         /// When true, focus is on the Confirm button instead of the textarea.
         confirm_focused: bool,
+    },
+    /// Two-field commit message editor (summary + body), like lazygit.
+    CommitInput {
+        summary_textarea: TextArea<'static>,
+        body_textarea: TextArea<'static>,
+        focus: CommitInputFocus,
+        on_confirm: InputAction,
     },
     Menu {
         title: String,
@@ -95,6 +109,17 @@ pub fn make_textarea(placeholder: &str) -> TextArea<'static> {
     ta.set_placeholder_text(placeholder);
     ta.set_cursor_line_style(Style::default());
     ta.set_placeholder_style(Style::default().fg(Color::DarkGray));
+    ta
+}
+
+pub fn make_commit_summary_textarea() -> TextArea<'static> {
+    make_textarea("Required")
+}
+
+pub fn make_commit_body_textarea() -> TextArea<'static> {
+    let mut ta = make_textarea("Optional");
+    // Body starts unfocused — hide cursor
+    ta.set_cursor_style(ratatui::style::Style::default());
     ta
 }
 
