@@ -133,6 +133,18 @@ pub fn build_file_tree(files: &[File], collapsed_dirs: &HashSet<String>) -> Vec<
     }
 
     compress_single_child_dirs(&mut nodes);
+
+    // Remove root node if it has only one direct child (matches lazygit behavior)
+    if nodes.first().is_some_and(|n| n.path == ".") {
+        let direct_children = nodes[1..].iter().filter(|n| n.depth == 1).count();
+        if direct_children == 1 {
+            nodes.remove(0);
+            for node in nodes.iter_mut() {
+                node.depth -= 1;
+            }
+        }
+    }
+
     nodes
 }
 
@@ -318,6 +330,18 @@ pub fn build_commit_file_tree(
     }
 
     compress_single_child_commit_dirs(&mut nodes);
+
+    // Remove root node if it has only one direct child
+    if nodes.first().is_some_and(|n| n.path == ".") {
+        let direct_children = nodes[1..].iter().filter(|n| n.depth == 1).count();
+        if direct_children == 1 {
+            nodes.remove(0);
+            for node in nodes.iter_mut() {
+                node.depth -= 1;
+            }
+        }
+    }
+
     nodes
 }
 
