@@ -132,3 +132,6 @@
 - [x] Diff hunks now have offsetted line numbers.
 
 - [ ] Theming, like opencode style!
+
+- [x] Make the combobox work with mouse (in diff_mode)
+- [x] In diff_mode, show the 'current branch' as the first option.

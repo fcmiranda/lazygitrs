@@ -3299,7 +3299,7 @@ impl Gui {
     fn handle_diff_mode_mouse(&mut self, mouse: MouseEvent) {
         use crossterm::event::{KeyModifiers, MouseButton, MouseEventKind};
         use ratatui::layout::{Constraint, Direction, Layout, Rect};
-        use self::modes::diff_mode::DiffModeFocus;
+        use self::modes::diff_mode::{DiffModeFocus, DiffModeSelector};
 
         // Help popup intercepts mouse scroll
         if let PopupState::Help { sections, scroll_offset, search_textarea, .. } = &mut self.popup {
@@ -3391,6 +3391,71 @@ impl Gui {
         let col = mouse.column;
         let row = mouse.row;
 
+        // Combobox dropdown mouse handling — intercepts clicks/scrolls when editing
+        if self.diff_mode.editing.is_some() && !self.diff_mode.search_results.is_empty() {
+            let anchor = if matches!(self.diff_mode.editing, Some(crate::gui::modes::diff_mode::DiffModeSelector::A)) {
+                selector_a_rect
+            } else {
+                selector_b_rect
+            };
+            let total = self.diff_mode.search_results.len();
+            let max_items = 10usize.min(total);
+            let dropdown_height = (max_items as u16) + 2;
+            let available_height = area.height.saturating_sub(anchor.y + anchor.height);
+            let dropdown_area = Rect {
+                x: anchor.x,
+                y: anchor.y + anchor.height,
+                width: anchor.width,
+                height: dropdown_height.min(available_height),
+            };
+
+            if rect_contains(dropdown_area, col, row) {
+                match mouse.kind {
+                    MouseEventKind::Down(MouseButton::Left) => {
+                        // Click on a dropdown item — select it and confirm
+                        let inner_y = row.saturating_sub(dropdown_area.y + 1); // +1 for top border
+                        let clicked_idx = self.diff_mode.dropdown_scroll + inner_y as usize;
+                        if clicked_idx < total {
+                            self.diff_mode.search_selected = clicked_idx;
+                            self.diff_mode.confirm_selection();
+                            if self.diff_mode.has_both_refs() {
+                                let _ = crate::gui::controller::diff_mode::reload_diff_files(self);
+                                self.diff_mode.focus = DiffModeFocus::CommitFiles;
+                            } else if self.diff_mode.ref_a.is_empty() {
+                                self.diff_mode.focus = DiffModeFocus::SelectorA;
+                                self.diff_mode.start_editing(DiffModeSelector::A);
+                                let model = self.model.lock().unwrap();
+                                self.diff_mode.search_refs(&model.branches, &model.tags, &model.commits, &model.remotes, &model.head_branch_name);
+                            } else {
+                                self.diff_mode.focus = DiffModeFocus::SelectorB;
+                                self.diff_mode.start_editing(DiffModeSelector::B);
+                                let model = self.model.lock().unwrap();
+                                self.diff_mode.search_refs(&model.branches, &model.tags, &model.commits, &model.remotes, &model.head_branch_name);
+                            }
+                            self.needs_diff_refresh = true;
+                        }
+                        return;
+                    }
+                    MouseEventKind::ScrollUp => {
+                        if self.diff_mode.search_selected > 0 {
+                            self.diff_mode.search_selected = self.diff_mode.search_selected.saturating_sub(3);
+                            self.diff_mode.ensure_dropdown_visible(10);
+                        }
+                        return;
+                    }
+                    MouseEventKind::ScrollDown => {
+                        let len = self.diff_mode.search_results.len();
+                        if len > 0 {
+                            self.diff_mode.search_selected = (self.diff_mode.search_selected + 3).min(len - 1);
+                            self.diff_mode.ensure_dropdown_visible(10);
+                        }
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+        }
+
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 // Check if click is in the diff panel — start text selection
@@ -3419,8 +3484,16 @@ impl Gui {
                     // Click on panels to switch focus
                     if rect_contains(selector_a_rect, col, row) {
                         self.diff_mode.focus = DiffModeFocus::SelectorA;
+                        // Start editing on click
+                        self.diff_mode.start_editing(DiffModeSelector::A);
+                        let model = self.model.lock().unwrap();
+                        self.diff_mode.search_refs(&model.branches, &model.tags, &model.commits, &model.remotes, &model.head_branch_name);
                     } else if rect_contains(selector_b_rect, col, row) {
                         self.diff_mode.focus = DiffModeFocus::SelectorB;
+                        // Start editing on click
+                        self.diff_mode.start_editing(DiffModeSelector::B);
+                        let model = self.model.lock().unwrap();
+                        self.diff_mode.search_refs(&model.branches, &model.tags, &model.commits, &model.remotes, &model.head_branch_name);
                     } else if rect_contains(files_rect, col, row) {
                         self.diff_mode.focus = DiffModeFocus::CommitFiles;
                         // Click to select a file

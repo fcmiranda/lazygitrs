@@ -109,14 +109,14 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
             if key.code == KeyCode::Enter {
                 gui.diff_mode.start_editing(DiffModeSelector::A);
                 let model = gui.model.lock().unwrap();
-                gui.diff_mode.search_refs(&model.branches, &model.tags, &model.commits, &model.remotes);
+                gui.diff_mode.search_refs(&model.branches, &model.tags, &model.commits, &model.remotes, &model.head_branch_name);
             }
         }
         DiffModeFocus::SelectorB => {
             if key.code == KeyCode::Enter {
                 gui.diff_mode.start_editing(DiffModeSelector::B);
                 let model = gui.model.lock().unwrap();
-                gui.diff_mode.search_refs(&model.branches, &model.tags, &model.commits, &model.remotes);
+                gui.diff_mode.search_refs(&model.branches, &model.tags, &model.commits, &model.remotes, &model.head_branch_name);
             }
         }
         DiffModeFocus::CommitFiles => {
@@ -146,13 +146,13 @@ fn handle_combobox_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
                 gui.diff_mode.focus = DiffModeFocus::SelectorA;
                 gui.diff_mode.start_editing(DiffModeSelector::A);
                 let model = gui.model.lock().unwrap();
-                gui.diff_mode.search_refs(&model.branches, &model.tags, &model.commits, &model.remotes);
+                gui.diff_mode.search_refs(&model.branches, &model.tags, &model.commits, &model.remotes, &model.head_branch_name);
             } else {
                 // A was just set, B still empty — jump to B and start editing
                 gui.diff_mode.focus = DiffModeFocus::SelectorB;
                 gui.diff_mode.start_editing(DiffModeSelector::B);
                 let model = gui.model.lock().unwrap();
-                gui.diff_mode.search_refs(&model.branches, &model.tags, &model.commits, &model.remotes);
+                gui.diff_mode.search_refs(&model.branches, &model.tags, &model.commits, &model.remotes, &model.head_branch_name);
             }
             gui.needs_diff_refresh = true;
         }
@@ -176,7 +176,7 @@ fn handle_combobox_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
             }
             // Re-search after any text change
             let model = gui.model.lock().unwrap();
-            gui.diff_mode.search_refs(&model.branches, &model.tags, &model.commits, &model.remotes);
+            gui.diff_mode.search_refs(&model.branches, &model.tags, &model.commits, &model.remotes, &model.head_branch_name);
         }
     }
     Ok(())
