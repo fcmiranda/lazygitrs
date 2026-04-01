@@ -455,7 +455,7 @@ impl Gui {
                     views::render(
                         frame,
                         &model,
-                        &self.context_mgr,
+                        &mut self.context_mgr,
                         &self.layout,
                         &self.popup,
                         &self.config,
@@ -3353,18 +3353,62 @@ impl Gui {
             return;
         }
 
-        // Rebase mode: basic scroll support
+        // Rebase mode: scroll and click support
         if self.rebase_mode.active {
             match mouse.kind {
                 MouseEventKind::ScrollDown => {
                     let len = self.rebase_mode.entries.len();
                     if self.rebase_mode.selected + 1 < len {
                         self.rebase_mode.selected += 1;
+                        let area = ratatui::layout::Rect::new(0, 0, self.layout.width, self.layout.height);
+                        let outer = ratatui::layout::Layout::default()
+                            .direction(ratatui::layout::Direction::Vertical)
+                            .constraints([ratatui::layout::Constraint::Min(1), ratatui::layout::Constraint::Length(1)])
+                            .split(area);
+                        let block = ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::ALL);
+                        let inner = block.inner(outer[0]);
+                        let has_banner = self.rebase_mode.phase == modes::rebase_mode::RebasePhase::InProgress;
+                        let banner_h: u16 = if has_banner { 2 } else { 0 };
+                        let list_h = inner.height.saturating_sub(1 + banner_h) as usize;
+                        self.rebase_mode.ensure_visible(list_h);
                     }
                 }
                 MouseEventKind::ScrollUp => {
                     if self.rebase_mode.selected > 0 {
                         self.rebase_mode.selected -= 1;
+                        let area = ratatui::layout::Rect::new(0, 0, self.layout.width, self.layout.height);
+                        let outer = ratatui::layout::Layout::default()
+                            .direction(ratatui::layout::Direction::Vertical)
+                            .constraints([ratatui::layout::Constraint::Min(1), ratatui::layout::Constraint::Length(1)])
+                            .split(area);
+                        let block = ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::ALL);
+                        let inner = block.inner(outer[0]);
+                        let has_banner = self.rebase_mode.phase == modes::rebase_mode::RebasePhase::InProgress;
+                        let banner_h: u16 = if has_banner { 2 } else { 0 };
+                        let list_h = inner.height.saturating_sub(1 + banner_h) as usize;
+                        self.rebase_mode.ensure_visible(list_h);
+                    }
+                }
+                MouseEventKind::Down(MouseButton::Left) => {
+                    // Compute the list area to determine which entry was clicked
+                    let area = ratatui::layout::Rect::new(0, 0, self.layout.width, self.layout.height);
+                    let outer = ratatui::layout::Layout::default()
+                        .direction(ratatui::layout::Direction::Vertical)
+                        .constraints([ratatui::layout::Constraint::Min(1), ratatui::layout::Constraint::Length(1)])
+                        .split(area);
+                    let block = ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::ALL);
+                    let inner = block.inner(outer[0]);
+                    let has_banner = self.rebase_mode.phase == modes::rebase_mode::RebasePhase::InProgress;
+                    let banner_h: u16 = if has_banner { 2 } else { 0 };
+                    // List starts after: inner.y + info_line(1) + banner_h
+                    let list_y = inner.y + 1 + banner_h;
+                    let list_h = inner.height.saturating_sub(1 + banner_h) as usize;
+                    if mouse.row >= list_y && mouse.row < list_y + list_h as u16 {
+                        let row_in_list = (mouse.row - list_y) as usize;
+                        let clicked_idx = self.rebase_mode.scroll + row_in_list;
+                        if clicked_idx < self.rebase_mode.entries.len() {
+                            self.rebase_mode.selected = clicked_idx;
+                        }
                     }
                 }
                 _ => {}
@@ -3378,8 +3422,8 @@ impl Gui {
             return;
         }
 
-        // Help popup intercepts mouse scroll
-        if let PopupState::Help { sections, scroll_offset, search_textarea, .. } = &mut self.popup {
+        // Help popup intercepts mouse scroll and click
+        if let PopupState::Help { sections, selected, scroll_offset, search_textarea } = &mut self.popup {
             // Compute total display rows so we can clamp scroll
             let search_lower = search_textarea.lines().join("").to_lowercase();
             let has_search = !search_lower.is_empty();
@@ -3403,30 +3447,137 @@ impl Gui {
                     *scroll_offset = (*scroll_offset + 3).min(total_rows.saturating_sub(1));
                 }
                 MouseEventKind::Down(MouseButton::Left) => {
-                    // Clicking outside could close, but for now just ignore clicks
+                    // Click to select an entry in the help list
+                    let area = ratatui::layout::Rect::new(0, 0, self.layout.width, self.layout.height);
+                    let popup_width = (area.width * 70 / 100).min(72).max(36);
+                    let content_height = total_rows.max(1);
+                    let popup_height = (content_height as u16 + 5)
+                        .min(area.height.saturating_sub(4))
+                        .max(10);
+                    let x = (area.width.saturating_sub(popup_width)) / 2;
+                    let y = (area.height.saturating_sub(popup_height)) / 2;
+                    let inner_y = y + 1; // border
+                    let list_start = inner_y + 2; // search + separator
+                    let inner_height = popup_height.saturating_sub(2); // borders
+                    let list_height = inner_height.saturating_sub(3) as usize; // search + sep + hint
+
+                    if mouse.row >= list_start && mouse.row < list_start + list_height as u16
+                        && mouse.column >= x && mouse.column < x + popup_width
+                    {
+                        let row_in_list = (mouse.row - list_start) as usize;
+                        let display_idx = *scroll_offset + row_in_list;
+
+                        // Build flat display list to map display_idx to entry index
+                        let mut di = 0usize;
+                        let mut ei = 0usize;
+                        let mut clicked_entry = None;
+                        'sections: for section in sections.iter() {
+                            let visible_entries: Vec<_> = section.entries.iter().filter(|e| {
+                                !has_search
+                                    || e.key.to_lowercase().contains(&search_lower)
+                                    || e.description.to_lowercase().contains(&search_lower)
+                            }).collect();
+                            if !visible_entries.is_empty() {
+                                if di == display_idx {
+                                    // Clicked on a header — ignore
+                                    break;
+                                }
+                                di += 1; // header
+                                for _ in visible_entries {
+                                    if di == display_idx {
+                                        clicked_entry = Some(ei);
+                                        break 'sections;
+                                    }
+                                    di += 1;
+                                    ei += 1;
+                                }
+                            }
+                        }
+                        if let Some(entry_idx) = clicked_entry {
+                            *selected = entry_idx;
+                        }
+                    }
                 }
                 _ => {}
             }
             return;
         }
 
-        // RefPicker popup intercepts mouse scroll — move selection like ↑/↓
+        // RefPicker popup intercepts mouse scroll and click
         if let PopupState::RefPicker { core, .. } = &mut self.popup {
             let total = core.items.len();
             let h = self.layout.height as usize;
             let lh = list_picker_visible_height(h);
             match mouse.kind {
                 MouseEventKind::ScrollUp => {
-                    core.selected = core.selected.saturating_sub(3);
+                    core.selected = core.selected.saturating_sub(1);
                     if core.selected < core.scroll_offset {
                         core.scroll_offset = core.selected;
                     }
                 }
                 MouseEventKind::ScrollDown => {
-                    core.selected = (core.selected + 3).min(total.saturating_sub(1));
+                    core.selected = (core.selected + 1).min(total.saturating_sub(1));
                     let di = list_picker_display_idx(&core.items, core.selected);
                     if di >= core.scroll_offset + lh {
                         core.scroll_offset = di.saturating_sub(lh - 1);
+                    }
+                }
+                MouseEventKind::Down(MouseButton::Left) => {
+                    // Click to select an item in the list picker
+                    let area = ratatui::layout::Rect::new(0, 0, self.layout.width, self.layout.height);
+                    let popup_width = (area.width * 60 / 100).min(60).max(30);
+                    let max_popup = (area.height * 60 / 100).max(10);
+                    let popup_height = max_popup.min(area.height.saturating_sub(4));
+                    let x = (area.width.saturating_sub(popup_width)) / 2;
+                    let y = (area.height.saturating_sub(popup_height)) / 2;
+                    let inner_y = y + 1;
+                    let list_start = inner_y + 2;
+                    let inner_height = popup_height.saturating_sub(2);
+                    let list_height = inner_height.saturating_sub(3) as usize;
+
+                    if mouse.row >= list_start && mouse.row < list_start + list_height as u16
+                        && mouse.column >= x && mouse.column < x + popup_width
+                    {
+                        let row_in_list = (mouse.row - list_start) as usize;
+                        // Map display row to entry index, accounting for category headers
+                        let has_categories = core.items.iter().any(|i| !i.category.is_empty());
+                        let effective_scroll = core.scroll_offset.min(
+                            if has_categories {
+                                // display length includes headers
+                                let display_len = list_picker_display_idx(&core.items, total.saturating_sub(1)) + 1;
+                                display_len.saturating_sub(list_height)
+                            } else {
+                                total.saturating_sub(list_height)
+                            }
+                        );
+                        let display_idx = effective_scroll + row_in_list;
+
+                        if has_categories {
+                            // Walk through display rows to find which entry was clicked
+                            let mut di = 0usize;
+                            let mut ei = 0usize;
+                            let mut last_cat = String::new();
+                            for item in core.items.iter() {
+                                if !item.category.is_empty() && item.category != last_cat {
+                                    if di == display_idx {
+                                        break; // clicked on header
+                                    }
+                                    di += 1;
+                                    last_cat = item.category.clone();
+                                }
+                                if di == display_idx {
+                                    core.selected = ei;
+                                    break;
+                                }
+                                di += 1;
+                                ei += 1;
+                            }
+                        } else {
+                            let clicked_idx = effective_scroll + row_in_list;
+                            if clicked_idx < total {
+                                core.selected = clicked_idx;
+                            }
+                        }
                     }
                 }
                 _ => {}
@@ -3434,7 +3585,7 @@ impl Gui {
             return;
         }
 
-        // ThemePicker popup intercepts mouse scroll
+        // ThemePicker popup intercepts mouse scroll and click
         if let PopupState::ThemePicker { core, .. } = &mut self.popup {
             let total = core.items.len();
             let h = self.layout.height as usize;
@@ -3452,6 +3603,31 @@ impl Gui {
                     self.current_theme_index = core.selected;
                     if core.selected >= core.scroll_offset + lh {
                         core.scroll_offset = core.selected.saturating_sub(lh - 1);
+                    }
+                }
+                MouseEventKind::Down(MouseButton::Left) => {
+                    // Click to select a theme
+                    let area = ratatui::layout::Rect::new(0, 0, self.layout.width, self.layout.height);
+                    let popup_width = (area.width * 60 / 100).min(60).max(30);
+                    let max_popup = (area.height * 60 / 100).max(10);
+                    let popup_height = max_popup.min(area.height.saturating_sub(4));
+                    let x = (area.width.saturating_sub(popup_width)) / 2;
+                    let y = (area.height.saturating_sub(popup_height)) / 2;
+                    let inner_y = y + 1;
+                    let list_start = inner_y + 2;
+                    let inner_height = popup_height.saturating_sub(2);
+                    let list_height = inner_height.saturating_sub(3) as usize;
+
+                    if mouse.row >= list_start && mouse.row < list_start + list_height as u16
+                        && mouse.column >= x && mouse.column < x + popup_width
+                    {
+                        let row_in_list = (mouse.row - list_start) as usize;
+                        let effective_scroll = core.scroll_offset.min(total.saturating_sub(list_height));
+                        let clicked_idx = effective_scroll + row_in_list;
+                        if clicked_idx < total {
+                            core.selected = clicked_idx;
+                            self.current_theme_index = clicked_idx;
+                        }
                     }
                 }
                 _ => {}
@@ -3593,23 +3769,75 @@ impl Gui {
             return;
         }
 
-        // RefPicker popup intercepts mouse scroll — move selection like ↑/↓
+        // RefPicker popup intercepts mouse scroll and click
         if let PopupState::RefPicker { core, .. } = &mut self.popup {
             let total = core.items.len();
             let h = self.layout.height as usize;
             let lh = list_picker_visible_height(h);
             match mouse.kind {
                 MouseEventKind::ScrollUp => {
-                    core.selected = core.selected.saturating_sub(3);
+                    core.selected = core.selected.saturating_sub(1);
                     if core.selected < core.scroll_offset {
                         core.scroll_offset = core.selected;
                     }
                 }
                 MouseEventKind::ScrollDown => {
-                    core.selected = (core.selected + 3).min(total.saturating_sub(1));
+                    core.selected = (core.selected + 1).min(total.saturating_sub(1));
                     let di = list_picker_display_idx(&core.items, core.selected);
                     if di >= core.scroll_offset + lh {
                         core.scroll_offset = di.saturating_sub(lh - 1);
+                    }
+                }
+                MouseEventKind::Down(MouseButton::Left) => {
+                    let area = ratatui::layout::Rect::new(0, 0, self.layout.width, self.layout.height);
+                    let popup_width = (area.width * 60 / 100).min(60).max(30);
+                    let max_popup = (area.height * 60 / 100).max(10);
+                    let popup_height = max_popup.min(area.height.saturating_sub(4));
+                    let x = (area.width.saturating_sub(popup_width)) / 2;
+                    let y = (area.height.saturating_sub(popup_height)) / 2;
+                    let inner_y = y + 1;
+                    let list_start = inner_y + 2;
+                    let inner_height = popup_height.saturating_sub(2);
+                    let list_height = inner_height.saturating_sub(3) as usize;
+
+                    if mouse.row >= list_start && mouse.row < list_start + list_height as u16
+                        && mouse.column >= x && mouse.column < x + popup_width
+                    {
+                        let row_in_list = (mouse.row - list_start) as usize;
+                        let has_categories = core.items.iter().any(|i| !i.category.is_empty());
+                        let effective_scroll = core.scroll_offset.min(
+                            if has_categories {
+                                let display_len = list_picker_display_idx(&core.items, total.saturating_sub(1)) + 1;
+                                display_len.saturating_sub(list_height)
+                            } else {
+                                total.saturating_sub(list_height)
+                            }
+                        );
+                        let display_idx = effective_scroll + row_in_list;
+
+                        if has_categories {
+                            let mut di = 0usize;
+                            let mut ei = 0usize;
+                            let mut last_cat = String::new();
+                            for item in core.items.iter() {
+                                if !item.category.is_empty() && item.category != last_cat {
+                                    if di == display_idx { break; }
+                                    di += 1;
+                                    last_cat = item.category.clone();
+                                }
+                                if di == display_idx {
+                                    core.selected = ei;
+                                    break;
+                                }
+                                di += 1;
+                                ei += 1;
+                            }
+                        } else {
+                            let clicked_idx = effective_scroll + row_in_list;
+                            if clicked_idx < total {
+                                core.selected = clicked_idx;
+                            }
+                        }
                     }
                 }
                 _ => {}
@@ -3869,16 +4097,11 @@ impl Gui {
                 && row < panel_rect.y + panel_rect.height
             {
                 let inner_y = row.saturating_sub(panel_rect.y + 1);
-                let selected = self.context_mgr.selected_active();
+                let active_ctx = self.context_mgr.active();
                 let model = self.model.lock().unwrap();
                 let list_len = self.context_mgr.list_len(&model);
                 drop(model);
-                let visible_height = panel_rect.height.saturating_sub(2) as usize;
-                let scroll_offset = if selected >= visible_height {
-                    selected - visible_height + 1
-                } else {
-                    0
-                };
+                let scroll_offset = self.context_mgr.scroll_offset(active_ctx);
                 let clicked_idx = scroll_offset + inner_y as usize;
                 if clicked_idx < list_len {
                     self.context_mgr.set_selection(clicked_idx);
@@ -3913,18 +4136,13 @@ impl Gui {
 
                     // Calculate which item was clicked (row relative to panel inner area)
                     let inner_y = row.saturating_sub(panel_rect.y + 1); // +1 for border
-                    let selected = self.context_mgr.selected_active();
+                    let active_ctx = self.context_mgr.active();
                     let model = self.model.lock().unwrap();
                     let list_len = self.context_mgr.list_len(&model);
                     drop(model);
 
-                    // Calculate scroll offset (same logic as render_list)
-                    let visible_height = panel_rect.height.saturating_sub(2) as usize;
-                    let scroll_offset = if selected >= visible_height {
-                        selected - visible_height + 1
-                    } else {
-                        0
-                    };
+                    // Use stored scroll offset (maintained by render)
+                    let scroll_offset = self.context_mgr.scroll_offset(active_ctx);
                     let clicked_idx = scroll_offset + inner_y as usize;
                     if clicked_idx < list_len {
                         self.context_mgr.set_selection(clicked_idx);

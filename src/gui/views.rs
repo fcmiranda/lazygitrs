@@ -21,7 +21,7 @@ use super::presentation;
 pub fn render(
     frame: &mut Frame,
     model: &Model,
-    ctx_mgr: &ContextManager,
+    ctx_mgr: &mut ContextManager,
     layout_state: &LayoutState,
     popup: &PopupState,
     config: &AppConfig,
@@ -137,15 +137,15 @@ pub fn render(
                             file_tree_nodes,
                             collapsed_dirs,
                         );
-                        render_list(frame, fl.main_panel, block, items, selected, true, theme);
+                        render_list_ctx(frame, fl.main_panel, block, items, selected, true, theme, ctx_mgr, ctx_id);
                     } else {
                         let items = presentation::files::render_file_list(model, theme);
-                        render_list(frame, fl.main_panel, block, items, selected, true, theme);
+                        render_list_ctx(frame, fl.main_panel, block, items, selected, true, theme, ctx_mgr, ctx_id);
                     }
                 }
                 ContextId::Branches => {
                     let items = presentation::branches::render_branch_list(model, theme, remote_op_label, spinner_frame, remote_op_success);
-                    render_list(frame, fl.main_panel, block, items, selected, true, theme);
+                    render_list_ctx(frame, fl.main_panel, block, items, selected, true, theme, ctx_mgr, ctx_id);
                 }
                 ContextId::Remotes | ContextId::RemoteBranches => {
                     if ctx_mgr.active() == ContextId::RemoteBranches {
@@ -155,28 +155,28 @@ pub fn render(
                             .borders(Borders::ALL)
                             .border_style(theme.active_border);
                         let items = presentation::remote_branches::render_remote_branch_list(&model.sub_remote_branches, theme);
-                        render_list(frame, fl.main_panel, rb_block, items, rb_selected, true, theme);
+                        render_list_ctx(frame, fl.main_panel, rb_block, items, rb_selected, true, theme, ctx_mgr, ContextId::RemoteBranches);
                     } else {
                         let items = presentation::remotes::render_remote_list(model, theme);
-                        render_list(frame, fl.main_panel, block, items, selected, true, theme);
+                        render_list_ctx(frame, fl.main_panel, block, items, selected, true, theme, ctx_mgr, ctx_id);
                     }
                 }
                 ContextId::Tags => {
                     let items = presentation::tags::render_tag_list(model, theme);
-                    render_list(frame, fl.main_panel, block, items, selected, true, theme);
+                    render_list_ctx(frame, fl.main_panel, block, items, selected, true, theme, ctx_mgr, ctx_id);
                 }
                 ContextId::Commits => {
                     let items = presentation::commits::render_commit_list(model, theme, cherry_pick_clipboard);
                     let range = range_select_anchor.map(|a| (a.min(selected), a.max(selected)));
-                    render_list_with_range(frame, fl.main_panel, block, items, selected, true, theme, range);
+                    render_list_with_range_ctx(frame, fl.main_panel, block, items, selected, true, theme, range, ctx_mgr, ctx_id);
                 }
                 ContextId::Stash => {
                     let items = presentation::stash::render_stash_list(model, theme);
-                    render_list(frame, fl.main_panel, block, items, selected, true, theme);
+                    render_list_ctx(frame, fl.main_panel, block, items, selected, true, theme, ctx_mgr, ctx_id);
                 }
                 ContextId::BranchCommits => {
                     let items = presentation::commits::render_sub_commit_list(model, theme);
-                    render_list(frame, fl.main_panel, block, items, selected, true, theme);
+                    render_list_ctx(frame, fl.main_panel, block, items, selected, true, theme, ctx_mgr, ctx_id);
                 }
                 ContextId::CommitFiles | ContextId::StashFiles | ContextId::BranchCommitFiles => {
                     if show_commit_file_tree {
@@ -186,11 +186,11 @@ pub fn render(
                             commit_file_tree_nodes,
                             commit_files_collapsed_dirs,
                         );
-                        render_list(frame, fl.main_panel, block, items, selected, true, theme);
+                        render_list_ctx(frame, fl.main_panel, block, items, selected, true, theme, ctx_mgr, ctx_id);
                     } else {
                         let items =
                             presentation::commit_files::render_commit_file_list(model, theme);
-                        render_list(frame, fl.main_panel, block, items, selected, true, theme);
+                        render_list_ctx(frame, fl.main_panel, block, items, selected, true, theme, ctx_mgr, ctx_id);
                     }
                 }
                 _ => {
@@ -262,15 +262,15 @@ pub fn render(
                         file_tree_nodes,
                         collapsed_dirs,
                     );
-                    render_list(frame, rect, block, items, selected, is_active, theme);
+                    render_list_ctx(frame, rect, block, items, selected, is_active, theme, ctx_mgr, ctx_id);
                 } else {
                     let items = presentation::files::render_file_list(model, theme);
-                    render_list(frame, rect, block, items, selected, is_active, theme);
+                    render_list_ctx(frame, rect, block, items, selected, is_active, theme, ctx_mgr, ctx_id);
                 }
             }
             ContextId::Worktrees => {
                 let items = render_worktree_list(model, theme);
-                render_list(frame, rect, block, items, selected, is_active, theme);
+                render_list_ctx(frame, rect, block, items, selected, is_active, theme, ctx_mgr, ctx_id);
             }
             ContextId::Submodules => {
                 if model.submodules.is_empty() {
@@ -290,7 +290,7 @@ pub fn render(
                         ]);
                         ListItem::new(line)
                     }).collect();
-                    render_list(frame, rect, block, items, selected, is_active, theme);
+                    render_list_ctx(frame, rect, block, items, selected, is_active, theme, ctx_mgr, ctx_id);
                 }
             }
             ContextId::Branches => {
@@ -314,11 +314,11 @@ pub fn render(
                             commit_file_tree_nodes,
                             commit_files_collapsed_dirs,
                         );
-                        render_list(frame, rect, cf_block, items, cf_selected, is_active, theme);
+                        render_list_ctx(frame, rect, cf_block, items, cf_selected, is_active, theme, ctx_mgr, ContextId::BranchCommitFiles);
                     } else {
                         let items =
                             presentation::commit_files::render_commit_file_list(model, theme);
-                        render_list(frame, rect, cf_block, items, cf_selected, is_active, theme);
+                        render_list_ctx(frame, rect, cf_block, items, cf_selected, is_active, theme, ctx_mgr, ContextId::BranchCommitFiles);
                     }
                 } else if ctx_mgr.active() == ContextId::BranchCommits {
                     let bc_selected = ctx_mgr.selected(ContextId::BranchCommits);
@@ -328,10 +328,10 @@ pub fn render(
                         .borders(Borders::ALL)
                         .border_style(border_style);
                     let items = presentation::commits::render_sub_commit_list(model, theme);
-                    render_list(frame, rect, bc_block, items, bc_selected, is_active, theme);
+                    render_list_ctx(frame, rect, bc_block, items, bc_selected, is_active, theme, ctx_mgr, ContextId::BranchCommits);
                 } else {
                     let items = presentation::branches::render_branch_list(model, theme, remote_op_label, spinner_frame, remote_op_success);
-                    render_list(frame, rect, block, items, selected, is_active, theme);
+                    render_list_ctx(frame, rect, block, items, selected, is_active, theme, ctx_mgr, ctx_id);
                 }
             }
             ContextId::Remotes => {
@@ -343,10 +343,10 @@ pub fn render(
                         .borders(Borders::ALL)
                         .border_style(border_style);
                     let items = presentation::remote_branches::render_remote_branch_list(&model.sub_remote_branches, theme);
-                    render_list(frame, rect, rb_block, items, rb_selected, is_active, theme);
+                    render_list_ctx(frame, rect, rb_block, items, rb_selected, is_active, theme, ctx_mgr, ContextId::RemoteBranches);
                 } else {
                     let items = presentation::remotes::render_remote_list(model, theme);
-                    render_list(frame, rect, block, items, selected, is_active, theme);
+                    render_list_ctx(frame, rect, block, items, selected, is_active, theme, ctx_mgr, ctx_id);
                 }
             }
             ContextId::Tags => {
@@ -370,11 +370,11 @@ pub fn render(
                             commit_file_tree_nodes,
                             commit_files_collapsed_dirs,
                         );
-                        render_list(frame, rect, cf_block, items, cf_selected, is_active, theme);
+                        render_list_ctx(frame, rect, cf_block, items, cf_selected, is_active, theme, ctx_mgr, ContextId::BranchCommitFiles);
                     } else {
                         let items =
                             presentation::commit_files::render_commit_file_list(model, theme);
-                        render_list(frame, rect, cf_block, items, cf_selected, is_active, theme);
+                        render_list_ctx(frame, rect, cf_block, items, cf_selected, is_active, theme, ctx_mgr, ContextId::BranchCommitFiles);
                     }
                 } else if ctx_mgr.active() == ContextId::BranchCommits {
                     let bc_selected = ctx_mgr.selected(ContextId::BranchCommits);
@@ -384,10 +384,10 @@ pub fn render(
                         .borders(Borders::ALL)
                         .border_style(border_style);
                     let items = presentation::commits::render_sub_commit_list(model, theme);
-                    render_list(frame, rect, bc_block, items, bc_selected, is_active, theme);
+                    render_list_ctx(frame, rect, bc_block, items, bc_selected, is_active, theme, ctx_mgr, ContextId::BranchCommits);
                 } else {
                     let items = presentation::tags::render_tag_list(model, theme);
-                    render_list(frame, rect, block, items, selected, is_active, theme);
+                    render_list_ctx(frame, rect, block, items, selected, is_active, theme, ctx_mgr, ctx_id);
                 }
             }
             ContextId::Commits => {
@@ -411,16 +411,16 @@ pub fn render(
                             commit_file_tree_nodes,
                             commit_files_collapsed_dirs,
                         );
-                        render_list(frame, rect, cf_block, items, cf_selected, is_active, theme);
+                        render_list_ctx(frame, rect, cf_block, items, cf_selected, is_active, theme, ctx_mgr, ContextId::CommitFiles);
                     } else {
                         let items =
                             presentation::commit_files::render_commit_file_list(model, theme);
-                        render_list(frame, rect, cf_block, items, cf_selected, is_active, theme);
+                        render_list_ctx(frame, rect, cf_block, items, cf_selected, is_active, theme, ctx_mgr, ContextId::CommitFiles);
                     }
                 } else {
                     let items = presentation::commits::render_commit_list(model, theme, cherry_pick_clipboard);
                     let range = if is_active { range_select_anchor.map(|a| (a.min(selected), a.max(selected))) } else { None };
-                    render_list_with_range(frame, rect, block, items, selected, is_active, theme, range);
+                    render_list_with_range_ctx(frame, rect, block, items, selected, is_active, theme, range, ctx_mgr, ctx_id);
                 }
             }
             ContextId::Reflog => {
@@ -444,15 +444,15 @@ pub fn render(
                             commit_file_tree_nodes,
                             commit_files_collapsed_dirs,
                         );
-                        render_list(frame, rect, cf_block, items, cf_selected, is_active, theme);
+                        render_list_ctx(frame, rect, cf_block, items, cf_selected, is_active, theme, ctx_mgr, ContextId::CommitFiles);
                     } else {
                         let items =
                             presentation::commit_files::render_commit_file_list(model, theme);
-                        render_list(frame, rect, cf_block, items, cf_selected, is_active, theme);
+                        render_list_ctx(frame, rect, cf_block, items, cf_selected, is_active, theme, ctx_mgr, ContextId::CommitFiles);
                     }
                 } else {
                     let items = presentation::reflog::render_reflog_list(model, theme);
-                    render_list(frame, rect, block, items, selected, is_active, theme);
+                    render_list_ctx(frame, rect, block, items, selected, is_active, theme, ctx_mgr, ctx_id);
                 }
             }
             ContextId::Stash => {
@@ -476,15 +476,15 @@ pub fn render(
                             commit_file_tree_nodes,
                             commit_files_collapsed_dirs,
                         );
-                        render_list(frame, rect, sf_block, items, sf_selected, is_active, theme);
+                        render_list_ctx(frame, rect, sf_block, items, sf_selected, is_active, theme, ctx_mgr, ContextId::StashFiles);
                     } else {
                         let items =
                             presentation::commit_files::render_commit_file_list(model, theme);
-                        render_list(frame, rect, sf_block, items, sf_selected, is_active, theme);
+                        render_list_ctx(frame, rect, sf_block, items, sf_selected, is_active, theme, ctx_mgr, ContextId::StashFiles);
                     }
                 } else {
                     let items = presentation::stash::render_stash_list(model, theme);
-                    render_list(frame, rect, block, items, selected, is_active, theme);
+                    render_list_ctx(frame, rect, block, items, selected, is_active, theme, ctx_mgr, ctx_id);
                 }
             }
             _ => {
@@ -1009,7 +1009,8 @@ fn render_worktree_list<'a>(model: &Model, theme: &Theme) -> Vec<ListItem<'a>> {
         .collect()
 }
 
-fn render_list(
+/// Render a list using persistent scroll offsets from ContextManager.
+fn render_list_ctx(
     frame: &mut Frame,
     rect: Rect,
     block: Block<'_>,
@@ -1017,11 +1018,14 @@ fn render_list(
     selected: usize,
     is_active: bool,
     theme: &crate::config::Theme,
+    ctx_mgr: &mut ContextManager,
+    ctx: ContextId,
 ) {
-    render_list_with_range(frame, rect, block, items, selected, is_active, theme, None);
+    render_list_with_range_ctx(frame, rect, block, items, selected, is_active, theme, None, ctx_mgr, ctx);
 }
 
-fn render_list_with_range(
+/// Render a list with range selection using persistent scroll offsets from ContextManager.
+fn render_list_with_range_ctx(
     frame: &mut Frame,
     rect: Rect,
     block: Block<'_>,
@@ -1030,6 +1034,24 @@ fn render_list_with_range(
     is_active: bool,
     theme: &crate::config::Theme,
     range: Option<(usize, usize)>,
+    ctx_mgr: &mut ContextManager,
+    ctx: ContextId,
+) {
+    let mut so = ctx_mgr.scroll_offset(ctx);
+    render_list_with_range_raw(frame, rect, block, items, selected, is_active, theme, range, &mut so);
+    ctx_mgr.set_scroll_offset(ctx, so);
+}
+
+fn render_list_with_range_raw(
+    frame: &mut Frame,
+    rect: Rect,
+    block: Block<'_>,
+    items: Vec<ListItem<'_>>,
+    selected: usize,
+    is_active: bool,
+    theme: &crate::config::Theme,
+    range: Option<(usize, usize)>,
+    scroll_offset: &mut usize,
 ) {
     if items.is_empty() {
         frame.render_widget(block, rect);
@@ -1039,15 +1061,27 @@ fn render_list_with_range(
     let inner = block.inner(rect);
     let visible_height = inner.height as usize;
 
-    let offset = if selected >= visible_height {
-        selected - visible_height + 1
-    } else {
-        0
-    };
+    // Ensure selected item is visible, only adjusting scroll when necessary
+    if visible_height == 0 {
+        frame.render_widget(block, rect);
+        return;
+    }
+    if selected < *scroll_offset {
+        *scroll_offset = selected;
+    } else if selected >= *scroll_offset + visible_height {
+        *scroll_offset = selected + 1 - visible_height;
+    }
+    // Clamp scroll offset to valid range
+    let max_offset = items.len().saturating_sub(visible_height);
+    if *scroll_offset > max_offset {
+        *scroll_offset = max_offset;
+    }
+    let offset = *scroll_offset;
 
     let visible_items: Vec<ListItem> = items
         .into_iter()
         .skip(offset)
+        .take(visible_height)
         .enumerate()
         .map(|(i, item)| {
             let idx = i + offset;

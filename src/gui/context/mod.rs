@@ -261,6 +261,22 @@ impl ContextManager {
         self.scroll_offsets.insert(ctx, offset);
     }
 
+    /// Adjust the scroll offset for a context so that `selected` is visible
+    /// within a viewport of `visible_height` rows.  Only scrolls when the
+    /// cursor would otherwise be outside the visible window.
+    pub fn ensure_scroll_visible(&mut self, ctx: ContextId, visible_height: usize) {
+        if visible_height == 0 {
+            return;
+        }
+        let selected = self.selected(ctx);
+        let offset = self.scroll_offset(ctx);
+        if selected < offset {
+            self.set_scroll_offset(ctx, selected);
+        } else if selected >= offset + visible_height {
+            self.set_scroll_offset(ctx, selected + 1 - visible_height);
+        }
+    }
+
     pub fn move_selection(&mut self, delta: isize, model: &Model) {
         let len = self.list_len(model);
         if len == 0 {
