@@ -819,7 +819,11 @@ fn render_status_sidebar<'a>(model: &Model, _config: &AppConfig, inner_width: us
         let left_len = 1 + prefix.len() + 1 + repo_name.len() + 1
             + UnicodeWidthStr::width("→ ") + right_side.len();
         let right_len = if has_changes { stats_text.len() + 1 } else { 0 };
-        let padding = inner_width.saturating_sub(left_len + right_len);
+        let padding = if has_changes {
+            inner_width.saturating_sub(left_len + right_len).max(1)
+        } else {
+            inner_width.saturating_sub(left_len + right_len)
+        };
 
         spans.push(Span::raw(" "));
         spans.push(Span::styled(
@@ -870,7 +874,11 @@ fn render_status_sidebar<'a>(model: &Model, _config: &AppConfig, inner_width: us
         + UnicodeWidthStr::width("→ ")
         + branch_name.len();
     let right_len = if has_changes { stats_text.len() + 1 } else { 0 };
-    let padding = inner_width.saturating_sub(left_len + right_len);
+    let padding = if has_changes {
+        inner_width.saturating_sub(left_len + right_len).max(1)
+    } else {
+        inner_width.saturating_sub(left_len + right_len)
+    };
 
     if !ab_text.is_empty() {
         spans.push(Span::styled(
