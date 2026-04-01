@@ -51,6 +51,30 @@ lazygitrs
   - [ ] `git reset` and then asks, what branch/commit, has quick search.
   - [x] `git diff/compare` and then asks what branch/commit A and B, has quick search.
   - [x] `git rebase` and then asks rebase on top of what branch/commit.
+  - [x] 🎨 Themes + Theme-Picker!
+
+### Themes
+
+lazygitrs ships with 30+ built-in color themes (Catppuccin, Dracula, Tokyo Night, Gruvbox, Nord, etc.) sourced from [OpenCode](https://opencode.ai)'s TUI theme collection.
+
+**Unlike original lazygit, you can switch themes without touching any config file** — just press `?` > **Color Themes** > Enter. Your choice is saved automatically.
+
+**Custom themes:** Drop a `.json` file into `~/.config/lazygit/themes/` and it appears in the picker. Start by copying an existing theme from `src/generated_themes/` and tweaking the colors. The format is a flat JSON with all fields optional (unset values are derived from semantic base colors like `primary`, `success`, `error`):
+
+```json
+{
+  "id": "my-theme",
+  "name": "My Custom Theme",
+  "primary": "#ff6600",
+  "success": "#00ff88",
+  "error": "#ff3333",
+  "warning": "#ffcc00",
+  "text_strong": "#ffffff",
+  "background": "#1a1a2e"
+}
+```
+
+To refresh the built-in generated themes from OpenCode upstream: `bun run scripts/gen-themes.ts`
 
 <!-- GEN_BENCHMARKS_START -->
 

@@ -32,7 +32,32 @@ use self::popup::{HelpEntry, HelpSection};
 use self::modes::diff_mode::DiffModeState;
 use self::modes::patch_building::PatchBuildingState;
 use self::modes::rebase_mode::RebaseModeState;
-use self::popup::{MessageKind, PopupState};
+use self::popup::{ListPickerItem, MessageKind, PopupState};
+
+/// Compute the display row index for a given item selection,
+/// accounting for category header rows inserted between groups.
+fn list_picker_display_idx(items: &[ListPickerItem], sel: usize) -> usize {
+    let mut di = 0usize;
+    let mut last_cat = String::new();
+    for (ei, item) in items.iter().enumerate() {
+        if !item.category.is_empty() && item.category != last_cat {
+            di += 1; // header row
+            last_cat = item.category.clone();
+        }
+        if ei == sel {
+            return di;
+        }
+        di += 1;
+    }
+    di
+}
+
+/// Compute the visible list height for a list picker popup, given terminal height.
+/// Must match the rendering formula: popup 60% height, minus borders (2), search bar + sep + hint (3).
+fn list_picker_visible_height(terminal_height: usize) -> usize {
+    let popup_h = (terminal_height * 60 / 100).max(10).min(terminal_height.saturating_sub(4));
+    popup_h.saturating_sub(2).saturating_sub(3)
+}
 
 pub type Term = Terminal<CrosstermBackend<Stdout>>;
 
@@ -156,6 +181,8 @@ pub struct Gui {
     pub commit_history_idx: Option<usize>,
     /// Stashed current draft when cycling through history.
     commit_history_draft: String,
+    /// Current color theme index into COLOR_THEMES.
+    pub current_theme_index: usize,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -195,6 +222,18 @@ impl Gui {
         git.load_model_streaming(&initial_load_tx);
 
         let commit_history = Self::load_commit_history(&config);
+
+        // Resolve saved color theme
+        let current_theme_index = config
+            .app_state
+            .color_theme
+            .as_deref()
+            .and_then(|id| {
+                crate::config::COLOR_THEMES
+                    .iter()
+                    .position(|t| t.id == id)
+            })
+            .unwrap_or(0);
 
         Ok(Self {
             config: Arc::new(config),
@@ -258,7 +297,16 @@ impl Gui {
             commit_message_history: commit_history,
             commit_history_idx: None,
             commit_history_draft: String::new(),
+            current_theme_index,
         })
+    }
+
+    /// Get the currently active theme.
+    pub fn active_theme(&self) -> crate::config::Theme {
+        crate::config::COLOR_THEMES
+            .get(self.current_theme_index)
+            .map(|ct| ct.to_theme())
+            .unwrap_or_default()
     }
 
     pub fn run(&mut self) -> Result<()> {
@@ -342,9 +390,9 @@ impl Gui {
             self.spinner_frame = self.spinner_frame.wrapping_add(1);
 
             // Render
+            let theme = self.active_theme();
             terminal.draw(|frame| {
                 if self.rebase_mode.active {
-                    let theme = self.config.user_config.theme();
                     presentation::rebase_mode::render(
                         frame,
                         &self.rebase_mode,
@@ -352,10 +400,9 @@ impl Gui {
                     );
                     // Render popup overlay on top of rebase mode
                     if self.popup != PopupState::None {
-                        views::render_popup(frame, &self.popup, frame.area(), self.spinner_frame);
+                        views::render_popup(frame, &self.popup, frame.area(), self.spinner_frame, &theme);
                     }
                 } else if self.diff_mode.active {
-                    let theme = self.config.user_config.theme();
                     presentation::diff_mode::render(
                         frame,
                         &self.diff_mode,
@@ -364,7 +411,7 @@ impl Gui {
                     );
                     // Render popup overlay on top of diff mode (for ? help, errors, etc.)
                     if self.popup != PopupState::None {
-                        views::render_popup(frame, &self.popup, frame.area(), self.spinner_frame);
+                        views::render_popup(frame, &self.popup, frame.area(), self.spinner_frame, &theme);
                     }
                 } else {
                     let model = self.model.lock().unwrap();
@@ -385,6 +432,7 @@ impl Gui {
                         &self.layout,
                         &self.popup,
                         &self.config,
+                        &theme,
                         &mut self.diff_view,
                         self.screen_mode,
                         self.show_file_tree,
@@ -2037,17 +2085,20 @@ impl Gui {
             }
             PopupState::Help { .. } => {}
             PopupState::RefPicker { .. } => {}
+            PopupState::ThemePicker { .. } => {}
             PopupState::None => {}
         }
 
-        // Help popup is handled separately to avoid borrow conflicts
+        // These are handled separately to avoid borrow conflicts.
+        // Use else-if so that a handler that transitions to another popup
+        // (e.g. Help → ThemePicker on Enter) does not also fire the new
+        // popup's handler with the same key event.
         if matches!(self.popup, PopupState::Help { .. }) {
             self.handle_help_popup_key(key);
-        }
-
-        // RefPicker popup is handled separately to avoid borrow conflicts
-        if matches!(self.popup, PopupState::RefPicker { .. }) {
+        } else if matches!(self.popup, PopupState::RefPicker { .. }) {
             self.handle_ref_picker_key(key)?;
+        } else if matches!(self.popup, PopupState::ThemePicker { .. }) {
+            self.handle_theme_picker_key(key);
         }
 
         Ok(())
@@ -2095,6 +2146,8 @@ impl Gui {
             }).sum()
         }
 
+        let mut open_theme_picker = false;
+
         if let PopupState::Help { sections, selected, search_textarea, scroll_offset } = &mut self.popup {
             use crossterm::event::KeyModifiers;
             let search = search_textarea.lines().join("");
@@ -2109,7 +2162,30 @@ impl Gui {
                     self.popup = PopupState::None;
                     return;
                 }
-                KeyCode::Down | KeyCode::Char('j') if key.modifiers.is_empty() => {
+                KeyCode::Enter => {
+                    // Check if the selected entry is "Color theme..."
+                    let has_search = !search_lower.is_empty();
+                    let mut ei = 0usize;
+                    let mut found_desc = String::new();
+                    'outer: for section in sections.iter() {
+                        for entry in &section.entries {
+                            let vis = !has_search
+                                || entry.key.to_lowercase().contains(&search_lower)
+                                || entry.description.to_lowercase().contains(&search_lower);
+                            if vis {
+                                if ei == *selected {
+                                    found_desc = entry.description.clone();
+                                    break 'outer;
+                                }
+                                ei += 1;
+                            }
+                        }
+                    }
+                    if found_desc == "Color theme..." {
+                        open_theme_picker = true;
+                    }
+                }
+                KeyCode::Down => {
                     let total = count_visible(sections, &search_lower);
                     if total > 0 {
                         *selected = (*selected + 1).min(total.saturating_sub(1));
@@ -2119,7 +2195,7 @@ impl Gui {
                         *scroll_offset = sdi.saturating_sub(list_height - 1);
                     }
                 }
-                KeyCode::Up | KeyCode::Char('k') if key.modifiers.is_empty() => {
+                KeyCode::Up => {
                     *selected = selected.saturating_sub(1);
                     if *selected == 0 {
                         // First item: always scroll to top so the section header is visible
@@ -2142,40 +2218,22 @@ impl Gui {
                 }
             }
         }
+
+        if open_theme_picker {
+            self.popup = PopupState::None;
+            self.show_theme_picker();
+        }
     }
 
     fn handle_ref_picker_key(&mut self, key: KeyEvent) -> Result<()> {
-        use crate::gui::popup::RefPickerItem;
+        use crate::gui::popup::ListPickerItem;
 
-        /// Compute the display row index for a given entry selection,
-        /// accounting for category header rows.
-        fn find_display_idx(items: &[RefPickerItem], sel: usize) -> usize {
-            let mut di = 0usize;
-            let mut last_cat = String::new();
-            for (ei, item) in items.iter().enumerate() {
-                if item.category != last_cat {
-                    di += 1; // header row
-                    last_cat = item.category.clone();
-                }
-                if ei == sel {
-                    return di;
-                }
-                di += 1;
-            }
-            di
-        }
+        if let PopupState::RefPicker { core, .. } = &mut self.popup {
+            let search = core.search_textarea.lines().join("");
+            let total = core.items.len();
 
-        if let PopupState::RefPicker { items, selected, search_textarea, scroll_offset, .. } = &mut self.popup {
-            let search = search_textarea.lines().join("");
-            let total = items.len();
-
-            // Must match the rendering formula exactly:
-            // popup_height = (height * 60 / 100).max(10).min(height - 4)
-            // inner.height = popup_height - 2 (borders)
-            // list_height = inner.height - 3 (search + sep + hint)
             let h = self.layout.height as usize;
-            let popup_h = (h * 60 / 100).max(10).min(h.saturating_sub(4));
-            let list_height = popup_h.saturating_sub(2).saturating_sub(3);
+            let list_height = list_picker_visible_height(h);
 
             match key.code {
                 KeyCode::Esc => {
@@ -2183,9 +2241,7 @@ impl Gui {
                     return Ok(());
                 }
                 KeyCode::Enter => {
-                    // Use selected item if available, otherwise use the raw
-                    // search text as a ref expression (e.g. HEAD~1, abc123~2).
-                    let value = if let Some(item) = items.get(*selected) {
+                    let value = if let Some(item) = core.items.get(core.selected) {
                         item.value.clone()
                     } else if !search.trim().is_empty() {
                         search.trim().to_string()
@@ -2206,61 +2262,54 @@ impl Gui {
                 }
                 KeyCode::Down => {
                     if total > 0 {
-                        *selected = (*selected + 1).min(total.saturating_sub(1));
+                        core.selected = (core.selected + 1).min(total.saturating_sub(1));
                     }
-                    let sdi = find_display_idx(items, *selected);
-                    if sdi >= *scroll_offset + list_height {
-                        *scroll_offset = sdi.saturating_sub(list_height - 1);
+                    let sdi = list_picker_display_idx(&core.items, core.selected);
+                    if sdi >= core.scroll_offset + list_height {
+                        core.scroll_offset = sdi.saturating_sub(list_height - 1);
                     }
                 }
                 KeyCode::Up => {
-                    *selected = selected.saturating_sub(1);
-                    if *selected == 0 {
-                        *scroll_offset = 0;
+                    core.selected = core.selected.saturating_sub(1);
+                    if core.selected == 0 {
+                        core.scroll_offset = 0;
                     } else {
-                        let sdi = find_display_idx(items, *selected);
-                        if sdi <= *scroll_offset {
-                            *scroll_offset = sdi.saturating_sub(1);
+                        let sdi = list_picker_display_idx(&core.items, core.selected);
+                        if sdi <= core.scroll_offset {
+                            core.scroll_offset = sdi.saturating_sub(1);
                         }
                     }
                 }
                 _ => {
-                    search_textarea.input(key);
-                    let new_search = search_textarea.lines().join("");
+                    core.search_textarea.input(key);
+                    let new_search = core.search_textarea.lines().join("");
                     if new_search != search {
                         // Remove any previous raw-ref item at index 0
-                        if !items.is_empty() && items[0].category == "[ref]" {
-                            items.remove(0);
+                        if !core.items.is_empty() && core.items[0].category == "[ref]" {
+                            core.items.remove(0);
                         }
 
                         let new_lower = new_search.to_lowercase();
                         if !new_lower.is_empty() {
-                            // Insert a raw-ref item at index 0 so the user
-                            // can always select exactly what they typed
-                            // (e.g. HEAD~4, abc123~1).
-                            items.insert(0, RefPickerItem {
+                            core.items.insert(0, ListPickerItem {
                                 value: new_search.trim().to_string(),
                                 label: new_search.trim().to_string(),
                                 category: "[ref]".to_string(),
                             });
 
-                            // Jump cursor to best match among real candidates
-                            // (skip the raw ref at index 0)
-                            if let Some(idx) = items.iter().skip(1).position(|i| {
+                            if let Some(idx) = core.items.iter().skip(1).position(|i| {
                                 i.label.to_lowercase().contains(&new_lower)
                                     || i.value.to_lowercase().contains(&new_lower)
                             }) {
-                                *selected = idx + 1; // +1 to skip raw ref
+                                core.selected = idx + 1;
                             } else {
-                                // No match — stay on the raw ref option
-                                *selected = 0;
+                                core.selected = 0;
                             }
-                            let sdi = find_display_idx(items, *selected);
-                            // Center the match in the viewport
-                            *scroll_offset = sdi.saturating_sub(list_height / 2);
+                            let sdi = list_picker_display_idx(&core.items, core.selected);
+                            core.scroll_offset = sdi.saturating_sub(list_height / 2);
                         } else {
-                            *selected = 0;
-                            *scroll_offset = 0;
+                            core.selected = 0;
+                            core.scroll_offset = 0;
                         }
                     }
                 }
@@ -2269,29 +2318,126 @@ impl Gui {
         Ok(())
     }
 
+    fn handle_theme_picker_key(&mut self, key: KeyEvent) {
+        if let PopupState::ThemePicker { core, original_theme_index } = &mut self.popup {
+            let total = core.items.len();
+            let search = core.search_textarea.lines().join("");
+
+            let h = self.layout.height as usize;
+            let list_height = list_picker_visible_height(h);
+
+            match key.code {
+                KeyCode::Esc => {
+                    self.current_theme_index = *original_theme_index;
+                    self.popup = PopupState::None;
+                    return;
+                }
+                KeyCode::Enter => {
+                    let idx = core.selected;
+                    self.popup = PopupState::None;
+                    self.current_theme_index = idx;
+                    if let Some(ct) = crate::config::COLOR_THEMES.get(idx) {
+                        let mut state = self.config.app_state.clone();
+                        state.color_theme = Some(ct.id.to_string());
+                        let _ = state.save(&self.config.state_path);
+                    }
+                    return;
+                }
+                KeyCode::Down => {
+                    if total > 0 {
+                        core.selected = (core.selected + 1) % total;
+                    }
+                    self.current_theme_index = core.selected;
+                    if core.selected >= core.scroll_offset + list_height {
+                        core.scroll_offset = core.selected.saturating_sub(list_height - 1);
+                    }
+                    if core.selected == 0 {
+                        core.scroll_offset = 0;
+                    }
+                }
+                KeyCode::Up => {
+                    if total > 0 {
+                        core.selected = if core.selected == 0 { total - 1 } else { core.selected - 1 };
+                    }
+                    self.current_theme_index = core.selected;
+                    if core.selected < core.scroll_offset {
+                        core.scroll_offset = core.selected;
+                    }
+                    if core.selected == total - 1 {
+                        core.scroll_offset = total.saturating_sub(list_height);
+                    }
+                }
+                _ => {
+                    // Search/filter — jump to matching theme
+                    core.search_textarea.input(key);
+                    let new_search = core.search_textarea.lines().join("");
+                    if new_search != search {
+                        let new_lower = new_search.to_lowercase();
+                        if !new_lower.is_empty() {
+                            if let Some(idx) = core.items.iter().position(|i| {
+                                i.label.to_lowercase().contains(&new_lower)
+                            }) {
+                                core.selected = idx;
+                                self.current_theme_index = idx;
+                                // Center the match in the viewport
+                                core.scroll_offset = idx.saturating_sub(list_height / 2);
+                            }
+                        } else {
+                            core.selected = *original_theme_index;
+                            self.current_theme_index = *original_theme_index;
+                            core.scroll_offset = original_theme_index.saturating_sub(list_height / 2);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    fn show_theme_picker(&mut self) {
+        use crate::gui::popup::{ListPickerItem, ListPickerCore, make_help_search_textarea};
+
+        let original = self.current_theme_index;
+        let items: Vec<ListPickerItem> = crate::config::COLOR_THEMES
+            .iter()
+            .map(|ct| ListPickerItem {
+                value: ct.id.to_string(),
+                label: ct.name.to_string(),
+                category: String::new(),
+            })
+            .collect();
+
+        self.popup = PopupState::ThemePicker {
+            core: ListPickerCore {
+                items,
+                selected: original,
+                search_textarea: make_help_search_textarea(),
+                scroll_offset: 0,
+            },
+            original_theme_index: original,
+        };
+    }
+
     pub fn show_interactive_rebase_picker(&mut self) {
-        use crate::gui::popup::{RefPickerItem, make_help_search_textarea};
+        use crate::gui::popup::{ListPickerItem, ListPickerCore, make_help_search_textarea};
 
         let model = self.model.lock().unwrap();
         let mut items = Vec::new();
 
-        // Add branches (skip current branch)
         for branch in &model.branches {
             if branch.head {
                 continue;
             }
-            items.push(RefPickerItem {
+            items.push(ListPickerItem {
                 value: branch.name.clone(),
                 label: branch.name.clone(),
                 category: "Branches".to_string(),
             });
         }
 
-        // Add remote branches
         for remote in &model.remotes {
             for branch in &remote.branches {
                 let full_name = format!("{}/{}", remote.name, branch.name);
-                items.push(RefPickerItem {
+                items.push(ListPickerItem {
                     value: full_name.clone(),
                     label: full_name,
                     category: "Remote Branches".to_string(),
@@ -2299,18 +2445,16 @@ impl Gui {
             }
         }
 
-        // Add tags
         for tag in &model.tags {
-            items.push(RefPickerItem {
+            items.push(ListPickerItem {
                 value: tag.name.clone(),
                 label: tag.name.clone(),
                 category: "Tags".to_string(),
             });
         }
 
-        // Add commits (skip HEAD)
         for commit in model.commits.iter().skip(1) {
-            items.push(RefPickerItem {
+            items.push(ListPickerItem {
                 value: commit.hash.clone(),
                 label: format!("{} {}", commit.short_hash(), commit.name),
                 category: "Commits".to_string(),
@@ -2321,10 +2465,12 @@ impl Gui {
 
         self.popup = PopupState::RefPicker {
             title: "Interactive rebase current branch onto".to_string(),
-            items,
-            selected: 0,
-            search_textarea: make_help_search_textarea(),
-            scroll_offset: 0,
+            core: ListPickerCore {
+                items,
+                selected: 0,
+                search_textarea: make_help_search_textarea(),
+                scroll_offset: 0,
+            },
             on_confirm: Box::new(|gui, ref_name| {
                 controller::branches::enter_interactive_rebase_onto(gui, ref_name)
             }),
@@ -2373,6 +2519,7 @@ impl Gui {
                 HelpEntry { key: "I".into(), description: "Interactive rebase onto...".into() },
                 HelpEntry { key: "1-5".into(), description: "Jump to panel".into() },
                 HelpEntry { key: "?".into(), description: "Show this help".into() },
+                HelpEntry { key: "▸".into(), description: "Color theme...".into() },
             ],
         };
 
@@ -2585,6 +2732,7 @@ impl Gui {
                 HelpEntry { key: "1-5".into(), description: "Jump to sidebar panel".into() },
                 HelpEntry { key: "esc".into(), description: "Return to sidebar".into() },
                 HelpEntry { key: "?".into(), description: "Show this help".into() },
+                HelpEntry { key: "▸".into(), description: "Color theme...".into() },
             ],
         };
 
@@ -3154,36 +3302,47 @@ impl Gui {
         }
 
         // RefPicker popup intercepts mouse scroll — move selection like ↑/↓
-        if let PopupState::RefPicker { items, selected, scroll_offset, search_textarea, .. } = &mut self.popup {
-            let total = items.len();
+        if let PopupState::RefPicker { core, .. } = &mut self.popup {
+            let total = core.items.len();
+            let h = self.layout.height as usize;
+            let lh = list_picker_visible_height(h);
             match mouse.kind {
                 MouseEventKind::ScrollUp => {
-                    *selected = selected.saturating_sub(3);
-                    if *selected < *scroll_offset {
-                        *scroll_offset = *selected;
+                    core.selected = core.selected.saturating_sub(3);
+                    if core.selected < core.scroll_offset {
+                        core.scroll_offset = core.selected;
                     }
                 }
                 MouseEventKind::ScrollDown => {
-                    *selected = (*selected + 3).min(total.saturating_sub(1));
-                    // Compute display idx to keep scroll in sync
-                    let mut di = 0usize;
-                    let mut ei = 0usize;
-                    let mut last_cat = String::new();
-                    for item in items.iter() {
-                        if item.category != last_cat {
-                            di += 1;
-                            last_cat = item.category.clone();
-                        }
-                        if ei == *selected { break; }
-                        ei += 1;
-                        di += 1;
+                    core.selected = (core.selected + 3).min(total.saturating_sub(1));
+                    let di = list_picker_display_idx(&core.items, core.selected);
+                    if di >= core.scroll_offset + lh {
+                        core.scroll_offset = di.saturating_sub(lh - 1);
                     }
-                    let _ = search_textarea;
-                    let h = self.layout.height as usize;
-                    let popup_h = (h * 60 / 100).max(10).min(h.saturating_sub(4));
-                    let list_height = popup_h.saturating_sub(2).saturating_sub(3);
-                    if di >= *scroll_offset + list_height {
-                        *scroll_offset = di.saturating_sub(list_height - 1);
+                }
+                _ => {}
+            }
+            return;
+        }
+
+        // ThemePicker popup intercepts mouse scroll
+        if let PopupState::ThemePicker { core, .. } = &mut self.popup {
+            let total = core.items.len();
+            let h = self.layout.height as usize;
+            let lh = list_picker_visible_height(h);
+            match mouse.kind {
+                MouseEventKind::ScrollUp => {
+                    core.selected = core.selected.saturating_sub(1);
+                    self.current_theme_index = core.selected;
+                    if core.selected < core.scroll_offset {
+                        core.scroll_offset = core.selected;
+                    }
+                }
+                MouseEventKind::ScrollDown => {
+                    core.selected = (core.selected + 1).min(total.saturating_sub(1));
+                    self.current_theme_index = core.selected;
+                    if core.selected >= core.scroll_offset + lh {
+                        core.scroll_offset = core.selected.saturating_sub(lh - 1);
                     }
                 }
                 _ => {}
@@ -3326,34 +3485,22 @@ impl Gui {
         }
 
         // RefPicker popup intercepts mouse scroll — move selection like ↑/↓
-        if let PopupState::RefPicker { items, selected, scroll_offset, .. } = &mut self.popup {
-            let total = items.len();
+        if let PopupState::RefPicker { core, .. } = &mut self.popup {
+            let total = core.items.len();
+            let h = self.layout.height as usize;
+            let lh = list_picker_visible_height(h);
             match mouse.kind {
                 MouseEventKind::ScrollUp => {
-                    *selected = selected.saturating_sub(3);
-                    if *selected < *scroll_offset {
-                        *scroll_offset = *selected;
+                    core.selected = core.selected.saturating_sub(3);
+                    if core.selected < core.scroll_offset {
+                        core.scroll_offset = core.selected;
                     }
                 }
                 MouseEventKind::ScrollDown => {
-                    *selected = (*selected + 3).min(total.saturating_sub(1));
-                    let mut di = 0usize;
-                    let mut ei = 0usize;
-                    let mut last_cat = String::new();
-                    for item in items.iter() {
-                        if item.category != last_cat {
-                            di += 1;
-                            last_cat = item.category.clone();
-                        }
-                        if ei == *selected { break; }
-                        ei += 1;
-                        di += 1;
-                    }
-                    let h = self.layout.height as usize;
-                    let popup_h = (h * 60 / 100).max(10).min(h.saturating_sub(4));
-                    let list_height = popup_h.saturating_sub(2).saturating_sub(3);
-                    if di >= *scroll_offset + list_height {
-                        *scroll_offset = di.saturating_sub(list_height - 1);
+                    core.selected = (core.selected + 3).min(total.saturating_sub(1));
+                    let di = list_picker_display_idx(&core.items, core.selected);
+                    if di >= core.scroll_offset + lh {
+                        core.scroll_offset = di.saturating_sub(lh - 1);
                     }
                 }
                 _ => {}
