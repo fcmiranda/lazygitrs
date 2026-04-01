@@ -483,6 +483,61 @@ fn stash_changes(gui: &mut Gui) -> Result<()> {
 }
 
 fn discard_file(gui: &mut Gui) -> Result<()> {
+    // If in tree view and a directory is selected, discard all child files
+    if gui.show_file_tree {
+        let selected = gui.context_mgr.selected_active();
+        if let Some(node) = gui.file_tree_nodes.get(selected) {
+            if node.is_dir {
+                let child_indices = node.child_file_indices.clone();
+                let model = gui.model.lock().unwrap();
+                let files_info: Vec<(String, bool)> = child_indices
+                    .iter()
+                    .filter_map(|&i| model.files.get(i).map(|f| (f.name.clone(), f.added)))
+                    .collect();
+                let dir_name = node.name.clone();
+                drop(model);
+
+                if files_info.is_empty() {
+                    return Ok(());
+                }
+
+                if !gui.config.user_config.gui.skip_discard_change_warning {
+                    let files_info_clone = files_info.clone();
+                    gui.popup = PopupState::Menu {
+                        title: format!("Discard all changes in '{}'?", dir_name),
+                        items: vec![
+                            MenuItem {
+                                label: "Discard".to_string(),
+                                description: "discard all changes".to_string(),
+                                key: Some("d".to_string()),
+                                action: Some(Box::new(move |gui| {
+                                    for (name, added) in &files_info_clone {
+                                        gui.git.discard_file(name, *added)?;
+                                    }
+                                    gui.needs_refresh = true;
+                                    Ok(())
+                                })),
+                            },
+                            MenuItem {
+                                label: "Cancel".to_string(),
+                                description: String::new(),
+                                key: Some("c".to_string()),
+                                action: Some(Box::new(|_| Ok(()))),
+                            },
+                        ],
+                        selected: 0,
+                    };
+                } else {
+                    for (name, added) in &files_info {
+                        gui.git.discard_file(name, *added)?;
+                    }
+                    gui.needs_refresh = true;
+                }
+                return Ok(());
+            }
+        }
+    }
+
     let Some(file_idx) = gui.selected_file_index() else {
         return Ok(());
     };
