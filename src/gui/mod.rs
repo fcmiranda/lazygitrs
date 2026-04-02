@@ -3704,7 +3704,9 @@ impl Gui {
             }
             MouseEventKind::ScrollUp => {
                 self.diff_view.selection = None;
-                let in_diff = self.diff_focused || self.is_in_main_panel(mouse.column, mouse.row);
+                let in_diff = self.diff_focused
+                    || (self.screen_mode != ScreenMode::Full
+                        && self.is_in_main_panel(mouse.column, mouse.row));
                 if mouse.modifiers.contains(KeyModifiers::SHIFT) && in_diff {
                     self.diff_view.scroll_left(4);
                 } else if in_diff {
@@ -3716,7 +3718,9 @@ impl Gui {
             }
             MouseEventKind::ScrollDown => {
                 self.diff_view.selection = None;
-                let in_diff = self.diff_focused || self.is_in_main_panel(mouse.column, mouse.row);
+                let in_diff = self.diff_focused
+                    || (self.screen_mode != ScreenMode::Full
+                        && self.is_in_main_panel(mouse.column, mouse.row));
                 if mouse.modifiers.contains(KeyModifiers::SHIFT) && in_diff {
                     self.diff_view.scroll_right(4);
                 } else if in_diff {
@@ -3727,12 +3731,18 @@ impl Gui {
                 }
             }
             MouseEventKind::ScrollLeft => {
-                if self.diff_focused || self.is_in_main_panel(mouse.column, mouse.row) {
+                if self.diff_focused
+                    || (self.screen_mode != ScreenMode::Full
+                        && self.is_in_main_panel(mouse.column, mouse.row))
+                {
                     self.diff_view.scroll_left(4);
                 }
             }
             MouseEventKind::ScrollRight => {
-                if self.diff_focused || self.is_in_main_panel(mouse.column, mouse.row) {
+                if self.diff_focused
+                    || (self.screen_mode != ScreenMode::Full
+                        && self.is_in_main_panel(mouse.column, mouse.row))
+                {
                     self.diff_view.scroll_right(4);
                 }
             }

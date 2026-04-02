@@ -145,3 +145,4 @@
     - Clicking a list item - just essentially skips cursor to select the item as the new selected/cursor. Shouldn't really imitate 'enter', it just changes the selection. Currently works in '2 Files' tab. i.e. 'Keybindings' (?), Interactive rebase (I), Checkout (c on branches), Color Theme.
     - Scroll down - should have the same behavior as pressing down on any of the cmdk-style components
     - Scroll up - should have the same behavior as pressing up.
+    - [x] In shift- or shift+ (meaning the sizebar is in the only view...), mouse scroll does not work for the list views i.e. Commits, Branches, etc.
