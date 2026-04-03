@@ -43,7 +43,7 @@ pub fn render_commit_file_tree<'a>(
 
                 let line = if is_root {
                     Line::from(Span::styled(
-                        format!("{}", icon.trim_end()),
+                        format!("{} /", icon.trim_end()),
                         Style::default().fg(theme.text_strong),
                     ))
                 } else {

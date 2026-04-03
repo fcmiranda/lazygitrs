@@ -62,16 +62,16 @@ fn list_picker_visible_height(terminal_height: usize) -> usize {
 pub type Term = Terminal<CrosstermBackend<Stdout>>;
 
 /// A completed diff result from the background thread.
-struct DiffResult {
+pub(crate) struct DiffResult {
     /// Generation counter to discard stale results.
-    generation: u64,
+    pub generation: u64,
     /// The diff key this result corresponds to.
-    diff_key: String,
+    pub diff_key: String,
     /// The computed diff data: (filename, old_content, new_content) or None for empty.
-    payload: DiffPayload,
+    pub payload: DiffPayload,
 }
 
-enum DiffPayload {
+pub(crate) enum DiffPayload {
     /// Side-by-side diff from old/new content.
     Content { filename: String, old: String, new: String },
     /// Unified diff output from git.
@@ -114,15 +114,15 @@ pub struct Gui {
     /// Whether a diff is currently being loaded on a background thread.
     pub diff_loading: bool,
     /// When the current diff load started (for delayed "Loading..." display).
-    diff_loading_since: Option<Instant>,
+    pub(crate) diff_loading_since: Option<Instant>,
     /// Track what we last loaded a diff for, to avoid reloading on every frame.
     last_diff_key: String,
     /// Generation counter — incremented on each diff request, used to discard stale results.
-    diff_generation: Arc<AtomicU64>,
+    pub(crate) diff_generation: Arc<AtomicU64>,
     /// Sender for background diff loading.
     diff_rx: mpsc::Receiver<DiffResult>,
     /// Keep sender around so we can clone it for background threads.
-    diff_tx: mpsc::Sender<DiffResult>,
+    pub(crate) diff_tx: mpsc::Sender<DiffResult>,
     /// Receiver for AI commit message generation results.
     ai_commit_rx: mpsc::Receiver<Result<String>>,
     /// Sender cloned into background threads for AI commit generation.
@@ -430,11 +430,16 @@ impl Gui {
                         views::render_popup(frame, &self.popup, frame.area(), self.spinner_frame, &theme);
                     }
                 } else if self.diff_mode.active {
+                    let diff_loading_show = self.diff_loading && self.diff_loading_since
+                        .map(|t| t.elapsed() >= std::time::Duration::from_millis(50))
+                        .unwrap_or(false);
                     presentation::diff_mode::render(
                         frame,
                         &self.diff_mode,
                         &mut self.diff_view,
                         &theme,
+                        self.diff_loading,
+                        diff_loading_show,
                     );
                     // Render popup overlay on top of diff mode (for ? help, errors, etc.)
                     if self.popup != PopupState::None {
@@ -724,9 +729,22 @@ impl Gui {
             if diff_key == self.last_diff_key && !self.needs_diff_refresh {
                 return;
             }
-            self.last_diff_key = diff_key;
+            let selection_changed = diff_key != self.last_diff_key;
+            self.last_diff_key = diff_key.clone();
             self.needs_diff_refresh = false;
-            controller::diff_mode::maybe_request_diff(self);
+
+            // Bump generation to invalidate any in-flight results
+            let generation = self.diff_generation.fetch_add(1, Ordering::Relaxed) + 1;
+
+            // Clear stale diff when selection changes
+            if selection_changed {
+                self.diff_view = DiffViewState::new();
+            }
+
+            self.diff_loading = true;
+            self.diff_loading_since = Some(Instant::now());
+
+            controller::diff_mode::maybe_request_diff(self, generation, diff_key);
             return;
         }
 

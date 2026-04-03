@@ -1,10 +1,13 @@
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
+
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::config::keybindings::parse_key;
-use crate::gui::Gui;
+use crate::gui::{Gui, DiffPayload, DiffResult};
 use crate::gui::modes::diff_mode::{DiffModeFocus, DiffModeSelector};
-use crate::pager::side_by_side::DiffPanelLayout;
+use crate::pager::side_by_side::{DiffPanelLayout, DiffViewState};
 use crate::gui::popup::{HelpEntry, HelpSection, MenuItem, PopupState};
 use crate::model::FileChangeStatus;
 use crate::os::platform::Platform;
@@ -593,10 +596,16 @@ fn update_diff_mode_tree(gui: &mut Gui) {
 }
 
 /// Called from the main loop to request diff loading for the currently selected file in diff mode.
-pub fn maybe_request_diff(gui: &mut Gui) {
+/// Spawns a background thread using the shared diff_tx/diff_generation infrastructure.
+pub fn maybe_request_diff(gui: &mut Gui, generation: u64, diff_key: String) {
     if !gui.diff_mode.has_both_refs() || gui.diff_mode.diff_files.is_empty() {
+        gui.diff_loading = false;
+        gui.diff_loading_since = None;
         return;
     }
+
+    let ref_a = gui.diff_mode.ref_a.clone();
+    let ref_b = gui.diff_mode.ref_b.clone();
 
     // Resolve file index (tree view maps node -> file index)
     let selected = gui.diff_mode.diff_files_selected;
@@ -606,25 +615,84 @@ pub fn maybe_request_diff(gui: &mut Gui) {
         Some(selected)
     };
 
-    let Some(idx) = file_idx else { return };
-    let Some(file) = gui.diff_mode.diff_files.get(idx) else { return };
+    let git = Arc::clone(&gui.git);
+    let tx = gui.diff_tx.clone();
+    let gen_counter = Arc::clone(&gui.diff_generation);
 
-    let name = file.name.clone();
-    let ref_a = gui.diff_mode.ref_a.clone();
-    let ref_b = gui.diff_mode.ref_b.clone();
+    if let Some(idx) = file_idx {
+        // Single file diff
+        let Some(file) = gui.diff_mode.diff_files.get(idx) else {
+            gui.diff_loading = false;
+            gui.diff_loading_since = None;
+            return;
+        };
+        let name = file.name.clone();
 
-    match gui.git.diff_refs_file(&ref_a, &ref_b, &name) {
-        Ok(diff) => {
-            if diff.is_empty() {
-                gui.diff_view = crate::pager::side_by_side::DiffViewState::new();
-            } else {
-                gui.diff_view.load_from_diff_output(&name, &diff);
-                gui.diff_view.file_exists_on_disk = gui.git.repo_path().join(&name).exists();
+        std::thread::spawn(move || {
+            if gen_counter.load(Ordering::Relaxed) != generation {
+                return;
             }
+            let payload = match git.diff_refs_file(&ref_a, &ref_b, &name) {
+                Ok(diff) if diff.is_empty() => DiffPayload::Empty,
+                Ok(diff) => {
+                    let exists = git.repo_path().join(&name).exists();
+                    DiffPayload::Parsed(DiffViewState::parse_diff_output(&name, &diff, 4, exists))
+                }
+                Err(_) => DiffPayload::Empty,
+            };
+            let _ = tx.send(DiffResult { generation, diff_key, payload });
+        });
+    } else if gui.diff_mode.show_tree {
+        // Directory node: combined diff of all child files
+        if let Some(node) = gui.diff_mode.tree_nodes.get(selected) {
+            if node.is_dir && !node.child_file_indices.is_empty() {
+                let child_names: Vec<String> = node
+                    .child_file_indices
+                    .iter()
+                    .filter_map(|&i| gui.diff_mode.diff_files.get(i))
+                    .map(|f| f.name.clone())
+                    .collect();
+                let dir_name = node.name.clone();
+
+                std::thread::spawn(move || {
+                    if gen_counter.load(Ordering::Relaxed) != generation {
+                        return;
+                    }
+                    let mut combined_diff = String::new();
+                    for name in &child_names {
+                        if gen_counter.load(Ordering::Relaxed) != generation {
+                            return;
+                        }
+                        let diff = git.diff_refs_file(&ref_a, &ref_b, name).unwrap_or_default();
+                        if !diff.is_empty() {
+                            if !combined_diff.is_empty() {
+                                combined_diff.push('\n');
+                            }
+                            combined_diff.push_str(&diff);
+                        }
+                    }
+                    let payload = if combined_diff.is_empty() {
+                        DiffPayload::Empty
+                    } else {
+                        DiffPayload::Parsed(DiffViewState::parse_diff_output(
+                            &dir_name, &combined_diff, 4, true,
+                        ))
+                    };
+                    let _ = tx.send(DiffResult { generation, diff_key, payload });
+                });
+            } else {
+                gui.diff_loading = false;
+                gui.diff_loading_since = None;
+                gui.diff_view = DiffViewState::new();
+            }
+        } else {
+            gui.diff_loading = false;
+            gui.diff_loading_since = None;
+            gui.diff_view = DiffViewState::new();
         }
-        Err(_) => {
-            gui.diff_view = crate::pager::side_by_side::DiffViewState::new();
-        }
+    } else {
+        gui.diff_loading = false;
+        gui.diff_loading_since = None;
     }
 }
 

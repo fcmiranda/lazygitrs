@@ -18,6 +18,8 @@ pub fn render(
     state: &DiffModeState,
     diff_view: &mut DiffViewState,
     theme: &Theme,
+    diff_loading: bool,
+    diff_loading_show: bool,
 ) {
     let area = frame.area();
 
@@ -47,7 +49,7 @@ pub fn render(
     render_commit_files(frame, sidebar[2], state, theme);
 
     // Right panel: diff exploration
-    render_diff_panel(frame, content[1], state, diff_view, theme);
+    render_diff_panel(frame, content[1], state, diff_view, theme, diff_loading, diff_loading_show);
 
     // Text selection highlight overlay and tooltip (must be before popups/dropdowns)
     crate::gui::views::render_selection_overlay(frame, diff_view, content[1], theme);
@@ -200,13 +202,21 @@ fn render_tree_node<'a>(
     if node.is_dir {
         let is_collapsed = state.collapsed_dirs.contains(&node.path);
         let icon = if is_collapsed { "▶ " } else { "▼ " };
-        let line = Line::from(vec![
-            Span::styled(
-                format!("  {}{}", indent, icon),
+        let is_root = node.path == ".";
+        let line = if is_root {
+            Line::from(Span::styled(
+                format!("  {} /", icon.trim_end()),
                 Style::default().fg(theme.text_strong),
-            ),
-            Span::styled(node.name.clone(), Style::default().fg(theme.text_strong)),
-        ]);
+            ))
+        } else {
+            Line::from(vec![
+                Span::styled(
+                    format!("  {}{}", indent, icon),
+                    Style::default().fg(theme.text_strong),
+                ),
+                Span::styled(node.name.clone(), Style::default().fg(theme.text_strong)),
+            ])
+        };
         ListItem::new(line)
     } else if let Some(file_idx) = node.file_index {
         if let Some(file) = state.diff_files.get(file_idx) {
@@ -231,11 +241,13 @@ fn render_diff_panel(
     state: &DiffModeState,
     diff_view: &mut DiffViewState,
     theme: &Theme,
+    diff_loading: bool,
+    diff_loading_show: bool,
 ) {
     let focused = state.focus == DiffModeFocus::DiffExploration;
 
     if !diff_view.is_empty() {
-        side_by_side::render_diff(frame, area, diff_view, theme, focused, false);
+        side_by_side::render_diff(frame, area, diff_view, theme, focused, diff_loading);
         side_by_side::render_diff_search_highlights(frame, area, diff_view, theme);
         side_by_side::render_diff_search_bar(frame, area, diff_view, theme);
     } else {
@@ -248,8 +260,15 @@ fn render_diff_panel(
             .title(" 4 Diff ")
             .borders(Borders::ALL)
             .border_style(border);
+        let msg = if diff_loading_show {
+            " Loading diff..."
+        } else if !state.has_both_refs() || state.diff_files.is_empty() {
+            " Select a file to view diff"
+        } else {
+            ""
+        };
         let widget = Paragraph::new(Span::styled(
-            " Select a file to view diff",
+            msg,
             Style::default().fg(theme.text_dimmed),
         ))
         .block(block);
