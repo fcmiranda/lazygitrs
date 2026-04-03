@@ -79,6 +79,8 @@ pub struct DiffModeState {
     pub diff_files: Vec<CommitFile>,
     pub diff_files_selected: usize,
     pub diff_files_scroll: usize,
+    /// When true, render skips ensure_visible so viewport-only mouse scroll isn't undone.
+    pub viewport_manually_scrolled: bool,
 
     // Tree view for commit files
     pub show_tree: bool,
@@ -110,6 +112,7 @@ impl DiffModeState {
             diff_files: Vec::new(),
             diff_files_selected: 0,
             diff_files_scroll: 0,
+            viewport_manually_scrolled: false,
             show_tree: false,
             tree_nodes: Vec::new(),
             collapsed_dirs: std::collections::HashSet::new(),

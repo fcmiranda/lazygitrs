@@ -189,8 +189,11 @@ fn render_commit_files(
         return;
     }
 
-    // Smart scroll: ensure selected is visible, only adjust when needed
-    crate::gui::scroll::ensure_visible(state.diff_files_selected, &mut state.diff_files_scroll, visible_height);
+    // Smart scroll: ensure selected is visible, only adjust when needed.
+    // Skip when viewport was manually scrolled (mouse scroll) to avoid snapping back.
+    if !state.viewport_manually_scrolled {
+        crate::gui::scroll::ensure_visible(state.diff_files_selected, &mut state.diff_files_scroll, visible_height);
+    }
     let max_offset = items.len().saturating_sub(visible_height);
     if state.diff_files_scroll > max_offset {
         state.diff_files_scroll = max_offset;

@@ -3740,6 +3740,7 @@ impl Gui {
                     let mut offset = self.context_mgr.scroll_offset(active_ctx);
                     scroll::scroll_viewport(&mut offset, -3, list_len, visible_height);
                     self.context_mgr.set_scroll_offset(active_ctx, offset);
+                    self.context_mgr.viewport_manually_scrolled = true;
                 }
             }
             MouseEventKind::ScrollDown => {
@@ -3761,6 +3762,7 @@ impl Gui {
                     let mut offset = self.context_mgr.scroll_offset(active_ctx);
                     scroll::scroll_viewport(&mut offset, 3, list_len, visible_height);
                     self.context_mgr.set_scroll_offset(active_ctx, offset);
+                    self.context_mgr.viewport_manually_scrolled = true;
                 }
             }
             MouseEventKind::ScrollLeft => {
@@ -4029,6 +4031,7 @@ impl Gui {
                         let clicked_idx = self.diff_mode.diff_files_scroll + inner_y as usize;
                         if clicked_idx < len {
                             self.diff_mode.diff_files_selected = clicked_idx;
+                            self.diff_mode.viewport_manually_scrolled = false;
                             self.needs_diff_refresh = true;
                         }
                     } else if rect_contains(diff_rect, col, row) {
@@ -4074,6 +4077,7 @@ impl Gui {
                     let len = self.diff_mode.visible_files_len();
                     let visible_height = files_rect.height.saturating_sub(2) as usize;
                     scroll::scroll_viewport(&mut self.diff_mode.diff_files_scroll, -3, len, visible_height);
+                    self.diff_mode.viewport_manually_scrolled = true;
                 }
             }
             MouseEventKind::ScrollDown => {
@@ -4089,6 +4093,7 @@ impl Gui {
                     let len = self.diff_mode.visible_files_len();
                     let visible_height = files_rect.height.saturating_sub(2) as usize;
                     scroll::scroll_viewport(&mut self.diff_mode.diff_files_scroll, 3, len, visible_height);
+                    self.diff_mode.viewport_manually_scrolled = true;
                 }
             }
             MouseEventKind::ScrollLeft => {

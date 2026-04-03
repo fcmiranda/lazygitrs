@@ -1046,7 +1046,8 @@ fn render_list_with_range_ctx(
     ctx: ContextId,
 ) {
     let mut so = ctx_mgr.scroll_offset(ctx);
-    render_list_with_range_raw(frame, rect, block, items, selected, is_active, theme, range, &mut so);
+    let follow = !ctx_mgr.viewport_manually_scrolled;
+    render_list_with_range_raw(frame, rect, block, items, selected, is_active, theme, range, &mut so, follow);
     ctx_mgr.set_scroll_offset(ctx, so);
 }
 
@@ -1060,6 +1061,7 @@ fn render_list_with_range_raw(
     theme: &crate::config::Theme,
     range: Option<(usize, usize)>,
     scroll_offset: &mut usize,
+    follow_selection: bool,
 ) {
     if items.is_empty() {
         frame.render_widget(block, rect);
@@ -1069,12 +1071,15 @@ fn render_list_with_range_raw(
     let inner = block.inner(rect);
     let visible_height = inner.height as usize;
 
-    // Ensure selected item is visible, only adjusting scroll when necessary
+    // Ensure selected item is visible, only adjusting scroll when necessary.
+    // Skip when viewport was manually scrolled (mouse scroll) to avoid snapping back.
     if visible_height == 0 {
         frame.render_widget(block, rect);
         return;
     }
-    super::scroll::ensure_visible(selected, scroll_offset, visible_height);
+    if follow_selection {
+        super::scroll::ensure_visible(selected, scroll_offset, visible_height);
+    }
     // Clamp scroll offset to valid range
     let max_offset = items.len().saturating_sub(visible_height);
     if *scroll_offset > max_offset {

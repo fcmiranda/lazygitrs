@@ -150,6 +150,9 @@ pub struct ContextManager {
     pub files_list_len_override: Option<usize>,
     /// Override for commit files list length when tree view is active.
     pub commit_files_list_len_override: Option<usize>,
+    /// When true, render skips ensure_visible so viewport-only mouse scroll isn't undone.
+    /// Cleared when selection changes (keyboard/click).
+    pub viewport_manually_scrolled: bool,
 }
 
 impl ContextManager {
@@ -180,6 +183,7 @@ impl ContextManager {
             scroll_offsets: std::collections::HashMap::new(),
             files_list_len_override: None,
             commit_files_list_len_override: None,
+            viewport_manually_scrolled: false,
         }
     }
 
@@ -292,6 +296,7 @@ impl ContextManager {
 
     pub fn set_selection(&mut self, idx: usize) {
         self.selections.insert(self.active, idx);
+        self.viewport_manually_scrolled = false;
     }
 
     pub fn scroll_offset(&self, ctx: ContextId) -> usize {

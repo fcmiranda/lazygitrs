@@ -236,12 +236,14 @@ fn handle_commit_files_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
         KeyCode::Char('j') | KeyCode::Down => {
             if gui.diff_mode.diff_files_selected < len - 1 {
                 gui.diff_mode.diff_files_selected += 1;
+                gui.diff_mode.viewport_manually_scrolled = false;
                 gui.needs_diff_refresh = true;
             }
         }
         KeyCode::Char('k') | KeyCode::Up => {
             if gui.diff_mode.diff_files_selected > 0 {
                 gui.diff_mode.diff_files_selected -= 1;
+                gui.diff_mode.viewport_manually_scrolled = false;
                 gui.needs_diff_refresh = true;
             }
         }
@@ -266,10 +268,12 @@ fn handle_commit_files_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
         }
         KeyCode::Char('g') => {
             gui.diff_mode.diff_files_selected = 0;
+            gui.diff_mode.viewport_manually_scrolled = false;
             gui.needs_diff_refresh = true;
         }
         KeyCode::Char('G') => {
             gui.diff_mode.diff_files_selected = len.saturating_sub(1);
+            gui.diff_mode.viewport_manually_scrolled = false;
             gui.needs_diff_refresh = true;
         }
         KeyCode::Char('y') => {
