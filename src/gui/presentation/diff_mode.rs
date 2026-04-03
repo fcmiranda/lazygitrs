@@ -15,7 +15,7 @@ const DROPDOWN_MAX_VISIBLE: usize = 10;
 
 pub fn render(
     frame: &mut Frame,
-    state: &DiffModeState,
+    state: &mut DiffModeState,
     diff_view: &mut DiffViewState,
     theme: &Theme,
     diff_loading: bool,
@@ -124,7 +124,7 @@ fn render_selector(
 fn render_commit_files(
     frame: &mut Frame,
     area: Rect,
-    state: &DiffModeState,
+    state: &mut DiffModeState,
     theme: &Theme,
 ) {
     let focused = state.focus == DiffModeFocus::CommitFiles;
@@ -155,22 +155,15 @@ fn render_commit_files(
         return;
     }
 
-    if state.show_tree {
-        let items: Vec<ListItem> = state
+    // Build all items
+    let items: Vec<ListItem> = if state.show_tree {
+        state
             .tree_nodes
             .iter()
             .map(|node| render_tree_node(node, state, theme))
-            .collect();
-
-        let list = List::new(items)
-            .block(block)
-            .highlight_style(theme.selected_line);
-
-        let mut list_state = ListState::default();
-        list_state.select(Some(state.diff_files_selected));
-        frame.render_stateful_widget(list, area, &mut list_state);
+            .collect()
     } else {
-        let items: Vec<ListItem> = state
+        state
             .diff_files
             .iter()
             .map(|file| {
@@ -181,16 +174,48 @@ fn render_commit_files(
                 ]);
                 ListItem::new(line)
             })
-            .collect();
+            .collect()
+    };
 
-        let list = List::new(items)
-            .block(block)
-            .highlight_style(theme.selected_line);
-
-        let mut list_state = ListState::default();
-        list_state.select(Some(state.diff_files_selected));
-        frame.render_stateful_widget(list, area, &mut list_state);
+    if items.is_empty() {
+        frame.render_widget(block, area);
+        return;
     }
+
+    let inner = block.inner(area);
+    let visible_height = inner.height as usize;
+    if visible_height == 0 {
+        frame.render_widget(block, area);
+        return;
+    }
+
+    // Smart scroll: ensure selected is visible, only adjust when needed
+    crate::gui::scroll::ensure_visible(state.diff_files_selected, &mut state.diff_files_scroll, visible_height);
+    let max_offset = items.len().saturating_sub(visible_height);
+    if state.diff_files_scroll > max_offset {
+        state.diff_files_scroll = max_offset;
+    }
+    let offset = state.diff_files_scroll;
+    let selected = state.diff_files_selected;
+
+    // Slice visible window and apply highlight to selected item
+    let visible_items: Vec<ListItem> = items
+        .into_iter()
+        .skip(offset)
+        .take(visible_height)
+        .enumerate()
+        .map(|(i, item)| {
+            let idx = i + offset;
+            if focused && idx == selected {
+                item.style(theme.selected_line)
+            } else {
+                item
+            }
+        })
+        .collect();
+
+    let list = List::new(visible_items).block(block);
+    frame.render_widget(list, area);
 }
 
 fn render_tree_node<'a>(

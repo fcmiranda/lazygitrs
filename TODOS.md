@@ -146,3 +146,6 @@
     - Scroll down - should have the same behavior as pressing down on any of the cmdk-style components
     - Scroll up - should have the same behavior as pressing up.
     - [x] In shift- or shift+ (meaning the sizebar is in the only view...), mouse scroll does not work for the list views i.e. Commits, Branches, etc.
+    - [x] New change, scrolling up/down with mouse isn't same behavior as pressing down or up. It just scrolls, but doesn't change the current selection. Let's do this!
+
+- [ ] Subtab and sub-item menu mouse clicks should work, right now in sidebar, if I go to Branches, find main, press enter (now in commit files), I use my mouse and it goes back to 'Branches'. Maybe because mouseclicks currently on the sidebar usually always register for the root sub-item tab.

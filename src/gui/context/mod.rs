@@ -265,16 +265,10 @@ impl ContextManager {
     /// within a viewport of `visible_height` rows.  Only scrolls when the
     /// cursor would otherwise be outside the visible window.
     pub fn ensure_scroll_visible(&mut self, ctx: ContextId, visible_height: usize) {
-        if visible_height == 0 {
-            return;
-        }
         let selected = self.selected(ctx);
-        let offset = self.scroll_offset(ctx);
-        if selected < offset {
-            self.set_scroll_offset(ctx, selected);
-        } else if selected >= offset + visible_height {
-            self.set_scroll_offset(ctx, selected + 1 - visible_height);
-        }
+        let mut offset = self.scroll_offset(ctx);
+        super::scroll::ensure_visible(selected, &mut offset, visible_height);
+        self.set_scroll_offset(ctx, offset);
     }
 
     pub fn move_selection(&mut self, delta: isize, model: &Model) {

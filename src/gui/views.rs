@@ -1074,11 +1074,7 @@ fn render_list_with_range_raw(
         frame.render_widget(block, rect);
         return;
     }
-    if selected < *scroll_offset {
-        *scroll_offset = selected;
-    } else if selected >= *scroll_offset + visible_height {
-        *scroll_offset = selected + 1 - visible_height;
-    }
+    super::scroll::ensure_visible(selected, scroll_offset, visible_height);
     // Clamp scroll offset to valid range
     let max_offset = items.len().saturating_sub(visible_height);
     if *scroll_offset > max_offset {

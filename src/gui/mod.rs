@@ -4,6 +4,7 @@ pub mod layout;
 pub mod modes;
 pub mod popup;
 pub mod presentation;
+pub mod scroll;
 pub mod views;
 
 use std::collections::HashSet;
@@ -435,7 +436,7 @@ impl Gui {
                         .unwrap_or(false);
                     presentation::diff_mode::render(
                         frame,
-                        &self.diff_mode,
+                        &mut self.diff_mode,
                         &mut self.diff_view,
                         &theme,
                         self.diff_loading,
@@ -3730,8 +3731,15 @@ impl Gui {
                 } else if in_diff {
                     self.diff_view.scroll_up(3);
                 } else {
+                    // Viewport-only scroll: move scroll offset without changing selection
+                    let active_ctx = self.context_mgr.active();
                     let model = self.model.lock().unwrap();
-                    self.context_mgr.move_selection(-3, &model);
+                    let list_len = self.context_mgr.list_len(&model);
+                    drop(model);
+                    let visible_height = self.sidebar_visible_height();
+                    let mut offset = self.context_mgr.scroll_offset(active_ctx);
+                    scroll::scroll_viewport(&mut offset, -3, list_len, visible_height);
+                    self.context_mgr.set_scroll_offset(active_ctx, offset);
                 }
             }
             MouseEventKind::ScrollDown => {
@@ -3744,8 +3752,15 @@ impl Gui {
                 } else if in_diff {
                     self.diff_view.scroll_down(3);
                 } else {
+                    // Viewport-only scroll: move scroll offset without changing selection
+                    let active_ctx = self.context_mgr.active();
                     let model = self.model.lock().unwrap();
-                    self.context_mgr.move_selection(3, &model);
+                    let list_len = self.context_mgr.list_len(&model);
+                    drop(model);
+                    let visible_height = self.sidebar_visible_height();
+                    let mut offset = self.context_mgr.scroll_offset(active_ctx);
+                    scroll::scroll_viewport(&mut offset, 3, list_len, visible_height);
+                    self.context_mgr.set_scroll_offset(active_ctx, offset);
                 }
             }
             MouseEventKind::ScrollLeft => {
@@ -4008,16 +4023,10 @@ impl Gui {
                         self.diff_mode.search_refs(&model.branches, &model.tags, &model.commits, &model.remotes, &model.head_branch_name);
                     } else if rect_contains(files_rect, col, row) {
                         self.diff_mode.focus = DiffModeFocus::CommitFiles;
-                        // Click to select a file
+                        // Click to select a file — use stored scroll offset
                         let inner_y = row.saturating_sub(files_rect.y + 1);
                         let len = self.diff_mode.visible_files_len();
-                        let visible_height = files_rect.height.saturating_sub(2) as usize;
-                        let scroll_offset = if self.diff_mode.diff_files_selected >= visible_height {
-                            self.diff_mode.diff_files_selected - visible_height + 1
-                        } else {
-                            0
-                        };
-                        let clicked_idx = scroll_offset + inner_y as usize;
+                        let clicked_idx = self.diff_mode.diff_files_scroll + inner_y as usize;
                         if clicked_idx < len {
                             self.diff_mode.diff_files_selected = clicked_idx;
                             self.needs_diff_refresh = true;
@@ -4061,11 +4070,10 @@ impl Gui {
                         self.diff_view.scroll_up(3);
                     }
                 } else if rect_contains(files_rect, col, row) {
+                    // Viewport-only scroll: move scroll offset without changing selection
                     let len = self.diff_mode.visible_files_len();
-                    if len > 0 {
-                        self.diff_mode.diff_files_selected = self.diff_mode.diff_files_selected.saturating_sub(3);
-                        self.needs_diff_refresh = true;
-                    }
+                    let visible_height = files_rect.height.saturating_sub(2) as usize;
+                    scroll::scroll_viewport(&mut self.diff_mode.diff_files_scroll, -3, len, visible_height);
                 }
             }
             MouseEventKind::ScrollDown => {
@@ -4077,11 +4085,10 @@ impl Gui {
                         self.diff_view.scroll_down(3);
                     }
                 } else if rect_contains(files_rect, col, row) {
+                    // Viewport-only scroll: move scroll offset without changing selection
                     let len = self.diff_mode.visible_files_len();
-                    if len > 0 {
-                        self.diff_mode.diff_files_selected = (self.diff_mode.diff_files_selected + 3).min(len - 1);
-                        self.needs_diff_refresh = true;
-                    }
+                    let visible_height = files_rect.height.saturating_sub(2) as usize;
+                    scroll::scroll_viewport(&mut self.diff_mode.diff_files_scroll, 3, len, visible_height);
                 }
             }
             MouseEventKind::ScrollLeft => {
@@ -4203,6 +4210,32 @@ impl Gui {
             self.screen_mode,
         );
         fl.main_panel
+    }
+
+    /// Approximate visible height of the active sidebar panel (inner area minus borders).
+    fn sidebar_visible_height(&self) -> usize {
+        let area = ratatui::layout::Rect::new(0, 0, self.layout.width, self.layout.height);
+        let panel_count = SideWindow::ALL.len();
+        let active_window = self.context_mgr.active_window();
+        let active_panel_index = SideWindow::ALL
+            .iter()
+            .position(|w| *w == active_window)
+            .unwrap_or(1);
+        let fl = layout::compute_layout(
+            area,
+            self.layout.side_panel_ratio,
+            panel_count,
+            active_panel_index,
+            self.screen_mode,
+        );
+        // In Full screen mode with sidebar focused, the list is rendered in main_panel
+        let panel_rect = if self.screen_mode == ScreenMode::Full && !self.diff_focused {
+            fl.main_panel
+        } else {
+            fl.side_panels.get(active_panel_index).copied().unwrap_or(fl.main_panel)
+        };
+        // Subtract 2 for top/bottom borders
+        panel_rect.height.saturating_sub(2) as usize
     }
 
     fn refresh(&mut self) -> Result<()> {
