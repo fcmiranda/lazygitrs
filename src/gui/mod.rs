@@ -133,6 +133,17 @@ pub struct Gui {
     remote_op_rx: mpsc::Receiver<Result<()>>,
     /// Sender cloned into background threads for remote operations.
     remote_op_tx: mpsc::Sender<Result<()>>,
+    /// Receiver for silent auto-fetch results. Kept separate from remote_op
+    /// so auto-fetch failures don't show error popups or clobber a
+    /// user-initiated push/pull.
+    auto_fetch_rx: mpsc::Receiver<Result<()>>,
+    /// Sender cloned into background threads for auto-fetch.
+    auto_fetch_tx: mpsc::Sender<Result<()>>,
+    /// When the last auto-fetch started. `None` means we haven't fetched yet;
+    /// the main loop kicks off an immediate fetch on startup.
+    last_auto_fetch_at: Option<Instant>,
+    /// True while a background auto-fetch is in flight, so we don't stack them.
+    auto_fetch_in_flight: bool,
     /// Receiver for background menu item operations (e.g. fetching PR URLs).
     menu_async_rx: mpsc::Receiver<Result<popup::MenuAsyncResult>>,
     /// Sender cloned into background threads for menu async operations.
@@ -245,6 +256,7 @@ impl Gui {
         let (diff_tx, diff_rx) = mpsc::channel();
         let (ai_commit_tx, ai_commit_rx) = mpsc::channel();
         let (remote_op_tx, remote_op_rx) = mpsc::channel();
+        let (auto_fetch_tx, auto_fetch_rx) = mpsc::channel();
         let (menu_async_tx, menu_async_rx) = mpsc::channel();
         let show_file_tree = config
             .app_state
@@ -323,6 +335,10 @@ impl Gui {
             ai_commit_tx,
             remote_op_rx,
             remote_op_tx,
+            auto_fetch_rx,
+            auto_fetch_tx,
+            last_auto_fetch_at: None,
+            auto_fetch_in_flight: false,
             menu_async_rx,
             menu_async_tx,
             undo_reflog_idx: 0,
@@ -445,6 +461,10 @@ impl Gui {
             // Check for completed background remote operations
             self.receive_remote_op_results();
 
+            // Check for completed auto-fetch and kick off a new one if due
+            self.receive_auto_fetch_results();
+            self.maybe_start_auto_fetch();
+
             // Check for completed background menu item operations
             self.receive_menu_async_results();
 
@@ -558,9 +578,11 @@ impl Gui {
                 }
             }
 
-            // Background auto-refresh every 10s (like lazygit's refresher.refreshInterval)
+            // Background auto-refresh on refresher.refreshInterval (0 = disabled).
+            let refresh_interval = self.config.user_config.refresher.refresh_interval;
             if self.config.user_config.git.auto_refresh
-                && self.last_refresh_at.elapsed().as_secs() >= 10
+                && refresh_interval > 0
+                && self.last_refresh_at.elapsed().as_secs() >= refresh_interval
             {
                 self.needs_refresh = true;
             }
@@ -695,6 +717,52 @@ impl Gui {
                         };
                     }
                 }
+            }
+        }
+    }
+
+    /// Kick off a silent background `git fetch --all` if auto-fetch is enabled
+    /// and the configured interval has elapsed since the last one. No popup,
+    /// no status on the head branch — the user shouldn't be interrupted.
+    fn maybe_start_auto_fetch(&mut self) {
+        if !self.config.user_config.git.auto_fetch {
+            return;
+        }
+        let interval = self.config.user_config.refresher.fetch_interval;
+        if interval == 0 {
+            return;
+        }
+        if self.auto_fetch_in_flight {
+            return;
+        }
+        let due = match self.last_auto_fetch_at {
+            None => true, // first fetch happens immediately after startup
+            Some(t) => t.elapsed().as_secs() >= interval,
+        };
+        if !due {
+            return;
+        }
+        self.last_auto_fetch_at = Some(Instant::now());
+        self.auto_fetch_in_flight = true;
+        let git = Arc::clone(&self.git);
+        let tx = self.auto_fetch_tx.clone();
+        let cmd_log = self.command_log.clone();
+        std::thread::spawn(move || {
+            crate::os::cmd::set_thread_command_log(cmd_log);
+            let result = git.fetch_all_background();
+            let _ = tx.send(result);
+        });
+    }
+
+    /// Collect auto-fetch completions. Success triggers a full refresh so the
+    /// branches/commits panes reflect any new upstream commits. Failures
+    /// (offline, auth prompt suppressed, etc.) are intentionally silent —
+    /// surfacing them as popups every 60s would be worse than missing data.
+    fn receive_auto_fetch_results(&mut self) {
+        while let Ok(result) = self.auto_fetch_rx.try_recv() {
+            self.auto_fetch_in_flight = false;
+            if result.is_ok() {
+                self.needs_refresh = true;
             }
         }
     }

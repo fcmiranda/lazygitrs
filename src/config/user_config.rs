@@ -11,6 +11,7 @@ use super::theme::Theme;
 pub struct UserConfig {
     pub gui: GuiConfig,
     pub git: GitConfig,
+    pub refresher: RefresherConfig,
     pub keybinding: KeybindingConfig,
     pub os: OsConfig,
     #[serde(rename = "customCommands")]
@@ -22,9 +23,31 @@ impl Default for UserConfig {
         Self {
             gui: GuiConfig::default(),
             git: GitConfig::default(),
+            refresher: RefresherConfig::default(),
             keybinding: KeybindingConfig::default(),
             os: OsConfig::default(),
             custom_commands: Vec::new(),
+        }
+    }
+}
+
+/// Mirrors lazygit's `refresher` config block. `refreshInterval` is the
+/// files/submodules auto-refresh cadence; `fetchInterval` is the periodic
+/// background `git fetch` cadence. Both are in seconds; 0 disables.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct RefresherConfig {
+    #[serde(rename = "refreshInterval")]
+    pub refresh_interval: u64,
+    #[serde(rename = "fetchInterval")]
+    pub fetch_interval: u64,
+}
+
+impl Default for RefresherConfig {
+    fn default() -> Self {
+        Self {
+            refresh_interval: 10,
+            fetch_interval: 60,
         }
     }
 }
