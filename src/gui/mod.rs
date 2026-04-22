@@ -267,6 +267,7 @@ impl Gui {
             .show_command_log
             .unwrap_or(config.user_config.gui.show_command_log);
         let diff_line_wrap = config.app_state.diff_line_wrap.unwrap_or(false);
+        let show_commit_details = config.app_state.show_commit_details.unwrap_or(true);
         let command_log = crate::os::cmd::new_command_log();
         crate::os::cmd::set_thread_command_log(command_log.clone());
 
@@ -372,7 +373,7 @@ impl Gui {
             commit_stats_inflight: std::sync::Arc::new(std::sync::Mutex::new(HashSet::new())),
             commit_details_scroll: 0,
             commit_details_scroll_hash: String::new(),
-            show_commit_details: true,
+            show_commit_details,
         })
     }
 
@@ -1675,6 +1676,7 @@ impl Gui {
         // consistent across Commits / BranchCommits / Reflog / CommitFiles.
         if key.code == KeyCode::Char('.') && self.context_has_commit_details() {
             self.show_commit_details = !self.show_commit_details;
+            self.persist_commit_details_visibility();
             return Ok(());
         }
 
@@ -4697,6 +4699,13 @@ impl Gui {
     pub fn persist_file_tree_visibility(&self) {
         if let Ok(mut state) = AppState::load(&self.config.state_path) {
             state.show_file_tree = Some(self.show_file_tree);
+            let _ = state.save(&self.config.state_path);
+        }
+    }
+
+    pub fn persist_commit_details_visibility(&self) {
+        if let Ok(mut state) = AppState::load(&self.config.state_path) {
+            state.show_commit_details = Some(self.show_commit_details);
             let _ = state.save(&self.config.state_path);
         }
     }
