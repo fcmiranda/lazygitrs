@@ -50,6 +50,7 @@ lazygitrs
 - [x] **Branch Filtering** — better experience in the Commits tab, compare what actually matters.
 - [x] **Built-in compare tool** — Again, inspired by lumen, but more built into the TUI. Pick a commit/branch A and a commit/branch B, then see how they differ.
 - [x] **Interactive rebasing** — inspired by gitlens, a clean and easy-to-use UI for pick, reword, edit, squash, fixup, drop and fast rebasing.
+- [x] **Commit Details** — Inspired by zed, just a small details panel about the commit that's easier to look at.
 - [x] **Command Palette** — easily access stuff like:
   - [ ] `git reset` and then asks, what branch/commit, has quick search.
   - [x] `git diff/compare` and then asks what branch/commit A and B, has quick search.
