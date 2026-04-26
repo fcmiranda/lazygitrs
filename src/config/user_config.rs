@@ -57,7 +57,14 @@ impl UserConfig {
         let config_path = config_dir.join("config.yml");
         if config_path.exists() {
             let contents = std::fs::read_to_string(&config_path)?;
-            let config: UserConfig = serde_yaml::from_str(&contents)?;
+            let mut config: UserConfig = serde_yaml::from_str(&contents)?;
+            let unknown_overrides = config.keybinding.apply_overrides();
+            if !unknown_overrides.is_empty() {
+                eprintln!(
+                    "[WARN] Ignored unknown keybinding overrides: {}",
+                    unknown_overrides.join(", ")
+                );
+            }
             Ok(config)
         } else {
             Ok(Self::default())
