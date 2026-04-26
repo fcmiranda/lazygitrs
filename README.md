@@ -27,13 +27,28 @@ Then run:
 lazygitrs
 ```
 
+### Build from source (global install)
+
+```sh
+git clone https://github.com/Blankeos/lazygitrs.git
+cd lazygitrs
+cargo build --release
+sudo install -m 755 target/release/lazygitrs /usr/local/bin/lazygitrs
+```
+
+Optional alias if you want to call it as `lazygirts`:
+
+```sh
+sudo ln -sf /usr/local/bin/lazygitrs /usr/local/bin/lazygirts
+```
+
 ### What's different
 
 - [x] **AI commit messages** — works with whatever agent you already use (claude, opencode, codex, or my minimal shim [modelcli](https://github.com/blankeos/modelcli))
-      Configure it in `~/.config/lazygit/config.toml`:
+      Configure it in `~/.config/lazygitrs/config.yml` (falls back to `~/.config/lazygit/config.yml` if missing):
 
   ```yml
-  # ~/.config/lazygit/config.yml
+  # ~/.config/lazygitrs/config.yml
   git:
     commit:
       # Using claude
