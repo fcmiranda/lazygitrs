@@ -103,7 +103,7 @@ impl DiffPanelLayout {
         let inner_end_y = inner_y + panel_rect.height.saturating_sub(2);
 
         let gutter: u16 = 5;
-        let divider: u16 = 1;
+        let divider: u16 = 2;
 
         let is_new_file = state.old_content.is_empty() && state.sections.len() <= 1;
 
@@ -255,6 +255,8 @@ pub struct DiffViewState {
     pub search_match_idx: usize,
     /// Textarea widget for search input.
     pub search_textarea: Option<tui_textarea::TextArea<'static>>,
+    /// Currently selected revert-button hunk index (for keyboard cycling).
+    pub selected_revert_hunk: Option<usize>,
 }
 
 impl Default for DiffViewState {
@@ -280,6 +282,7 @@ impl Default for DiffViewState {
             search_matches: Vec::new(),
             search_match_idx: 0,
             search_textarea: None,
+            selected_revert_hunk: None,
         }
     }
 }
@@ -536,6 +539,7 @@ impl DiffViewState {
     /// Apply a pre-parsed diff result, preserving scroll position for same-file reloads.
     pub fn apply_parsed(&mut self, parsed: ParsedDiff) {
         let same_file = self.filename == parsed.filename;
+        let prev_selected_revert_hunk = self.selected_revert_hunk;
         self.filename = parsed.filename;
         self.old_content = parsed.old_content;
         self.new_content = parsed.new_content;
@@ -544,6 +548,11 @@ impl DiffViewState {
         self.hunk_line_offsets = parsed.hunk_line_offsets;
         self.sections = parsed.sections;
         self.file_exists_on_disk = parsed.file_exists_on_disk;
+        self.selected_revert_hunk = if same_file {
+            prev_selected_revert_hunk.filter(|&i| i < self.hunk_starts.len())
+        } else {
+            None
+        };
         if same_file {
             let max = self.lines.len().saturating_sub(1);
             self.scroll_offset = self.scroll_offset.min(max);
@@ -559,6 +568,7 @@ impl DiffViewState {
     pub fn load(&mut self, filename: &str, old: &str, new: &str) {
         // Preserve scroll position when reloading the same file (e.g. periodic refresh)
         let same_file = self.filename == filename;
+        let prev_selected_revert_hunk = self.selected_revert_hunk;
         self.filename = filename.to_string();
         self.old_content = old.to_string();
         self.new_content = new.to_string();
@@ -575,6 +585,11 @@ impl DiffViewState {
             self.selection = None;
             self.clear_search();
         }
+        self.selected_revert_hunk = if same_file {
+            prev_selected_revert_hunk.filter(|&i| i < self.hunk_starts.len())
+        } else {
+            None
+        };
         // Preserve side_view across reloads so periodic refresh doesn't reset it
         // Single section with index 0
         self.sections = vec![FileSection {
@@ -605,6 +620,7 @@ impl DiffViewState {
             let file_count = file_diffs.len();
             let new_filename = format!("{} ({} files)", filename, file_count);
             let same_file = self.filename == new_filename;
+            let prev_selected_revert_hunk = self.selected_revert_hunk;
             self.filename = new_filename;
             self.old_content = String::new();
             self.new_content = String::new();
@@ -616,6 +632,11 @@ impl DiffViewState {
                 self.selection = None;
                 self.clear_search();
             }
+            self.selected_revert_hunk = if same_file {
+                prev_selected_revert_hunk
+            } else {
+                None
+            };
 
             self.hunk_line_offsets = Vec::new();
 
@@ -661,6 +682,12 @@ impl DiffViewState {
             }
 
             self.hunk_starts = super::diff_algo::find_hunk_starts(&self.lines);
+            self.selected_revert_hunk = if same_file {
+                self.selected_revert_hunk
+                    .filter(|&i| i < self.hunk_starts.len())
+            } else {
+                None
+            };
 
             if same_file {
                 // Clamp scroll in case the diff got shorter
@@ -729,7 +756,33 @@ impl DiffViewState {
 
     /// Get the zero-based hunk index for a hunk-start line.
     pub fn hunk_index_for_start_line(&self, line_idx: usize) -> Option<usize> {
-        self.hunk_starts.iter().position(|&idx| idx == line_idx)
+        self.hunk_starts.binary_search(&line_idx).ok()
+    }
+
+    /// Cycle to the next revertable hunk marker.
+    pub fn select_next_revert_hunk(&mut self) {
+        if self.hunk_starts.is_empty() {
+            self.selected_revert_hunk = None;
+            return;
+        }
+        let next = match self.selected_revert_hunk {
+            Some(i) => (i + 1) % self.hunk_starts.len(),
+            None => 0,
+        };
+        self.selected_revert_hunk = Some(next);
+    }
+
+    /// Cycle to the previous revertable hunk marker.
+    pub fn select_prev_revert_hunk(&mut self) {
+        if self.hunk_starts.is_empty() {
+            self.selected_revert_hunk = None;
+            return;
+        }
+        let prev = match self.selected_revert_hunk {
+            Some(0) | None => self.hunk_starts.len() - 1,
+            Some(i) => i.saturating_sub(1),
+        };
+        self.selected_revert_hunk = Some(prev);
     }
 
     /// Get the highlighters for a given section index.
@@ -801,7 +854,7 @@ pub fn render_diff(
     }
 
     let gutter_width = 5u16;
-    let divider_width = 1u16;
+    let divider_width = 2u16;
 
     // Detect new file: old content is empty, so no left panel needed
     let is_new_file = state.old_content.is_empty() && state.sections.len() <= 1;
@@ -1155,15 +1208,22 @@ pub fn render_diff(
                         && chunk_idx == 0
                         && state.is_hunk_start_line(line_idx);
                     let (divider_char, style) = if show_marker {
-                        (
-                            "R",
+                        let hunk_idx = state.hunk_index_for_start_line(line_idx);
+                        let is_selected = hunk_idx == state.selected_revert_hunk;
+                        let marker_style = if is_selected {
                             Style::default()
-                                .fg(theme.accent_secondary)
-                                .add_modifier(Modifier::BOLD),
-                        )
+                                .fg(theme.accent)
+                                .add_modifier(Modifier::BOLD)
+                        } else {
+                            Style::default()
+                                .fg(theme.separator)
+                                .add_modifier(Modifier::BOLD)
+                        };
+                        ("", marker_style)
                     } else {
                         ("│", divider_style)
                     };
+                    buf_write_str(buf, div_x, y, "  ", divider_style, divider_width);
                     buf_write_str(buf, div_x, y, divider_char, style, divider_width);
 
                     // Right gutter + content
@@ -1254,15 +1314,22 @@ pub fn render_diff(
                 let show_marker =
                     show_revert_markers && !state.wrap && state.is_hunk_start_line(line_idx);
                 let (divider_char, style) = if show_marker {
-                    (
-                        "R",
+                    let hunk_idx = state.hunk_index_for_start_line(line_idx);
+                    let is_selected = hunk_idx == state.selected_revert_hunk;
+                    let marker_style = if is_selected {
                         Style::default()
-                            .fg(theme.accent_secondary)
-                            .add_modifier(Modifier::BOLD),
-                    )
+                            .fg(theme.accent)
+                            .add_modifier(Modifier::BOLD)
+                    } else {
+                        Style::default()
+                            .fg(theme.separator)
+                            .add_modifier(Modifier::BOLD)
+                    };
+                    ("", marker_style)
                 } else {
                     ("│", divider_style)
                 };
+                buf_write_str(buf, div_x, y, "  ", divider_style, divider_width);
                 buf_write_str(buf, div_x, y, divider_char, style, divider_width);
 
                 // Right gutter
@@ -1504,6 +1571,8 @@ fn gutter_fg_colors(change_type: ChangeType, theme: &Theme) -> (Color, Color) {
         ChangeType::Insert => (theme.diff_gutter, theme.diff_add_gutter_fg),
         ChangeType::Modified => (theme.diff_remove_gutter_fg, theme.diff_add_gutter_fg),
     }
+}
+
 /// Format a 5-column gutter line number with a side-aware marker:
 /// - Right panel: `+` for inserted/modified lines
 /// - Left panel: `-` for deleted/modified lines

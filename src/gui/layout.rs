@@ -89,13 +89,6 @@ pub fn compute_layout_with_details(
                     Constraint::Length(7),
                     Constraint::Min(1),
                 ])
-        // requested, carve a narrow right column out of main_area for them.
-        if sidebar_focused_full && show_details && main_area.width >= 60 && main_area.height >= 10 {
-            let details_width = (main_area.width as f64 * 0.38).round() as u16;
-            let details_width = details_width.clamp(30, main_area.width.saturating_sub(30));
-            let horizontal = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Min(1), Constraint::Length(details_width)])
                 .split(main_area);
             return FrameLayout {
                 side_panels: Vec::new(),

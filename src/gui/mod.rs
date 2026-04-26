@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex, mpsc};
 use std::time::Instant;
 
 use anyhow::Result;
-use crossterm::event::{self, Event, KeyCode, KeyEvent, MouseEvent};
+use crossterm::event::{self, Event, KeyCode, KeyEvent, KeyModifiers, MouseEvent};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
 use crossterm::{cursor, execute};
 use ratatui::Terminal;
@@ -26,7 +26,7 @@ use crate::git::{GitCommands, MODEL_PART_COUNT, ModelPart};
 use crate::model::Model;
 use crate::model::file_tree::{CommitFileTreeNode, FileTreeNode, build_file_tree};
 use crate::os::platform::Platform;
-use crate::pager::side_by_side::{DiffPanelLayout, DiffViewState, TextSelection};
+use crate::pager::side_by_side::{DiffPanel, DiffPanelLayout, DiffViewState, TextSelection};
 
 use self::context::{ContextId, ContextManager, SideWindow};
 use self::layout::LayoutState;
@@ -2035,6 +2035,21 @@ impl Gui {
             }
         }
 
+        if matches_key(key, &keybindings.universal.next_revert_block) {
+            if self.context_mgr.active() == ContextId::Files {
+                self.diff_view.select_next_revert_hunk();
+                self.center_selected_revert_block();
+            }
+            return Ok(());
+        }
+        if matches_key(key, &keybindings.universal.prev_revert_block) {
+            if self.context_mgr.active() == ContextId::Files {
+                self.diff_view.select_prev_revert_hunk();
+                self.center_selected_revert_block();
+            }
+            return Ok(());
+        }
+
         // Toggle command log (;)
         if key.code == KeyCode::Char(';') {
             self.show_command_log = !self.show_command_log;
@@ -2139,6 +2154,13 @@ impl Gui {
             KeyCode::Char('G') => {
                 let max = self.diff_view.lines.len().saturating_sub(1);
                 self.diff_view.scroll_offset = max;
+            }
+            KeyCode::Enter => {
+                if self.context_mgr.active() == ContextId::Files
+                    && let Some(hunk_idx) = self.diff_view.selected_revert_hunk
+                {
+                    self.revert_selected_file_hunk(hunk_idx)?;
+                }
             }
             _ => {}
         }
@@ -2758,21 +2780,6 @@ impl Gui {
                                     }
                                     None => {}
                                 }
-                                Some(idx) => {
-                                    let new_idx = idx - 1;
-                                    self.commit_history_idx = Some(new_idx);
-                                    let msg = &self.commit_message_history[new_idx];
-                                    let (summary, body) = split_commit_message(msg);
-                                    let mut new_summary = popup::make_commit_summary_textarea();
-                                    new_summary.insert_str(&summary);
-                                    *summary_textarea = new_summary;
-                                    let mut new_body = popup::make_commit_body_textarea();
-                                    if !body.is_empty() {
-                                        new_body.insert_str(&body);
-                                    }
-                                    *body_textarea = new_body;
-                                }
-                                None => {}
                             },
                             _ => {}
                         }
@@ -4080,8 +4087,16 @@ impl Gui {
                     description: "Copy selected text".into(),
                 },
                 HelpEntry {
-                    key: "R (mouse)".into(),
-                    description: "Click center-gap R to revert block".into(),
+                    key: " (mouse)".into(),
+                    description: "Click center-gap icon to revert block".into(),
+                },
+                HelpEntry {
+                    key: "<c-j>/<c-k>".into(),
+                    description: "Cycle revert block buttons".into(),
+                },
+                HelpEntry {
+                    key: "<enter>".into(),
+                    description: "Revert selected block".into(),
                 },
                 HelpEntry {
                     key: "q".into(),
@@ -5546,6 +5561,7 @@ impl Gui {
         let Some(hunk_idx) = self.diff_view.hunk_index_for_start_line(line_idx) else {
             return false;
         };
+        self.diff_view.selected_revert_hunk = Some(hunk_idx);
         if let Err(err) = self.revert_selected_file_hunk(hunk_idx) {
             self.popup = PopupState::Message {
                 title: "Revert block failed".to_string(),
@@ -5589,6 +5605,27 @@ impl Gui {
         self.needs_files_refresh = true;
         self.needs_diff_refresh = true;
         Ok(())
+    }
+
+    /// Keep the selected revert marker around the vertical middle of the visible diff area.
+    fn center_selected_revert_block(&mut self) {
+        let Some(sel) = self.diff_view.selected_revert_hunk else {
+            return;
+        };
+        let Some(&line_idx) = self.diff_view.hunk_starts.get(sel) else {
+            return;
+        };
+
+        let main_panel = self.compute_main_panel_rect();
+        let pl = DiffPanelLayout::compute(main_panel, &self.diff_view);
+        let visible_rows = (pl.inner_end_y.saturating_sub(pl.inner_y)) as usize;
+        if visible_rows == 0 {
+            return;
+        }
+
+        let desired = line_idx.saturating_sub(visible_rows / 2);
+        let max_start = self.diff_view.lines.len().saturating_sub(visible_rows);
+        self.diff_view.scroll_offset = desired.min(max_start);
     }
 
     fn handle_mouse_click(&mut self, col: u16, row: u16) {

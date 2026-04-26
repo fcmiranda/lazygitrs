@@ -254,6 +254,7 @@ fn open_ai_commit_prompt(gui: &mut Gui) -> Result<()> {
                 gui.popup = PopupState::CommitInput {
                     summary_textarea: make_commit_summary_textarea(),
                     body_textarea: make_commit_body_textarea(),
+                    body_state: crate::gui::popup::BodySoftWrap::new(),
                     focus: CommitInputFocus::Summary,
                     on_confirm: Box::new(|gui, message| {
                         if !message.is_empty() {
@@ -273,6 +274,7 @@ fn open_ai_commit_prompt(gui: &mut Gui) -> Result<()> {
     gui.popup = PopupState::CommitInput {
         summary_textarea: make_commit_summary_textarea(),
         body_textarea: make_commit_body_textarea(),
+        body_state: crate::gui::popup::BodySoftWrap::new(),
         focus: CommitInputFocus::Summary,
         on_confirm: Box::new(|gui, message| {
             if !message.is_empty() {
@@ -451,17 +453,7 @@ fn open_in_editor(gui: &mut Gui) -> Result<()> {
 
         if !os.edit.is_empty() {
             crate::config::user_config::OsConfig::run_template(&os.edit, &abs_path)?;
-        let abs_path = gui
-            .git
-            .repo_path()
-            .join(&rel_path)
-            .to_string_lossy()
-            .to_string();
-        let edit_template = &gui.config.user_config.os.edit;
-        if !edit_template.is_empty() {
-            crate::config::user_config::OsConfig::run_template(edit_template, &abs_path)?;
         } else {
-            // Fallback: use $EDITOR or platform open
             Platform::open_file(&abs_path)?;
         }
     }
