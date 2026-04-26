@@ -1,7 +1,7 @@
+use super::user_config::ThemeConfig;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::widgets::{BorderType, Borders};
 use serde::Deserialize;
-use super::user_config::ThemeConfig;
 
 /// A complete color theme for the entire application.
 ///
@@ -214,12 +214,8 @@ impl Theme {
             file_staged: Style::default().fg(Color::Green),
             file_unstaged: Style::default().fg(Color::Red),
             file_untracked: Style::default().fg(Color::LightRed),
-            file_conflicted: Style::default()
-                .fg(Color::Red)
-                .add_modifier(Modifier::BOLD),
-            search_match: Style::default()
-                .bg(Color::Yellow)
-                .fg(Color::Black),
+            file_conflicted: Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
+            search_match: Style::default().bg(Color::Yellow).fg(Color::Black),
             status_bar: Style::default().fg(Color::DarkGray),
             spinner: Style::default().fg(Color::Cyan),
 
@@ -394,48 +390,188 @@ impl ThemeJson {
         let dark = Theme::dark();
 
         // Resolve semantic base colors first (these cascade into derivations)
-        let primary = self.primary.as_deref().and_then(parse_hex).unwrap_or(dark.accent);
-        let secondary = self.secondary.as_deref().and_then(parse_hex).unwrap_or(dark.accent_secondary);
-        let success = self.success.as_deref().and_then(parse_hex).unwrap_or(Color::Green);
-        let error = self.error.as_deref().and_then(parse_hex).unwrap_or(Color::Red);
-        let warning = self.warning.as_deref().and_then(parse_hex).unwrap_or(Color::Yellow);
-        let info = self.info.as_deref().and_then(parse_hex).unwrap_or(Color::Cyan);
+        let primary = self
+            .primary
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(dark.accent);
+        let secondary = self
+            .secondary
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(dark.accent_secondary);
+        let success = self
+            .success
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(Color::Green);
+        let error = self
+            .error
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(Color::Red);
+        let warning = self
+            .warning
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(Color::Yellow);
+        let info = self
+            .info
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(Color::Cyan);
 
-        let text_strong = self.text_strong.as_deref().and_then(parse_hex).unwrap_or(dark.text_strong);
-        let text = self.text.as_deref().and_then(parse_hex).unwrap_or(dark.text);
-        let text_dimmed = self.text_dimmed.as_deref().and_then(parse_hex).unwrap_or(dark.text_dimmed);
+        let text_strong = self
+            .text_strong
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(dark.text_strong);
+        let text = self
+            .text
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(dark.text);
+        let text_dimmed = self
+            .text_dimmed
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(dark.text_dimmed);
 
-        let background = self.background.as_deref().and_then(parse_hex).unwrap_or(Color::Rgb(30, 30, 30));
-        let background_panel = self.background_panel.as_deref().and_then(parse_hex).unwrap_or(background);
-        let selected_bg = self.selected_bg.as_deref().and_then(parse_hex).unwrap_or(dark.selected_bg);
-        let separator = self.separator.as_deref().and_then(parse_hex).unwrap_or(text_dimmed);
-        let border = self.border.as_deref().and_then(parse_hex).unwrap_or(separator);
-        let border_active = self.border_active.as_deref().and_then(parse_hex).unwrap_or(primary);
-        let popup_border = self.popup_border.as_deref().and_then(parse_hex).unwrap_or(primary);
+        let background = self
+            .background
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(Color::Rgb(30, 30, 30));
+        let background_panel = self
+            .background_panel
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(background);
+        let selected_bg = self
+            .selected_bg
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(dark.selected_bg);
+        let separator = self
+            .separator
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(text_dimmed);
+        let border = self
+            .border
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(separator);
+        let border_active = self
+            .border_active
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(primary);
+        let popup_border = self
+            .popup_border
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(primary);
 
-        let accent = self.accent.as_deref().and_then(parse_hex).unwrap_or(primary);
-        let accent_secondary = self.accent_secondary.as_deref().and_then(parse_hex).unwrap_or(warning);
+        let accent = self
+            .accent
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(primary);
+        let accent_secondary = self
+            .accent_secondary
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(warning);
 
         // Diff
-        let diff_add = self.diff_add.as_deref().and_then(parse_hex).unwrap_or(success);
-        let diff_remove = self.diff_remove.as_deref().and_then(parse_hex).unwrap_or(error);
-        let diff_context = self.diff_context.as_deref().and_then(parse_hex).unwrap_or(text_dimmed);
-        let diff_add_bg = self.diff_add_bg.as_deref().and_then(parse_hex).unwrap_or(dark.diff_add_bg);
-        let diff_remove_bg = self.diff_remove_bg.as_deref().and_then(parse_hex).unwrap_or(dark.diff_remove_bg);
-        let diff_add_word = self.diff_add_word.as_deref().and_then(parse_hex).unwrap_or(dark.diff_add_word);
-        let diff_remove_word = self.diff_remove_word.as_deref().and_then(parse_hex).unwrap_or(dark.diff_remove_word);
-        let diff_line_number = self.diff_line_number.as_deref().and_then(parse_hex).unwrap_or(dark.diff_line_number);
+        let diff_add = self
+            .diff_add
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(success);
+        let diff_remove = self
+            .diff_remove
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(error);
+        let diff_context = self
+            .diff_context
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(text_dimmed);
+        let diff_add_bg = self
+            .diff_add_bg
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(dark.diff_add_bg);
+        let diff_remove_bg = self
+            .diff_remove_bg
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(dark.diff_remove_bg);
+        let diff_add_word = self
+            .diff_add_word
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(dark.diff_add_word);
+        let diff_remove_word = self
+            .diff_remove_word
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(dark.diff_remove_word);
+        let diff_line_number = self
+            .diff_line_number
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(dark.diff_line_number);
 
         // Syntax
-        let syntax_comment = self.syntax_comment.as_deref().and_then(parse_hex).unwrap_or(text_dimmed);
-        let syntax_keyword = self.syntax_keyword.as_deref().and_then(parse_hex).unwrap_or(secondary);
-        let syntax_string = self.syntax_string.as_deref().and_then(parse_hex).unwrap_or(success);
-        let syntax_number = self.syntax_number.as_deref().and_then(parse_hex).unwrap_or(warning);
-        let syntax_function = self.syntax_function.as_deref().and_then(parse_hex).unwrap_or(primary);
-        let syntax_type = self.syntax_type.as_deref().and_then(parse_hex).unwrap_or(warning);
-        let syntax_operator = self.syntax_operator.as_deref().and_then(parse_hex).unwrap_or(secondary);
-        let syntax_punctuation = self.syntax_punctuation.as_deref().and_then(parse_hex).unwrap_or(text_strong);
-        let syntax_variable = self.syntax_variable.as_deref().and_then(parse_hex).unwrap_or(error);
+        let syntax_comment = self
+            .syntax_comment
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(text_dimmed);
+        let syntax_keyword = self
+            .syntax_keyword
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(secondary);
+        let syntax_string = self
+            .syntax_string
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(success);
+        let syntax_number = self
+            .syntax_number
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(warning);
+        let syntax_function = self
+            .syntax_function
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(primary);
+        let syntax_type = self
+            .syntax_type
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(warning);
+        let syntax_operator = self
+            .syntax_operator
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(secondary);
+        let syntax_punctuation = self
+            .syntax_punctuation
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(text_strong);
+        let syntax_variable = self
+            .syntax_variable
+            .as_deref()
+            .and_then(parse_hex)
+            .unwrap_or(error);
 
         // Graph colors
         let graph_colors = if let Some(ref gc) = self.graph_colors {
@@ -447,15 +583,28 @@ impl ThemeJson {
             }
             arr
         } else {
-            [primary, success, warning, secondary, info, error, accent, accent_secondary]
+            [
+                primary,
+                success,
+                warning,
+                secondary,
+                info,
+                error,
+                accent,
+                accent_secondary,
+            ]
         };
 
         Theme {
-            active_border: Style::default().fg(border_active).add_modifier(Modifier::BOLD),
+            active_border: Style::default()
+                .fg(border_active)
+                .add_modifier(Modifier::BOLD),
             inactive_border: Style::default().fg(border),
             selected_line: Style::default().bg(selected_bg),
             options_text: Style::default().fg(info),
-            title: Style::default().fg(text_strong).add_modifier(Modifier::BOLD),
+            title: Style::default()
+                .fg(text_strong)
+                .add_modifier(Modifier::BOLD),
             panel_borders: Borders::ALL,
             panel_border_type: BorderType::Plain,
 
@@ -700,7 +849,7 @@ pub fn load_color_themes() -> Vec<ColorTheme> {
 
 // ── Embedded themes (generated at build time by scripts/gen-themes.ts) ──
 
-use include_dir::{include_dir, Dir};
+use include_dir::{Dir, include_dir};
 
 /// All JSON files under `src/generated_themes/` are embedded at compile time.
 /// No hardcoded list needed — adding/removing a file is all it takes.

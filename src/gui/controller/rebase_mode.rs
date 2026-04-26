@@ -331,36 +331,90 @@ fn show_planning_help(gui: &mut Gui) {
     let actions_section = HelpSection {
         title: "Actions".into(),
         entries: vec![
-            HelpEntry { key: "p".into(), description: "Set action to Pick".into() },
-            HelpEntry { key: "r".into(), description: "Set action to Reword".into() },
-            HelpEntry { key: "e".into(), description: "Set action to Edit".into() },
-            HelpEntry { key: "s".into(), description: "Set action to Squash".into() },
-            HelpEntry { key: "f".into(), description: "Set action to Fixup".into() },
-            HelpEntry { key: "d".into(), description: "Set action to Drop".into() },
-            HelpEntry { key: "h / ←".into(), description: "Cycle action backward".into() },
-            HelpEntry { key: "l / →".into(), description: "Cycle action forward".into() },
+            HelpEntry {
+                key: "p".into(),
+                description: "Set action to Pick".into(),
+            },
+            HelpEntry {
+                key: "r".into(),
+                description: "Set action to Reword".into(),
+            },
+            HelpEntry {
+                key: "e".into(),
+                description: "Set action to Edit".into(),
+            },
+            HelpEntry {
+                key: "s".into(),
+                description: "Set action to Squash".into(),
+            },
+            HelpEntry {
+                key: "f".into(),
+                description: "Set action to Fixup".into(),
+            },
+            HelpEntry {
+                key: "d".into(),
+                description: "Set action to Drop".into(),
+            },
+            HelpEntry {
+                key: "h / ←".into(),
+                description: "Cycle action backward".into(),
+            },
+            HelpEntry {
+                key: "l / →".into(),
+                description: "Cycle action forward".into(),
+            },
         ],
     };
 
     let navigation_section = HelpSection {
         title: "Navigation".into(),
         entries: vec![
-            HelpEntry { key: "j / ↓".into(), description: "Select next commit".into() },
-            HelpEntry { key: "k / ↑".into(), description: "Select previous commit".into() },
-            HelpEntry { key: "g".into(), description: "Jump to top".into() },
-            HelpEntry { key: "G".into(), description: "Jump to bottom".into() },
-            HelpEntry { key: "Alt+↑".into(), description: "Move commit up".into() },
-            HelpEntry { key: "Alt+↓".into(), description: "Move commit down".into() },
-            HelpEntry { key: "[".into(), description: "Swap with previous".into() },
-            HelpEntry { key: "]".into(), description: "Swap with next".into() },
+            HelpEntry {
+                key: "j / ↓".into(),
+                description: "Select next commit".into(),
+            },
+            HelpEntry {
+                key: "k / ↑".into(),
+                description: "Select previous commit".into(),
+            },
+            HelpEntry {
+                key: "g".into(),
+                description: "Jump to top".into(),
+            },
+            HelpEntry {
+                key: "G".into(),
+                description: "Jump to bottom".into(),
+            },
+            HelpEntry {
+                key: "Alt+↑".into(),
+                description: "Move commit up".into(),
+            },
+            HelpEntry {
+                key: "Alt+↓".into(),
+                description: "Move commit down".into(),
+            },
+            HelpEntry {
+                key: "[".into(),
+                description: "Swap with previous".into(),
+            },
+            HelpEntry {
+                key: "]".into(),
+                description: "Swap with next".into(),
+            },
         ],
     };
 
     let general_section = HelpSection {
         title: "General".into(),
         entries: vec![
-            HelpEntry { key: "Enter".into(), description: "Start rebase".into() },
-            HelpEntry { key: "q / Esc".into(), description: "Abort (exit without rebasing)".into() },
+            HelpEntry {
+                key: "Enter".into(),
+                description: "Start rebase".into(),
+            },
+            HelpEntry {
+                key: "q / Esc".into(),
+                description: "Abort (exit without rebasing)".into(),
+            },
         ],
     };
 
@@ -376,27 +430,49 @@ fn show_in_progress_help(gui: &mut Gui) {
     let rebase_section = HelpSection {
         title: "Rebase".into(),
         entries: vec![
-            HelpEntry { key: "Enter / c".into(), description: "Continue rebase".into() },
-            HelpEntry { key: "S".into(), description: "Skip current commit".into() },
-            HelpEntry { key: "A".into(), description: "Abort rebase".into() },
+            HelpEntry {
+                key: "Enter / c".into(),
+                description: "Continue rebase".into(),
+            },
+            HelpEntry {
+                key: "S".into(),
+                description: "Skip current commit".into(),
+            },
+            HelpEntry {
+                key: "A".into(),
+                description: "Abort rebase".into(),
+            },
         ],
     };
 
     let navigation_section = HelpSection {
         title: "Navigation".into(),
         entries: vec![
-            HelpEntry { key: "j / ↓".into(), description: "Select next entry".into() },
-            HelpEntry { key: "k / ↑".into(), description: "Select previous entry".into() },
-            HelpEntry { key: "g".into(), description: "Jump to top".into() },
-            HelpEntry { key: "G".into(), description: "Jump to bottom".into() },
+            HelpEntry {
+                key: "j / ↓".into(),
+                description: "Select next entry".into(),
+            },
+            HelpEntry {
+                key: "k / ↑".into(),
+                description: "Select previous entry".into(),
+            },
+            HelpEntry {
+                key: "g".into(),
+                description: "Jump to top".into(),
+            },
+            HelpEntry {
+                key: "G".into(),
+                description: "Jump to bottom".into(),
+            },
         ],
     };
 
     let general_section = HelpSection {
         title: "General".into(),
-        entries: vec![
-            HelpEntry { key: "q / Esc".into(), description: "Close view (rebase stays in progress)".into() },
-        ],
+        entries: vec![HelpEntry {
+            key: "q / Esc".into(),
+            description: "Close view (rebase stays in progress)".into(),
+        }],
     };
 
     gui.popup = PopupState::Help {

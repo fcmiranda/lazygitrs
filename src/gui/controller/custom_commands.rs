@@ -3,9 +3,9 @@ use crossterm::event::KeyEvent;
 
 use crate::config::keybindings::parse_key;
 use crate::config::user_config::CustomCommand;
+use crate::gui::Gui;
 use crate::gui::context::ContextId;
 use crate::gui::popup::{MessageKind, PopupState};
-use crate::gui::Gui;
 use crate::os::cmd::CmdBuilder;
 
 /// Try to handle a key as a custom command. Returns Ok(true) if handled.
@@ -20,9 +20,8 @@ pub fn try_handle_key(gui: &mut Gui, key: KeyEvent) -> Result<bool> {
         }
 
         // Match context: "global" matches everywhere, otherwise match the panel name
-        let context_matches = cmd.context == "global"
-            || cmd.context.is_empty()
-            || cmd.context == context_name;
+        let context_matches =
+            cmd.context == "global" || cmd.context.is_empty() || cmd.context == context_name;
 
         if !context_matches {
             continue;
@@ -60,7 +59,8 @@ fn execute_custom_command(gui: &mut Gui, cmd: &CustomCommand) -> Result<()> {
                 run_command(gui, &final_cmd, show_output)?;
                 Ok(())
             }),
-            is_commit: false, confirm_focused: false,
+            is_commit: false,
+            confirm_focused: false,
         };
     }
 

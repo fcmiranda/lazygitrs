@@ -23,7 +23,9 @@ impl GitCommands {
     /// Mark the current (or given) commit as good.
     pub fn bisect_good(&self, hash: &str) -> Result<String> {
         let result = if hash.is_empty() {
-            self.git().args(&["bisect", "good"]).run_expecting_success()?
+            self.git()
+                .args(&["bisect", "good"])
+                .run_expecting_success()?
         } else {
             self.git()
                 .args(&["bisect", "good", hash])
@@ -35,7 +37,9 @@ impl GitCommands {
     /// Mark the current (or given) commit as bad.
     pub fn bisect_bad(&self, hash: &str) -> Result<String> {
         let result = if hash.is_empty() {
-            self.git().args(&["bisect", "bad"]).run_expecting_success()?
+            self.git()
+                .args(&["bisect", "bad"])
+                .run_expecting_success()?
         } else {
             self.git()
                 .args(&["bisect", "bad", hash])

@@ -9,7 +9,7 @@ use tree_sitter_highlight::{HighlightEvent, Highlighter};
 
 use crate::config::Theme;
 
-use config::{LanguageConfig, CONFIGS, HIGHLIGHT_NAMES};
+use config::{CONFIGS, HIGHLIGHT_NAMES, LanguageConfig};
 
 /// Map a highlight index to a ratatui Color using the active theme.
 pub fn highlight_color(index: usize, theme: &Theme) -> Color {
@@ -122,7 +122,12 @@ impl FileHighlighter {
     }
 
     /// Get highlighted spans for a specific line (1-based line number).
-    pub fn get_line_spans<'a>(&self, line_number: usize, bg: Option<Color>, theme: &Theme) -> Vec<Span<'a>> {
+    pub fn get_line_spans<'a>(
+        &self,
+        line_number: usize,
+        bg: Option<Color>,
+        theme: &Theme,
+    ) -> Vec<Span<'a>> {
         let bg_color = bg.unwrap_or(Color::Reset);
         let default_fg = theme.syntax_default;
 
@@ -133,7 +138,9 @@ impl FileHighlighter {
                     .iter()
                     .filter(|(text, _)| *text != "\n")
                     .map(|(text, highlight_idx)| {
-                        let fg = highlight_idx.map(|i| highlight_color(i, theme)).unwrap_or(default_fg);
+                        let fg = highlight_idx
+                            .map(|i| highlight_color(i, theme))
+                            .unwrap_or(default_fg);
                         Span::styled(text.clone(), Style::default().fg(fg).bg(bg_color))
                     })
                     .collect()

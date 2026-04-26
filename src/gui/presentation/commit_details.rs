@@ -29,7 +29,9 @@ pub fn render_commit_details(
         Span::raw(" "),
         Span::styled(
             "Commit Details",
-            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
     ]);
@@ -39,7 +41,9 @@ pub fn render_commit_details(
         Span::styled("toggle ", Style::default().fg(theme.text_dimmed)),
         Span::styled(
             ".",
-            Style::default().fg(theme.accent).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
     ])
@@ -67,19 +71,13 @@ pub fn render_commit_details(
     if !compact && !commit.author_email.is_empty() {
         lines.push(Line::from(vec![
             Span::styled("  ✉ ", Style::default().fg(theme.text_dimmed)),
-            Span::styled(
-                commit.author_email.clone(),
-                Style::default().fg(theme.text),
-            ),
+            Span::styled(commit.author_email.clone(), Style::default().fg(theme.text)),
         ]));
     }
 
     lines.push(Line::from(vec![
         Span::styled("  # ", Style::default().fg(theme.text_dimmed)),
-        Span::styled(
-            commit.short_hash().to_string(),
-            hash_style(commit, theme),
-        ),
+        Span::styled(commit.short_hash().to_string(), hash_style(commit, theme)),
         Span::styled(
             format!(" {}", &commit.hash[commit.short_hash().len()..]),
             Style::default().fg(theme.text_dimmed),
@@ -105,7 +103,9 @@ pub fn render_commit_details(
         for t in &commit.tags {
             spans.push(Span::styled(
                 format!(" {} ", t),
-                Style::default().fg(theme.ref_tag).add_modifier(Modifier::BOLD),
+                Style::default()
+                    .fg(theme.ref_tag)
+                    .add_modifier(Modifier::BOLD),
             ));
             spans.push(Span::raw(" "));
         }
@@ -204,7 +204,9 @@ fn stat_line<'a>(stat: &CommitStat, theme: &Theme) -> Line<'a> {
         ),
         Span::styled(
             format!("+{}", stat.insertions),
-            Style::default().fg(theme.change_added).add_modifier(Modifier::BOLD),
+            Style::default()
+                .fg(theme.change_added)
+                .add_modifier(Modifier::BOLD),
         ),
         Span::raw(" "),
         Span::styled(
@@ -279,4 +281,3 @@ fn avatar_color_for(email: &str, theme: &Theme) -> ratatui::style::Color {
     let palette = theme.graph_colors;
     palette[(h as usize) % palette.len()]
 }
-

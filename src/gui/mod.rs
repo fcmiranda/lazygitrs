@@ -10,30 +10,30 @@ pub mod views;
 use std::collections::{HashMap, HashSet};
 use std::io::{self, Stdout};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::Instant;
 
 use anyhow::Result;
 use crossterm::event::{self, Event, KeyCode, KeyEvent, MouseEvent};
 use crossterm::terminal::{self, EnterAlternateScreen, LeaveAlternateScreen};
-use crossterm::{execute, cursor};
-use ratatui::backend::CrosstermBackend;
+use crossterm::{cursor, execute};
 use ratatui::Terminal;
+use ratatui::backend::CrosstermBackend;
 
-use crate::config::{AppConfig, AppState};
-use crate::os::platform::Platform;
 use crate::config::keybindings::parse_key;
-use crate::git::{GitCommands, ModelPart, MODEL_PART_COUNT};
+use crate::config::{AppConfig, AppState};
+use crate::git::{GitCommands, MODEL_PART_COUNT, ModelPart};
 use crate::model::Model;
-use crate::model::file_tree::{build_file_tree, CommitFileTreeNode, FileTreeNode};
+use crate::model::file_tree::{CommitFileTreeNode, FileTreeNode, build_file_tree};
+use crate::os::platform::Platform;
 use crate::pager::side_by_side::{DiffPanelLayout, DiffViewState, TextSelection};
 
 use self::context::{ContextId, ContextManager, SideWindow};
 use self::layout::LayoutState;
-use self::popup::{HelpEntry, HelpSection};
 use self::modes::diff_mode::DiffModeState;
 use self::modes::patch_building::PatchBuildingState;
 use self::modes::rebase_mode::RebaseModeState;
+use self::popup::{HelpEntry, HelpSection};
 use self::popup::{ListPickerItem, MessageKind, PopupState};
 
 /// Compute the display row index for a given item selection,
@@ -57,7 +57,9 @@ fn list_picker_display_idx(items: &[ListPickerItem], sel: usize) -> usize {
 /// Compute the visible list height for a list picker popup, given terminal height.
 /// Must match the rendering formula: popup 60% height, minus borders (2), search bar + sep + hint (3).
 fn list_picker_visible_height(terminal_height: usize) -> usize {
-    let popup_h = (terminal_height * 60 / 100).max(10).min(terminal_height.saturating_sub(4));
+    let popup_h = (terminal_height * 60 / 100)
+        .max(10)
+        .min(terminal_height.saturating_sub(4));
     popup_h.saturating_sub(2).saturating_sub(3)
 }
 
@@ -75,9 +77,16 @@ pub(crate) struct DiffResult {
 
 pub(crate) enum DiffPayload {
     /// Side-by-side diff from old/new content.
-    Content { filename: String, old: String, new: String },
+    Content {
+        filename: String,
+        old: String,
+        new: String,
+    },
     /// Unified diff output from git.
-    UnifiedDiff { filename: String, diff_output: String },
+    UnifiedDiff {
+        filename: String,
+        diff_output: String,
+    },
     /// Pre-parsed diff ready to apply (parsing done on background thread).
     Parsed(crate::pager::side_by_side::ParsedDiff),
     /// No diff to show.
@@ -213,7 +222,8 @@ pub struct Gui {
     pub current_theme_index: usize,
     /// Cache of shortstat summaries per commit hash.  Populated asynchronously
     /// by background threads so the render path never blocks on git.
-    pub commit_stats_cache: std::sync::Arc<std::sync::Mutex<HashMap<String, crate::model::commit::CommitStat>>>,
+    pub commit_stats_cache:
+        std::sync::Arc<std::sync::Mutex<HashMap<String, crate::model::commit::CommitStat>>>,
     /// Set of commit hashes with an in-flight stat fetch, so we don't spawn
     /// duplicate workers on each frame.
     pub commit_stats_inflight: std::sync::Arc<std::sync::Mutex<HashSet<String>>>,
@@ -294,11 +304,7 @@ impl Gui {
             .app_state
             .color_theme
             .as_deref()
-            .and_then(|id| {
-                crate::config::COLOR_THEMES
-                    .iter()
-                    .position(|t| t.id == id)
-            })
+            .and_then(|id| crate::config::COLOR_THEMES.iter().position(|t| t.id == id))
             .unwrap_or(0);
 
         Ok(Self {
@@ -430,7 +436,11 @@ impl Gui {
                             model.total_deletions = deleted;
                         }
                         ModelPart::RepoStatus {
-                            is_rebasing, is_merging, is_cherry_picking, is_bisecting, rebase_onto_hash,
+                            is_rebasing,
+                            is_merging,
+                            is_cherry_picking,
+                            is_bisecting,
+                            rebase_onto_hash,
                         } => {
                             model.is_rebasing = is_rebasing;
                             model.is_merging = is_merging;
@@ -446,10 +456,8 @@ impl Gui {
                 // Rebuild file tree if files arrived this frame.
                 if got_files && self.show_file_tree {
                     let model = self.model.lock().unwrap();
-                    self.file_tree_nodes =
-                        build_file_tree(&model.files, &self.collapsed_dirs);
-                    self.context_mgr.files_list_len_override =
-                        Some(self.file_tree_nodes.len());
+                    self.file_tree_nodes = build_file_tree(&model.files, &self.collapsed_dirs);
+                    self.context_mgr.files_list_len_override = Some(self.file_tree_nodes.len());
                 }
                 // Trigger a diff load once any data arrives.
                 if self.initial_load_received > 0 {
@@ -487,19 +495,23 @@ impl Gui {
             let theme = self.active_theme();
             terminal.draw(|frame| {
                 if self.rebase_mode.active {
-                    presentation::rebase_mode::render(
-                        frame,
-                        &self.rebase_mode,
-                        &theme,
-                    );
+                    presentation::rebase_mode::render(frame, &self.rebase_mode, &theme);
                     // Render popup overlay on top of rebase mode
                     if self.popup != PopupState::None {
-                        views::render_popup(frame, &self.popup, frame.area(), self.spinner_frame, &theme);
+                        views::render_popup(
+                            frame,
+                            &self.popup,
+                            frame.area(),
+                            self.spinner_frame,
+                            &theme,
+                        );
                     }
                 } else if self.diff_mode.active {
-                    let diff_loading_show = self.diff_loading && self.diff_loading_since
-                        .map(|t| t.elapsed() >= std::time::Duration::from_millis(50))
-                        .unwrap_or(false);
+                    let diff_loading_show = self.diff_loading
+                        && self
+                            .diff_loading_since
+                            .map(|t| t.elapsed() >= std::time::Duration::from_millis(50))
+                            .unwrap_or(false);
                     presentation::diff_mode::render(
                         frame,
                         &mut self.diff_mode,
@@ -510,7 +522,13 @@ impl Gui {
                     );
                     // Render popup overlay on top of diff mode (for ? help, errors, etc.)
                     if self.popup != PopupState::None {
-                        views::render_popup(frame, &self.popup, frame.area(), self.spinner_frame, &theme);
+                        views::render_popup(
+                            frame,
+                            &self.popup,
+                            frame.area(),
+                            self.spinner_frame,
+                            &theme,
+                        );
                     }
                 } else {
                     let model = self.model.lock().unwrap();
@@ -560,9 +578,11 @@ impl Gui {
                         self.range_select_anchor,
                         self.diff_loading,
                         // Only show "Loading diff..." text after a short delay to avoid jitter on fast loads
-                        self.diff_loading && self.diff_loading_since
-                            .map(|t| t.elapsed() >= std::time::Duration::from_millis(50))
-                            .unwrap_or(false),
+                        self.diff_loading
+                            && self
+                                .diff_loading_since
+                                .map(|t| t.elapsed() >= std::time::Duration::from_millis(50))
+                                .unwrap_or(false),
                         &self.commit_stats_cache,
                         &self.commit_stats_inflight,
                         &self.git,
@@ -673,8 +693,12 @@ impl Gui {
                     self.diff_view.file_exists_on_disk =
                         self.git.repo_path().join(&filename).exists();
                 }
-                DiffPayload::UnifiedDiff { filename, diff_output } => {
-                    self.diff_view.load_from_diff_output(&filename, &diff_output);
+                DiffPayload::UnifiedDiff {
+                    filename,
+                    diff_output,
+                } => {
+                    self.diff_view
+                        .load_from_diff_output(&filename, &diff_output);
                     self.diff_view.file_exists_on_disk =
                         self.git.repo_path().join(&filename).exists();
                 }
@@ -696,7 +720,11 @@ impl Gui {
                     let popup_width = (self.layout.width * 60 / 100).min(60).max(30);
                     let popup_inner = popup_width.saturating_sub(4) as usize;
                     let config_width = self.config.user_config.git.commit.auto_wrap_width;
-                    let wrap = if config_width > 0 { popup_inner.min(config_width) } else { popup_inner };
+                    let wrap = if config_width > 0 {
+                        popup_inner.min(config_width)
+                    } else {
+                        popup_inner
+                    };
 
                     // Split AI message into summary (first line) and body (rest).
                     // The AI usually emits a hard-wrapped body (~72-char lines); strip those
@@ -836,7 +864,12 @@ impl Gui {
     /// otherwise use the currently selected index.
     fn execute_menu_action(&mut self, override_idx: Option<usize>) {
         let popup = std::mem::replace(&mut self.popup, PopupState::None);
-        if let PopupState::Menu { ref items, selected, .. } = popup {
+        if let PopupState::Menu {
+            ref items,
+            selected,
+            ..
+        } = popup
+        {
             let idx = override_idx.unwrap_or(selected);
             let has_action = items.get(idx).and_then(|i| i.action.as_ref()).is_some();
             if has_action {
@@ -884,7 +917,13 @@ impl Gui {
         if let Ok(result) = self.menu_async_rx.try_recv() {
             // Only process if the popup is still a menu with loading state.
             // If the user pressed Esc, the menu is already gone — discard the result.
-            let is_menu_loading = matches!(&self.popup, PopupState::Menu { loading_index: Some(_), .. });
+            let is_menu_loading = matches!(
+                &self.popup,
+                PopupState::Menu {
+                    loading_index: Some(_),
+                    ..
+                }
+            );
             if !is_menu_loading {
                 return;
             }
@@ -958,7 +997,13 @@ impl Gui {
     {
         // Restore the menu popup (stashed by execute_menu_action) with loading_index set.
         if let Some(menu) = self.pending_menu_popup.take() {
-            if let PopupState::Menu { title, items, selected, .. } = menu {
+            if let PopupState::Menu {
+                title,
+                items,
+                selected,
+                ..
+            } = menu
+            {
                 self.popup = PopupState::Menu {
                     title,
                     items,
@@ -1067,7 +1112,9 @@ impl Gui {
             ContextId::Files => {
                 // Files panel: load and parse async on background thread
                 let file_idx = if self.show_file_tree {
-                    self.file_tree_nodes.get(selected).and_then(|n| n.file_index)
+                    self.file_tree_nodes
+                        .get(selected)
+                        .and_then(|n| n.file_index)
                 } else {
                     Some(selected)
                 };
@@ -1128,7 +1175,14 @@ impl Gui {
                                 .child_file_indices
                                 .iter()
                                 .filter_map(|&i| model.files.get(i))
-                                .map(|f| (f.name.clone(), f.has_unstaged_changes, f.has_staged_changes, f.tracked))
+                                .map(|f| {
+                                    (
+                                        f.name.clone(),
+                                        f.has_unstaged_changes,
+                                        f.has_staged_changes,
+                                        f.tracked,
+                                    )
+                                })
                                 .collect();
                             let dir_name = node.name.clone();
                             drop(model);
@@ -1138,7 +1192,7 @@ impl Gui {
                             let gen_counter = Arc::clone(&self.diff_generation);
 
                             self.diff_loading = true;
-                    self.diff_loading_since = Some(Instant::now());
+                            self.diff_loading_since = Some(Instant::now());
                             std::thread::spawn(move || {
                                 if gen_counter.load(Ordering::Relaxed) != generation {
                                     return;
@@ -1175,7 +1229,10 @@ impl Gui {
                                     DiffPayload::Empty
                                 } else {
                                     DiffPayload::Parsed(DiffViewState::parse_diff_output(
-                                        &dir_name, &combined_diff, 4, true,
+                                        &dir_name,
+                                        &combined_diff,
+                                        4,
+                                        true,
                                     ))
                                 };
                                 let _ = tx.send(DiffResult {
@@ -1337,7 +1394,9 @@ impl Gui {
             ContextId::CommitFiles | ContextId::StashFiles | ContextId::BranchCommitFiles => {
                 // CommitFiles/StashFiles/BranchCommitFiles: load and parse diff async
                 let file_idx = if self.show_commit_file_tree {
-                    self.commit_file_tree_nodes.get(selected).and_then(|n| n.file_index)
+                    self.commit_file_tree_nodes
+                        .get(selected)
+                        .and_then(|n| n.file_index)
                 } else {
                     Some(selected)
                 };
@@ -1393,7 +1452,7 @@ impl Gui {
                             let gen_counter = Arc::clone(&self.diff_generation);
 
                             self.diff_loading = true;
-                    self.diff_loading_since = Some(Instant::now());
+                            self.diff_loading_since = Some(Instant::now());
                             std::thread::spawn(move || {
                                 if gen_counter.load(Ordering::Relaxed) != generation {
                                     return;
@@ -1416,7 +1475,10 @@ impl Gui {
                                     DiffPayload::Empty
                                 } else {
                                     DiffPayload::Parsed(DiffViewState::parse_diff_output(
-                                        &dir_name, &combined_diff, 4, true,
+                                        &dir_name,
+                                        &combined_diff,
+                                        4,
+                                        true,
                                     ))
                                 };
                                 let _ = tx.send(DiffResult {
@@ -1506,8 +1568,7 @@ impl Gui {
                     self.context_mgr.set_active(ContextId::Commits);
                     return Ok(());
                 }
-                if self.context_mgr.active() == ContextId::StashFiles
-                    && window == SideWindow::Stash
+                if self.context_mgr.active() == ContextId::StashFiles && window == SideWindow::Stash
                 {
                     self.context_mgr.set_active(ContextId::Stash);
                     return Ok(());
@@ -1873,10 +1934,18 @@ impl Gui {
                         let abs_path = abs_path.to_string_lossy().to_string();
                         let os = &self.config.user_config.os;
                         if let Some(ln) = line {
-                            let tpl = if !os.edit_at_line.is_empty() { &os.edit_at_line } else { &os.edit };
-                            let _ = crate::config::user_config::OsConfig::run_template_at_line(tpl, &abs_path, ln, column);
+                            let tpl = if !os.edit_at_line.is_empty() {
+                                &os.edit_at_line
+                            } else {
+                                &os.edit
+                            };
+                            let _ = crate::config::user_config::OsConfig::run_template_at_line(
+                                tpl, &abs_path, ln, column,
+                            );
                         } else {
-                            let _ = crate::config::user_config::OsConfig::run_template(&os.edit, &abs_path);
+                            let _ = crate::config::user_config::OsConfig::run_template(
+                                &os.edit, &abs_path,
+                            );
                         }
                     }
                     return Ok(());
@@ -2186,7 +2255,12 @@ impl Gui {
                 // Any key dismisses the message
                 self.popup = PopupState::None;
             }
-            PopupState::Menu { items, selected, loading_index, .. } => {
+            PopupState::Menu {
+                items,
+                selected,
+                loading_index,
+                ..
+            } => {
                 // Block all input while a menu item is loading (except Esc)
                 if loading_index.is_some() && key.code != KeyCode::Esc {
                     return Ok(());
@@ -2194,7 +2268,10 @@ impl Gui {
                 let _items_len = items.len();
                 match key.code {
                     KeyCode::Char('j') | KeyCode::Down => {
-                        if let PopupState::Menu { items, selected, .. } = &mut self.popup {
+                        if let PopupState::Menu {
+                            items, selected, ..
+                        } = &mut self.popup
+                        {
                             // Skip disabled items
                             let mut next = *selected + 1;
                             while next < items.len() && items[next].action.is_none() {
@@ -2206,7 +2283,10 @@ impl Gui {
                         }
                     }
                     KeyCode::Char('k') | KeyCode::Up => {
-                        if let PopupState::Menu { items, selected, .. } = &mut self.popup {
+                        if let PopupState::Menu {
+                            items, selected, ..
+                        } = &mut self.popup
+                        {
                             // Skip disabled items
                             if *selected > 0 {
                                 let mut prev = *selected - 1;
@@ -2232,9 +2312,9 @@ impl Gui {
                     KeyCode::Char(c) => {
                         // Check if the typed char matches a menu item shortcut key
                         let key_str = c.to_string();
-                        let matched_idx = items.iter().position(|item| {
-                            item.key.as_deref() == Some(key_str.as_str())
-                        });
+                        let matched_idx = items
+                            .iter()
+                            .position(|item| item.key.as_deref() == Some(key_str.as_str()));
                         if let Some(idx) = matched_idx {
                             // Check if the item has an action (not disabled)
                             let has_action = items[idx].action.is_some();
@@ -2248,14 +2328,21 @@ impl Gui {
                     _ => {}
                 }
             }
-            PopupState::Input { is_commit, confirm_focused, .. } => {
+            PopupState::Input {
+                is_commit,
+                confirm_focused,
+                ..
+            } => {
                 use crossterm::event::KeyModifiers;
                 let is_commit = *is_commit;
                 let confirm_focused = *confirm_focused;
 
                 // Tab toggles focus between textarea and confirm button (commit only)
                 if is_commit && key.code == KeyCode::Tab {
-                    if let PopupState::Input { confirm_focused, .. } = &mut self.popup {
+                    if let PopupState::Input {
+                        confirm_focused, ..
+                    } = &mut self.popup
+                    {
                         *confirm_focused = !*confirm_focused;
                     }
                 }
@@ -2326,7 +2413,8 @@ impl Gui {
                                     };
                                     self.commit_history_idx = Some(new_idx);
                                     let msg = &self.commit_message_history[new_idx];
-                                    let mut new_ta = popup::make_textarea("Enter commit message...");
+                                    let mut new_ta =
+                                        popup::make_textarea("Enter commit message...");
                                     new_ta.insert_str(msg);
                                     *textarea = new_ta;
                                 }
@@ -2336,7 +2424,8 @@ impl Gui {
                                             // Go back to draft
                                             self.commit_history_idx = None;
                                             let draft = self.commit_history_draft.clone();
-                                            let mut new_ta = popup::make_textarea("Enter commit message...");
+                                            let mut new_ta =
+                                                popup::make_textarea("Enter commit message...");
                                             new_ta.insert_str(&draft);
                                             *textarea = new_ta;
                                         }
@@ -2344,7 +2433,8 @@ impl Gui {
                                             let new_idx = idx - 1;
                                             self.commit_history_idx = Some(new_idx);
                                             let msg = &self.commit_message_history[new_idx];
-                                            let mut new_ta = popup::make_textarea("Enter commit message...");
+                                            let mut new_ta =
+                                                popup::make_textarea("Enter commit message...");
                                             new_ta.insert_str(msg);
                                             *textarea = new_ta;
                                         }
@@ -2362,7 +2452,15 @@ impl Gui {
                     }
                 } else if is_commit
                     && !confirm_focused
-                    && matches_key(key, &self.config.user_config.keybinding.commit_message.commit_menu)
+                    && matches_key(
+                        key,
+                        &self
+                            .config
+                            .user_config
+                            .keybinding
+                            .commit_message
+                            .commit_menu,
+                    )
                 {
                     // Commit message editor menu key (configurable)
                     self.show_commit_editor_menu()?;
@@ -2410,13 +2508,20 @@ impl Gui {
 
                 // Tab toggles focus between summary and body
                 if key.code == KeyCode::Tab {
-                    if let PopupState::CommitInput { focus, summary_textarea, body_textarea, .. } = &mut self.popup {
+                    if let PopupState::CommitInput {
+                        focus,
+                        summary_textarea,
+                        body_textarea,
+                        ..
+                    } = &mut self.popup
+                    {
                         *focus = match *focus {
                             popup::CommitInputFocus::Summary => popup::CommitInputFocus::Body,
                             popup::CommitInputFocus::Body => popup::CommitInputFocus::Summary,
                         };
                         // Update cursor visibility based on focus
-                        let visible = ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::REVERSED);
+                        let visible = ratatui::style::Style::default()
+                            .add_modifier(ratatui::style::Modifier::REVERSED);
                         let hidden = ratatui::style::Style::default();
                         match *focus {
                             popup::CommitInputFocus::Summary => {
@@ -2486,11 +2591,27 @@ impl Gui {
                     self.commit_history_idx = None;
                 }
                 // Open commit menu key (configurable)
-                else if matches_key(key, &self.config.user_config.keybinding.commit_message.commit_menu) {
+                else if matches_key(
+                    key,
+                    &self
+                        .config
+                        .user_config
+                        .keybinding
+                        .commit_message
+                        .commit_menu,
+                ) {
                     self.show_commit_editor_menu()?;
                 }
                 // AI generate key (configurable)
-                else if matches_key(key, &self.config.user_config.keybinding.commit_message.ai_generate) {
+                else if matches_key(
+                    key,
+                    &self
+                        .config
+                        .user_config
+                        .keybinding
+                        .commit_message
+                        .ai_generate,
+                ) {
                     self.trigger_ai_commit_generation_from_editor();
                 }
                 // Up/Down on summary: cycle commit history
@@ -2550,7 +2671,22 @@ impl Gui {
                                     }
                                     None => {}
                                 }
-                            }
+                                Some(idx) => {
+                                    let new_idx = idx - 1;
+                                    self.commit_history_idx = Some(new_idx);
+                                    let msg = &self.commit_message_history[new_idx];
+                                    let (summary, body) = split_commit_message(msg);
+                                    let mut new_summary = popup::make_commit_summary_textarea();
+                                    new_summary.insert_str(&summary);
+                                    *summary_textarea = new_summary;
+                                    let mut new_body = popup::make_commit_body_textarea();
+                                    if !body.is_empty() {
+                                        new_body.insert_str(&body);
+                                    }
+                                    *body_textarea = new_body;
+                                }
+                                None => {}
+                            },
                             _ => {}
                         }
                     }
@@ -2619,7 +2755,12 @@ impl Gui {
                     }
                 }
             }
-            PopupState::Checklist { items, selected, search, .. } => {
+            PopupState::Checklist {
+                items,
+                selected,
+                search,
+                ..
+            } => {
                 use crossterm::event::KeyModifiers;
                 // Ctrl+A: clear all checks
                 if key.code == KeyCode::Char('a') && key.modifiers.contains(KeyModifiers::CONTROL) {
@@ -2630,8 +2771,12 @@ impl Gui {
                     }
                     return Ok(());
                 }
-                let visible_count = items.iter()
-                    .filter(|it| search.is_empty() || it.label.to_lowercase().contains(&search.to_lowercase()))
+                let visible_count = items
+                    .iter()
+                    .filter(|it| {
+                        search.is_empty()
+                            || it.label.to_lowercase().contains(&search.to_lowercase())
+                    })
                     .count();
                 match key.code {
                     KeyCode::Down | KeyCode::Char('j') => {
@@ -2648,9 +2793,20 @@ impl Gui {
                     }
                     KeyCode::Char(' ') => {
                         // Toggle checked state on the visible item at `selected`
-                        if let PopupState::Checklist { items, selected, search, .. } = &mut self.popup {
-                            let visible_indices: Vec<usize> = items.iter().enumerate()
-                                .filter(|(_, it)| search.is_empty() || it.label.to_lowercase().contains(&search.to_lowercase()))
+                        if let PopupState::Checklist {
+                            items,
+                            selected,
+                            search,
+                            ..
+                        } = &mut self.popup
+                        {
+                            let visible_indices: Vec<usize> = items
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, it)| {
+                                    search.is_empty()
+                                        || it.label.to_lowercase().contains(&search.to_lowercase())
+                                })
                                 .map(|(i, _)| i)
                                 .collect();
                             if let Some(&real_idx) = visible_indices.get(*selected) {
@@ -2660,8 +2816,12 @@ impl Gui {
                     }
                     KeyCode::Enter => {
                         let popup = std::mem::replace(&mut self.popup, PopupState::None);
-                        if let PopupState::Checklist { items, on_confirm, .. } = popup {
-                            let checked: Vec<String> = items.into_iter()
+                        if let PopupState::Checklist {
+                            items, on_confirm, ..
+                        } = popup
+                        {
+                            let checked: Vec<String> = items
+                                .into_iter()
                                 .filter(|it| it.checked)
                                 .map(|it| it.label)
                                 .collect();
@@ -2678,7 +2838,10 @@ impl Gui {
                         self.popup = PopupState::None;
                     }
                     KeyCode::Backspace => {
-                        if let PopupState::Checklist { search, selected, .. } = &mut self.popup {
+                        if let PopupState::Checklist {
+                            search, selected, ..
+                        } = &mut self.popup
+                        {
                             search.pop();
                             *selected = 0;
                         }
@@ -2686,7 +2849,10 @@ impl Gui {
                     KeyCode::Char(c) => {
                         // Type into search filter (but not j/k which are nav)
                         // j/k already handled above, this won't fire for them
-                        if let PopupState::Checklist { search, selected, .. } = &mut self.popup {
+                        if let PopupState::Checklist {
+                            search, selected, ..
+                        } = &mut self.popup
+                        {
                             search.push(c);
                             *selected = 0;
                         }
@@ -2748,21 +2914,33 @@ impl Gui {
 
         fn count_visible(sections: &[HelpSection], search_lower: &str) -> usize {
             let has_search = !search_lower.is_empty();
-            sections.iter().map(|s| {
-                if has_search {
-                    s.entries.iter().filter(|e| {
-                        e.key.to_lowercase().contains(search_lower)
-                            || e.description.to_lowercase().contains(search_lower)
-                    }).count()
-                } else {
-                    s.entries.len()
-                }
-            }).sum()
+            sections
+                .iter()
+                .map(|s| {
+                    if has_search {
+                        s.entries
+                            .iter()
+                            .filter(|e| {
+                                e.key.to_lowercase().contains(search_lower)
+                                    || e.description.to_lowercase().contains(search_lower)
+                            })
+                            .count()
+                    } else {
+                        s.entries.len()
+                    }
+                })
+                .sum()
         }
 
         let mut open_theme_picker = false;
 
-        if let PopupState::Help { sections, selected, search_textarea, scroll_offset } = &mut self.popup {
+        if let PopupState::Help {
+            sections,
+            selected,
+            search_textarea,
+            scroll_offset,
+        } = &mut self.popup
+        {
             use crossterm::event::KeyModifiers;
             let search = search_textarea.lines().join("");
             let search_lower = search.to_lowercase();
@@ -2772,7 +2950,9 @@ impl Gui {
             let list_height = popup_height.saturating_sub(5); // borders + search + sep + hint
 
             match key.code {
-                KeyCode::Esc | KeyCode::Char('?') if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT => {
+                KeyCode::Esc | KeyCode::Char('?')
+                    if key.modifiers.is_empty() || key.modifiers == KeyModifiers::SHIFT =>
+                {
                     self.popup = PopupState::None;
                     return;
                 }
@@ -2905,11 +3085,14 @@ impl Gui {
 
                         let new_lower = new_search.to_lowercase();
                         if !new_lower.is_empty() {
-                            core.items.insert(0, ListPickerItem {
-                                value: new_search.trim().to_string(),
-                                label: new_search.trim().to_string(),
-                                category: "[ref]".to_string(),
-                            });
+                            core.items.insert(
+                                0,
+                                ListPickerItem {
+                                    value: new_search.trim().to_string(),
+                                    label: new_search.trim().to_string(),
+                                    category: "[ref]".to_string(),
+                                },
+                            );
 
                             if let Some(idx) = core.items.iter().skip(1).position(|i| {
                                 i.label.to_lowercase().contains(&new_lower)
@@ -2933,7 +3116,11 @@ impl Gui {
     }
 
     fn handle_theme_picker_key(&mut self, key: KeyEvent) {
-        if let PopupState::ThemePicker { core, original_theme_index } = &mut self.popup {
+        if let PopupState::ThemePicker {
+            core,
+            original_theme_index,
+        } = &mut self.popup
+        {
             let total = core.items.len();
             let search = core.search_textarea.lines().join("");
 
@@ -2971,7 +3158,11 @@ impl Gui {
                 }
                 KeyCode::Up => {
                     if total > 0 {
-                        core.selected = if core.selected == 0 { total - 1 } else { core.selected - 1 };
+                        core.selected = if core.selected == 0 {
+                            total - 1
+                        } else {
+                            core.selected - 1
+                        };
                     }
                     self.current_theme_index = core.selected;
                     if core.selected < core.scroll_offset {
@@ -2988,9 +3179,11 @@ impl Gui {
                     if new_search != search {
                         let new_lower = new_search.to_lowercase();
                         if !new_lower.is_empty() {
-                            if let Some(idx) = core.items.iter().position(|i| {
-                                i.label.to_lowercase().contains(&new_lower)
-                            }) {
+                            if let Some(idx) = core
+                                .items
+                                .iter()
+                                .position(|i| i.label.to_lowercase().contains(&new_lower))
+                            {
                                 core.selected = idx;
                                 self.current_theme_index = idx;
                                 // Center the match in the viewport
@@ -2999,7 +3192,8 @@ impl Gui {
                         } else {
                             core.selected = *original_theme_index;
                             self.current_theme_index = *original_theme_index;
-                            core.scroll_offset = original_theme_index.saturating_sub(list_height / 2);
+                            core.scroll_offset =
+                                original_theme_index.saturating_sub(list_height / 2);
                         }
                     }
                 }
@@ -3008,7 +3202,7 @@ impl Gui {
     }
 
     fn show_theme_picker(&mut self) {
-        use crate::gui::popup::{ListPickerItem, ListPickerCore, make_help_search_textarea};
+        use crate::gui::popup::{ListPickerCore, ListPickerItem, make_help_search_textarea};
 
         let original = self.current_theme_index;
         let items: Vec<ListPickerItem> = crate::config::COLOR_THEMES
@@ -3032,7 +3226,7 @@ impl Gui {
     }
 
     pub fn show_interactive_rebase_picker(&mut self) {
-        use crate::gui::popup::{ListPickerItem, ListPickerCore, make_help_search_textarea};
+        use crate::gui::popup::{ListPickerCore, ListPickerItem, make_help_search_textarea};
 
         let model = self.model.lock().unwrap();
         let mut items = Vec::new();
@@ -3099,41 +3293,146 @@ impl Gui {
         let universal = HelpSection {
             title: "Universal".into(),
             entries: vec![
-                HelpEntry { key: kb.universal.quit.clone(), description: "Quit".into() },
-                HelpEntry { key: kb.universal.quit_alt1.clone(), description: "Quit (alt)".into() },
-                HelpEntry { key: kb.universal.return_key.clone(), description: "Return / Cancel".into() },
-                HelpEntry { key: kb.universal.toggle_panel.clone(), description: "Next panel".into() },
-                HelpEntry { key: kb.universal.prev_item.clone(), description: "Previous item".into() },
-                HelpEntry { key: kb.universal.next_item.clone(), description: "Next item".into() },
-                HelpEntry { key: kb.universal.prev_page.clone(), description: "Page up".into() },
-                HelpEntry { key: kb.universal.next_page.clone(), description: "Page down".into() },
-                HelpEntry { key: kb.universal.goto_top.clone(), description: "Go to top".into() },
-                HelpEntry { key: kb.universal.goto_bottom.clone(), description: "Go to bottom".into() },
-                HelpEntry { key: kb.universal.prev_block.clone(), description: "Previous panel".into() },
-                HelpEntry { key: kb.universal.next_block.clone(), description: "Next panel".into() },
-                HelpEntry { key: kb.universal.start_search.clone(), description: "Search".into() },
-                HelpEntry { key: kb.universal.next_match.clone(), description: "Next search match".into() },
-                HelpEntry { key: kb.universal.prev_match.clone(), description: "Previous search match".into() },
-                HelpEntry { key: kb.universal.scroll_up_main_alt1.clone(), description: "Scroll diff up".into() },
-                HelpEntry { key: kb.universal.scroll_down_main_alt1.clone(), description: "Scroll diff down".into() },
-                HelpEntry { key: kb.universal.scroll_left.clone(), description: "Scroll left".into() },
-                HelpEntry { key: kb.universal.scroll_right.clone(), description: "Scroll right".into() },
-                HelpEntry { key: kb.universal.undo.clone(), description: "Undo".into() },
-                HelpEntry { key: kb.universal.redo.clone(), description: "Redo".into() },
-                HelpEntry { key: kb.universal.refresh.clone(), description: "Refresh".into() },
-                HelpEntry { key: kb.universal.push_files.clone(), description: "Push".into() },
-                HelpEntry { key: kb.universal.pull_files.clone(), description: "Pull".into() },
-                HelpEntry { key: kb.universal.next_screen_mode.clone(), description: "Enlarge panel".into() },
-                HelpEntry { key: kb.universal.prev_screen_mode.clone(), description: "Shrink panel".into() },
-                HelpEntry { key: kb.universal.create_rebase_options_menu.clone(), description: "Rebase options".into() },
-                HelpEntry { key: kb.universal.create_patch_options_menu.clone(), description: "Patch options".into() },
-                HelpEntry { key: "{/}".into(), description: "Previous/next hunk".into() },
-                HelpEntry { key: ";".into(), description: "Toggle command log".into() },
-                HelpEntry { key: "W".into(), description: "Compare / Diff mode".into() },
-                HelpEntry { key: "I".into(), description: "Interactive rebase onto...".into() },
-                HelpEntry { key: "1-5".into(), description: "Jump to panel".into() },
-                HelpEntry { key: "?".into(), description: "Show this help".into() },
-                HelpEntry { key: "▸".into(), description: "Color theme...".into() },
+                HelpEntry {
+                    key: kb.universal.quit.clone(),
+                    description: "Quit".into(),
+                },
+                HelpEntry {
+                    key: kb.universal.quit_alt1.clone(),
+                    description: "Quit (alt)".into(),
+                },
+                HelpEntry {
+                    key: kb.universal.return_key.clone(),
+                    description: "Return / Cancel".into(),
+                },
+                HelpEntry {
+                    key: kb.universal.toggle_panel.clone(),
+                    description: "Next panel".into(),
+                },
+                HelpEntry {
+                    key: kb.universal.prev_item.clone(),
+                    description: "Previous item".into(),
+                },
+                HelpEntry {
+                    key: kb.universal.next_item.clone(),
+                    description: "Next item".into(),
+                },
+                HelpEntry {
+                    key: kb.universal.prev_page.clone(),
+                    description: "Page up".into(),
+                },
+                HelpEntry {
+                    key: kb.universal.next_page.clone(),
+                    description: "Page down".into(),
+                },
+                HelpEntry {
+                    key: kb.universal.goto_top.clone(),
+                    description: "Go to top".into(),
+                },
+                HelpEntry {
+                    key: kb.universal.goto_bottom.clone(),
+                    description: "Go to bottom".into(),
+                },
+                HelpEntry {
+                    key: kb.universal.prev_block.clone(),
+                    description: "Previous panel".into(),
+                },
+                HelpEntry {
+                    key: kb.universal.next_block.clone(),
+                    description: "Next panel".into(),
+                },
+                HelpEntry {
+                    key: kb.universal.start_search.clone(),
+                    description: "Search".into(),
+                },
+                HelpEntry {
+                    key: kb.universal.next_match.clone(),
+                    description: "Next search match".into(),
+                },
+                HelpEntry {
+                    key: kb.universal.prev_match.clone(),
+                    description: "Previous search match".into(),
+                },
+                HelpEntry {
+                    key: kb.universal.scroll_up_main_alt1.clone(),
+                    description: "Scroll diff up".into(),
+                },
+                HelpEntry {
+                    key: kb.universal.scroll_down_main_alt1.clone(),
+                    description: "Scroll diff down".into(),
+                },
+                HelpEntry {
+                    key: kb.universal.scroll_left.clone(),
+                    description: "Scroll left".into(),
+                },
+                HelpEntry {
+                    key: kb.universal.scroll_right.clone(),
+                    description: "Scroll right".into(),
+                },
+                HelpEntry {
+                    key: kb.universal.undo.clone(),
+                    description: "Undo".into(),
+                },
+                HelpEntry {
+                    key: kb.universal.redo.clone(),
+                    description: "Redo".into(),
+                },
+                HelpEntry {
+                    key: kb.universal.refresh.clone(),
+                    description: "Refresh".into(),
+                },
+                HelpEntry {
+                    key: kb.universal.push_files.clone(),
+                    description: "Push".into(),
+                },
+                HelpEntry {
+                    key: kb.universal.pull_files.clone(),
+                    description: "Pull".into(),
+                },
+                HelpEntry {
+                    key: kb.universal.next_screen_mode.clone(),
+                    description: "Enlarge panel".into(),
+                },
+                HelpEntry {
+                    key: kb.universal.prev_screen_mode.clone(),
+                    description: "Shrink panel".into(),
+                },
+                HelpEntry {
+                    key: kb.universal.create_rebase_options_menu.clone(),
+                    description: "Rebase options".into(),
+                },
+                HelpEntry {
+                    key: kb.universal.create_patch_options_menu.clone(),
+                    description: "Patch options".into(),
+                },
+                HelpEntry {
+                    key: "{/}".into(),
+                    description: "Previous/next hunk".into(),
+                },
+                HelpEntry {
+                    key: ";".into(),
+                    description: "Toggle command log".into(),
+                },
+                HelpEntry {
+                    key: "W".into(),
+                    description: "Compare / Diff mode".into(),
+                },
+                HelpEntry {
+                    key: "I".into(),
+                    description: "Interactive rebase onto...".into(),
+                },
+                HelpEntry {
+                    key: "1-5".into(),
+                    description: "Jump to panel".into(),
+                },
+                HelpEntry {
+                    key: "?".into(),
+                    description: "Show this help".into(),
+                },
+                HelpEntry {
+                    key: "▸".into(),
+                    description: "Color theme...".into(),
+                },
             ],
         };
 
@@ -3142,167 +3441,470 @@ impl Gui {
             ContextId::Files => HelpSection {
                 title: "Files".into(),
                 entries: vec![
-                    HelpEntry { key: "<enter>".into(), description: "Toggle dir / Focus diff".into() },
-                    HelpEntry { key: "<space>".into(), description: "Stage / Unstage".into() },
-                    HelpEntry { key: kb.files.commit_changes.clone(), description: "Commit".into() },
-                    HelpEntry { key: kb.files.generate_ai_commit.clone(), description: "Generate AI commit".into() },
-                    HelpEntry { key: kb.files.amend_last_commit.clone(), description: "Amend last commit".into() },
-                    HelpEntry { key: kb.files.commit_changes_with_editor.clone(), description: "Commit with editor".into() },
-                    HelpEntry { key: kb.files.toggle_staged_all.clone(), description: "Toggle stage all".into() },
-                    HelpEntry { key: kb.files.stash_all_changes.clone(), description: "Stash changes".into() },
-                    HelpEntry { key: kb.files.view_stash_options.clone(), description: "Stash options".into() },
-                    HelpEntry { key: kb.files.toggle_tree_view.clone(), description: "Toggle tree view".into() },
-                    HelpEntry { key: kb.files.fetch.clone(), description: "Fetch".into() },
-                    HelpEntry { key: kb.files.ignore_file.clone(), description: "Ignore file".into() },
-                    HelpEntry { key: "d".into(), description: "Discard changes".into() },
-                    HelpEntry { key: kb.universal.edit.clone(), description: "Open in editor".into() },
-                    HelpEntry { key: kb.universal.open_file.clone(), description: "Open in default program".into() },
-                    HelpEntry { key: "y".into(), description: "Copy to clipboard menu".into() },
+                    HelpEntry {
+                        key: "<enter>".into(),
+                        description: "Toggle dir / Focus diff".into(),
+                    },
+                    HelpEntry {
+                        key: "<space>".into(),
+                        description: "Stage / Unstage".into(),
+                    },
+                    HelpEntry {
+                        key: kb.files.commit_changes.clone(),
+                        description: "Commit".into(),
+                    },
+                    HelpEntry {
+                        key: kb.files.generate_ai_commit.clone(),
+                        description: "Generate AI commit".into(),
+                    },
+                    HelpEntry {
+                        key: kb.files.amend_last_commit.clone(),
+                        description: "Amend last commit".into(),
+                    },
+                    HelpEntry {
+                        key: kb.files.commit_changes_with_editor.clone(),
+                        description: "Commit with editor".into(),
+                    },
+                    HelpEntry {
+                        key: kb.files.toggle_staged_all.clone(),
+                        description: "Toggle stage all".into(),
+                    },
+                    HelpEntry {
+                        key: kb.files.stash_all_changes.clone(),
+                        description: "Stash changes".into(),
+                    },
+                    HelpEntry {
+                        key: kb.files.view_stash_options.clone(),
+                        description: "Stash options".into(),
+                    },
+                    HelpEntry {
+                        key: kb.files.toggle_tree_view.clone(),
+                        description: "Toggle tree view".into(),
+                    },
+                    HelpEntry {
+                        key: kb.files.fetch.clone(),
+                        description: "Fetch".into(),
+                    },
+                    HelpEntry {
+                        key: kb.files.ignore_file.clone(),
+                        description: "Ignore file".into(),
+                    },
+                    HelpEntry {
+                        key: "d".into(),
+                        description: "Discard changes".into(),
+                    },
+                    HelpEntry {
+                        key: kb.universal.edit.clone(),
+                        description: "Open in editor".into(),
+                    },
+                    HelpEntry {
+                        key: kb.universal.open_file.clone(),
+                        description: "Open in default program".into(),
+                    },
+                    HelpEntry {
+                        key: "y".into(),
+                        description: "Copy to clipboard menu".into(),
+                    },
                 ],
             },
             ContextId::Worktrees => HelpSection {
                 title: "Worktrees".into(),
                 entries: vec![
-                    HelpEntry { key: "<space>".into(), description: "Switch to worktree".into() },
-                    HelpEntry { key: "n".into(), description: "Create worktree".into() },
-                    HelpEntry { key: "d".into(), description: "Remove worktree".into() },
+                    HelpEntry {
+                        key: "<space>".into(),
+                        description: "Switch to worktree".into(),
+                    },
+                    HelpEntry {
+                        key: "n".into(),
+                        description: "Create worktree".into(),
+                    },
+                    HelpEntry {
+                        key: "d".into(),
+                        description: "Remove worktree".into(),
+                    },
                 ],
             },
             ContextId::Submodules => HelpSection {
                 title: "Submodules".into(),
                 entries: vec![
-                    HelpEntry { key: "<space>".into(), description: "Update submodule".into() },
-                    HelpEntry { key: "a".into(), description: "Add submodule".into() },
-                    HelpEntry { key: "d".into(), description: "Remove submodule".into() },
-                    HelpEntry { key: "e".into(), description: "Enter submodule".into() },
-                    HelpEntry { key: "u".into(), description: "Update all submodules".into() },
-                    HelpEntry { key: "i".into(), description: "Init submodules".into() },
+                    HelpEntry {
+                        key: "<space>".into(),
+                        description: "Update submodule".into(),
+                    },
+                    HelpEntry {
+                        key: "a".into(),
+                        description: "Add submodule".into(),
+                    },
+                    HelpEntry {
+                        key: "d".into(),
+                        description: "Remove submodule".into(),
+                    },
+                    HelpEntry {
+                        key: "e".into(),
+                        description: "Enter submodule".into(),
+                    },
+                    HelpEntry {
+                        key: "u".into(),
+                        description: "Update all submodules".into(),
+                    },
+                    HelpEntry {
+                        key: "i".into(),
+                        description: "Init submodules".into(),
+                    },
                 ],
             },
             ContextId::Branches => HelpSection {
                 title: "Branches".into(),
                 entries: vec![
-                    HelpEntry { key: "<enter>".into(), description: "View branch commits".into() },
-                    HelpEntry { key: "<space>".into(), description: "Checkout branch".into() },
-                    HelpEntry { key: "c".into(), description: "Checkout ref".into() },
-                    HelpEntry { key: "-".into(), description: "Checkout previous branch".into() },
-                    HelpEntry { key: "n".into(), description: "New branch".into() },
-                    HelpEntry { key: "d".into(), description: "Delete branch".into() },
-                    HelpEntry { key: kb.branches.merge_into_current_branch.clone(), description: "Merge into current".into() },
-                    HelpEntry { key: kb.branches.rebase_branch.clone(), description: "Rebase".into() },
-                    HelpEntry { key: kb.branches.rename_branch.clone(), description: "Rename branch".into() },
-                    HelpEntry { key: kb.branches.fast_forward.clone(), description: "Fast-forward".into() },
-                    HelpEntry { key: kb.branches.set_upstream.clone(), description: "Set upstream".into() },
-                    HelpEntry { key: "y".into(), description: "Copy to clipboard menu".into() },
-                    HelpEntry { key: kb.branches.create_pull_request.clone(), description: "Open in browser menu".into() },
+                    HelpEntry {
+                        key: "<enter>".into(),
+                        description: "View branch commits".into(),
+                    },
+                    HelpEntry {
+                        key: "<space>".into(),
+                        description: "Checkout branch".into(),
+                    },
+                    HelpEntry {
+                        key: "c".into(),
+                        description: "Checkout ref".into(),
+                    },
+                    HelpEntry {
+                        key: "-".into(),
+                        description: "Checkout previous branch".into(),
+                    },
+                    HelpEntry {
+                        key: "n".into(),
+                        description: "New branch".into(),
+                    },
+                    HelpEntry {
+                        key: "d".into(),
+                        description: "Delete branch".into(),
+                    },
+                    HelpEntry {
+                        key: kb.branches.merge_into_current_branch.clone(),
+                        description: "Merge into current".into(),
+                    },
+                    HelpEntry {
+                        key: kb.branches.rebase_branch.clone(),
+                        description: "Rebase".into(),
+                    },
+                    HelpEntry {
+                        key: kb.branches.rename_branch.clone(),
+                        description: "Rename branch".into(),
+                    },
+                    HelpEntry {
+                        key: kb.branches.fast_forward.clone(),
+                        description: "Fast-forward".into(),
+                    },
+                    HelpEntry {
+                        key: kb.branches.set_upstream.clone(),
+                        description: "Set upstream".into(),
+                    },
+                    HelpEntry {
+                        key: "y".into(),
+                        description: "Copy to clipboard menu".into(),
+                    },
+                    HelpEntry {
+                        key: kb.branches.create_pull_request.clone(),
+                        description: "Open in browser menu".into(),
+                    },
                 ],
             },
             ContextId::BranchCommits | ContextId::BranchCommitFiles => HelpSection {
                 title: "Branch Commits".into(),
                 entries: vec![
-                    HelpEntry { key: "<enter>".into(), description: "View commit files".into() },
-                    HelpEntry { key: "<esc>".into(), description: "Back to branches".into() },
-                    HelpEntry { key: ".".into(), description: "Toggle commit details panel".into() },
+                    HelpEntry {
+                        key: "<enter>".into(),
+                        description: "View commit files".into(),
+                    },
+                    HelpEntry {
+                        key: "<esc>".into(),
+                        description: "Back to branches".into(),
+                    },
+                    HelpEntry {
+                        key: ".".into(),
+                        description: "Toggle commit details panel".into(),
+                    },
                 ],
             },
             ContextId::Commits => HelpSection {
                 title: "Commits".into(),
                 entries: vec![
-                    HelpEntry { key: "<enter>".into(), description: "View commit files".into() },
-                    HelpEntry { key: kb.commits.squash_down.clone(), description: "Squash down".into() },
-                    HelpEntry { key: kb.commits.rename_commit.clone(), description: "Reword commit".into() },
-                    HelpEntry { key: kb.commits.view_reset_options.clone(), description: "Reset options".into() },
-                    HelpEntry { key: kb.commits.mark_commit_as_fixup.clone(), description: "Fixup commit".into() },
-                    HelpEntry { key: kb.commits.create_fixup_commit.clone(), description: "Create fixup commit".into() },
-                    HelpEntry { key: kb.commits.squash_above_commits.clone(), description: "Apply fixup commits".into() },
-                    HelpEntry { key: kb.commits.move_up_commit.clone(), description: "Move commit up".into() },
-                    HelpEntry { key: kb.commits.move_down_commit.clone(), description: "Move commit down".into() },
-                    HelpEntry { key: kb.commits.amend_to_commit.clone(), description: "Amend to commit".into() },
-                    HelpEntry { key: kb.commits.pick_commit.clone(), description: "Pick / Drop commit".into() },
-                    HelpEntry { key: kb.commits.revert_commit.clone(), description: "Revert commit".into() },
-                    HelpEntry { key: kb.commits.cherry_pick_copy.clone(), description: "Cherry-pick copy".into() },
-                    HelpEntry { key: kb.commits.paste_commits.clone(), description: "Paste commits".into() },
-                    HelpEntry { key: "v".into(), description: "Toggle range select".into() },
-                    HelpEntry { key: kb.commits.tag_commit.clone(), description: "Tag commit".into() },
-                    HelpEntry { key: kb.commits.checkout_commit.clone(), description: "Checkout commit".into() },
-                    HelpEntry { key: kb.commits.view_bisect_options.clone(), description: "Bisect options".into() },
-                    HelpEntry { key: "o".into(), description: "Open in browser".into() },
-                    HelpEntry { key: "y".into(), description: "Copy to clipboard menu".into() },
-                    HelpEntry { key: kb.commits.interactive_rebase.clone(), description: "Interactive rebase".into() },
-                    HelpEntry { key: kb.commits.open_log_menu.clone(), description: "Filter by branch".into() },
-                    HelpEntry { key: ".".into(), description: "Toggle commit details panel".into() },
+                    HelpEntry {
+                        key: "<enter>".into(),
+                        description: "View commit files".into(),
+                    },
+                    HelpEntry {
+                        key: kb.commits.squash_down.clone(),
+                        description: "Squash down".into(),
+                    },
+                    HelpEntry {
+                        key: kb.commits.rename_commit.clone(),
+                        description: "Reword commit".into(),
+                    },
+                    HelpEntry {
+                        key: kb.commits.view_reset_options.clone(),
+                        description: "Reset options".into(),
+                    },
+                    HelpEntry {
+                        key: kb.commits.mark_commit_as_fixup.clone(),
+                        description: "Fixup commit".into(),
+                    },
+                    HelpEntry {
+                        key: kb.commits.create_fixup_commit.clone(),
+                        description: "Create fixup commit".into(),
+                    },
+                    HelpEntry {
+                        key: kb.commits.squash_above_commits.clone(),
+                        description: "Apply fixup commits".into(),
+                    },
+                    HelpEntry {
+                        key: kb.commits.move_up_commit.clone(),
+                        description: "Move commit up".into(),
+                    },
+                    HelpEntry {
+                        key: kb.commits.move_down_commit.clone(),
+                        description: "Move commit down".into(),
+                    },
+                    HelpEntry {
+                        key: kb.commits.amend_to_commit.clone(),
+                        description: "Amend to commit".into(),
+                    },
+                    HelpEntry {
+                        key: kb.commits.pick_commit.clone(),
+                        description: "Pick / Drop commit".into(),
+                    },
+                    HelpEntry {
+                        key: kb.commits.revert_commit.clone(),
+                        description: "Revert commit".into(),
+                    },
+                    HelpEntry {
+                        key: kb.commits.cherry_pick_copy.clone(),
+                        description: "Cherry-pick copy".into(),
+                    },
+                    HelpEntry {
+                        key: kb.commits.paste_commits.clone(),
+                        description: "Paste commits".into(),
+                    },
+                    HelpEntry {
+                        key: "v".into(),
+                        description: "Toggle range select".into(),
+                    },
+                    HelpEntry {
+                        key: kb.commits.tag_commit.clone(),
+                        description: "Tag commit".into(),
+                    },
+                    HelpEntry {
+                        key: kb.commits.checkout_commit.clone(),
+                        description: "Checkout commit".into(),
+                    },
+                    HelpEntry {
+                        key: kb.commits.view_bisect_options.clone(),
+                        description: "Bisect options".into(),
+                    },
+                    HelpEntry {
+                        key: "o".into(),
+                        description: "Open in browser".into(),
+                    },
+                    HelpEntry {
+                        key: "y".into(),
+                        description: "Copy to clipboard menu".into(),
+                    },
+                    HelpEntry {
+                        key: kb.commits.interactive_rebase.clone(),
+                        description: "Interactive rebase".into(),
+                    },
+                    HelpEntry {
+                        key: kb.commits.open_log_menu.clone(),
+                        description: "Filter by branch".into(),
+                    },
+                    HelpEntry {
+                        key: ".".into(),
+                        description: "Toggle commit details panel".into(),
+                    },
                 ],
             },
             ContextId::CommitFiles => HelpSection {
                 title: "Commit Files".into(),
                 entries: vec![
-                    HelpEntry { key: "<enter>".into(), description: "Toggle dir / Focus diff".into() },
-                    HelpEntry { key: "<esc>".into(), description: "Back to commits".into() },
-                    HelpEntry { key: kb.files.toggle_tree_view.clone(), description: "Toggle tree view".into() },
-                    HelpEntry { key: "y".into(), description: "Copy to clipboard menu".into() },
-                    HelpEntry { key: ".".into(), description: "Toggle commit details panel".into() },
+                    HelpEntry {
+                        key: "<enter>".into(),
+                        description: "Toggle dir / Focus diff".into(),
+                    },
+                    HelpEntry {
+                        key: "<esc>".into(),
+                        description: "Back to commits".into(),
+                    },
+                    HelpEntry {
+                        key: kb.files.toggle_tree_view.clone(),
+                        description: "Toggle tree view".into(),
+                    },
+                    HelpEntry {
+                        key: "y".into(),
+                        description: "Copy to clipboard menu".into(),
+                    },
+                    HelpEntry {
+                        key: ".".into(),
+                        description: "Toggle commit details panel".into(),
+                    },
                 ],
             },
             ContextId::Reflog => HelpSection {
                 title: "Reflog".into(),
                 entries: vec![
-                    HelpEntry { key: "<enter>".into(), description: "View commit files".into() },
-                    HelpEntry { key: kb.commits.checkout_commit.clone(), description: "Checkout commit".into() },
-                    HelpEntry { key: kb.commits.view_reset_options.clone(), description: "Reset options".into() },
-                    HelpEntry { key: kb.commits.cherry_pick_copy.clone(), description: "Cherry-pick".into() },
-                    HelpEntry { key: "y".into(), description: "Copy to clipboard menu".into() },
-                    HelpEntry { key: ".".into(), description: "Toggle commit details panel".into() },
+                    HelpEntry {
+                        key: "<enter>".into(),
+                        description: "View commit files".into(),
+                    },
+                    HelpEntry {
+                        key: kb.commits.checkout_commit.clone(),
+                        description: "Checkout commit".into(),
+                    },
+                    HelpEntry {
+                        key: kb.commits.view_reset_options.clone(),
+                        description: "Reset options".into(),
+                    },
+                    HelpEntry {
+                        key: kb.commits.cherry_pick_copy.clone(),
+                        description: "Cherry-pick".into(),
+                    },
+                    HelpEntry {
+                        key: "y".into(),
+                        description: "Copy to clipboard menu".into(),
+                    },
+                    HelpEntry {
+                        key: ".".into(),
+                        description: "Toggle commit details panel".into(),
+                    },
                 ],
             },
             ContextId::Stash => HelpSection {
                 title: "Stash".into(),
                 entries: vec![
-                    HelpEntry { key: "<enter>".into(), description: "View stash files".into() },
-                    HelpEntry { key: "<space>".into(), description: "Apply stash".into() },
-                    HelpEntry { key: kb.stash.pop_stash.clone(), description: "Pop stash".into() },
-                    HelpEntry { key: kb.stash.rename_stash.clone(), description: "Rename stash".into() },
-                    HelpEntry { key: "d".into(), description: "Drop stash".into() },
+                    HelpEntry {
+                        key: "<enter>".into(),
+                        description: "View stash files".into(),
+                    },
+                    HelpEntry {
+                        key: "<space>".into(),
+                        description: "Apply stash".into(),
+                    },
+                    HelpEntry {
+                        key: kb.stash.pop_stash.clone(),
+                        description: "Pop stash".into(),
+                    },
+                    HelpEntry {
+                        key: kb.stash.rename_stash.clone(),
+                        description: "Rename stash".into(),
+                    },
+                    HelpEntry {
+                        key: "d".into(),
+                        description: "Drop stash".into(),
+                    },
                 ],
             },
             ContextId::StashFiles => HelpSection {
                 title: "Stash Files".into(),
                 entries: vec![
-                    HelpEntry { key: "<enter>".into(), description: "Toggle dir / Focus diff".into() },
-                    HelpEntry { key: "<esc>".into(), description: "Back to stash".into() },
-                    HelpEntry { key: kb.files.toggle_tree_view.clone(), description: "Toggle tree view".into() },
-                    HelpEntry { key: "y".into(), description: "Copy to clipboard menu".into() },
+                    HelpEntry {
+                        key: "<enter>".into(),
+                        description: "Toggle dir / Focus diff".into(),
+                    },
+                    HelpEntry {
+                        key: "<esc>".into(),
+                        description: "Back to stash".into(),
+                    },
+                    HelpEntry {
+                        key: kb.files.toggle_tree_view.clone(),
+                        description: "Toggle tree view".into(),
+                    },
+                    HelpEntry {
+                        key: "y".into(),
+                        description: "Copy to clipboard menu".into(),
+                    },
                 ],
             },
             ContextId::Remotes => HelpSection {
                 title: "Remotes".into(),
                 entries: vec![
-                    HelpEntry { key: "<enter>".into(), description: "View remote branches".into() },
-                    HelpEntry { key: "f".into(), description: "Fetch from remote".into() },
-                    HelpEntry { key: "n".into(), description: "Add new remote".into() },
-                    HelpEntry { key: "d".into(), description: "Delete remote".into() },
-                    HelpEntry { key: kb.universal.push_files.clone(), description: "Push".into() },
-                    HelpEntry { key: kb.universal.pull_files.clone(), description: "Pull".into() },
+                    HelpEntry {
+                        key: "<enter>".into(),
+                        description: "View remote branches".into(),
+                    },
+                    HelpEntry {
+                        key: "f".into(),
+                        description: "Fetch from remote".into(),
+                    },
+                    HelpEntry {
+                        key: "n".into(),
+                        description: "Add new remote".into(),
+                    },
+                    HelpEntry {
+                        key: "d".into(),
+                        description: "Delete remote".into(),
+                    },
+                    HelpEntry {
+                        key: kb.universal.push_files.clone(),
+                        description: "Push".into(),
+                    },
+                    HelpEntry {
+                        key: kb.universal.pull_files.clone(),
+                        description: "Pull".into(),
+                    },
                 ],
             },
             ContextId::RemoteBranches => HelpSection {
                 title: "Remote Branches".into(),
                 entries: vec![
-                    HelpEntry { key: "<enter>".into(), description: "View branch commits".into() },
-                    HelpEntry { key: "<space>".into(), description: "Checkout as local branch".into() },
-                    HelpEntry { key: kb.branches.merge_into_current_branch.clone(), description: "Merge into current".into() },
-                    HelpEntry { key: kb.branches.rebase_branch.clone(), description: "Rebase".into() },
-                    HelpEntry { key: "d".into(), description: "Delete remote branch".into() },
-                    HelpEntry { key: "<esc>".into(), description: "Back to remotes".into() },
+                    HelpEntry {
+                        key: "<enter>".into(),
+                        description: "View branch commits".into(),
+                    },
+                    HelpEntry {
+                        key: "<space>".into(),
+                        description: "Checkout as local branch".into(),
+                    },
+                    HelpEntry {
+                        key: kb.branches.merge_into_current_branch.clone(),
+                        description: "Merge into current".into(),
+                    },
+                    HelpEntry {
+                        key: kb.branches.rebase_branch.clone(),
+                        description: "Rebase".into(),
+                    },
+                    HelpEntry {
+                        key: "d".into(),
+                        description: "Delete remote branch".into(),
+                    },
+                    HelpEntry {
+                        key: "<esc>".into(),
+                        description: "Back to remotes".into(),
+                    },
                 ],
             },
             ContextId::Tags => HelpSection {
                 title: "Tags".into(),
                 entries: vec![
-                    HelpEntry { key: "<enter>".into(), description: "View tag commits".into() },
-                    HelpEntry { key: "n".into(), description: "Create tag".into() },
-                    HelpEntry { key: "d".into(), description: "Delete tag".into() },
-                    HelpEntry { key: "P".into(), description: "Push tag".into() },
-                    HelpEntry { key: "g".into(), description: "Reset options".into() },
+                    HelpEntry {
+                        key: "<enter>".into(),
+                        description: "View tag commits".into(),
+                    },
+                    HelpEntry {
+                        key: "n".into(),
+                        description: "Create tag".into(),
+                    },
+                    HelpEntry {
+                        key: "d".into(),
+                        description: "Delete tag".into(),
+                    },
+                    HelpEntry {
+                        key: "P".into(),
+                        description: "Push tag".into(),
+                    },
+                    HelpEntry {
+                        key: "g".into(),
+                        description: "Reset options".into(),
+                    },
                 ],
             },
             ContextId::Status => HelpSection {
@@ -3316,8 +3918,14 @@ impl Gui {
             _ => HelpSection {
                 title: "Navigation".into(),
                 entries: vec![
-                    HelpEntry { key: "<enter>".into(), description: "Select / Open".into() },
-                    HelpEntry { key: "<space>".into(), description: "Toggle / Confirm".into() },
+                    HelpEntry {
+                        key: "<enter>".into(),
+                        description: "Select / Open".into(),
+                    },
+                    HelpEntry {
+                        key: "<space>".into(),
+                        description: "Toggle / Confirm".into(),
+                    },
                 ],
             },
         };
@@ -3336,25 +3944,86 @@ impl Gui {
         let diff_section = HelpSection {
             title: "Diff Viewer".into(),
             entries: vec![
-                HelpEntry { key: "j/k".into(), description: "Scroll down / up".into() },
-                HelpEntry { key: "h/l".into(), description: "Scroll left / right".into() },
-                HelpEntry { key: "{/}".into(), description: "Previous / next hunk".into() },
-                HelpEntry { key: "[".into(), description: "Toggle old-only view".into() },
-                HelpEntry { key: "]".into(), description: "Toggle new-only view".into() },
-                HelpEntry { key: "z".into(), description: "Toggle line wrap".into() },
-                HelpEntry { key: "g/G".into(), description: "Go to top / bottom".into() },
-                HelpEntry { key: "PgUp/PgDn".into(), description: "Page up / down".into() },
-                HelpEntry { key: "/".into(), description: "Search in diff".into() },
-                HelpEntry { key: "n/N".into(), description: "Next / previous search match".into() },
-                HelpEntry { key: "e".into(), description: "Edit file at line".into() },
-                HelpEntry { key: "y".into(), description: "Copy selected text".into() },
-                HelpEntry { key: "q".into(), description: "Quit".into() },
-                HelpEntry { key: "+/_".into(), description: "Enlarge / shrink panel".into() },
-                HelpEntry { key: ";".into(), description: "Toggle command log".into() },
-                HelpEntry { key: "1-5".into(), description: "Jump to sidebar panel".into() },
-                HelpEntry { key: "esc".into(), description: "Return to sidebar".into() },
-                HelpEntry { key: "?".into(), description: "Show this help".into() },
-                HelpEntry { key: "▸".into(), description: "Color theme...".into() },
+                HelpEntry {
+                    key: "j/k".into(),
+                    description: "Scroll down / up".into(),
+                },
+                HelpEntry {
+                    key: "h/l".into(),
+                    description: "Scroll left / right".into(),
+                },
+                HelpEntry {
+                    key: "{/}".into(),
+                    description: "Previous / next hunk".into(),
+                },
+                HelpEntry {
+                    key: "[".into(),
+                    description: "Toggle old-only view".into(),
+                },
+                HelpEntry {
+                    key: "]".into(),
+                    description: "Toggle new-only view".into(),
+                },
+                HelpEntry {
+                    key: "z".into(),
+                    description: "Toggle line wrap".into(),
+                },
+                HelpEntry {
+                    key: "g/G".into(),
+                    description: "Go to top / bottom".into(),
+                },
+                HelpEntry {
+                    key: "PgUp/PgDn".into(),
+                    description: "Page up / down".into(),
+                },
+                HelpEntry {
+                    key: "/".into(),
+                    description: "Search in diff".into(),
+                },
+                HelpEntry {
+                    key: "n/N".into(),
+                    description: "Next / previous search match".into(),
+                },
+                HelpEntry {
+                    key: "e".into(),
+                    description: "Edit file at line".into(),
+                },
+                HelpEntry {
+                    key: "y".into(),
+                    description: "Copy selected text".into(),
+                },
+                HelpEntry {
+                    key: "R (mouse)".into(),
+                    description: "Click center-gap R to revert block".into(),
+                },
+                HelpEntry {
+                    key: "q".into(),
+                    description: "Quit".into(),
+                },
+                HelpEntry {
+                    key: "+/_".into(),
+                    description: "Enlarge / shrink panel".into(),
+                },
+                HelpEntry {
+                    key: ";".into(),
+                    description: "Toggle command log".into(),
+                },
+                HelpEntry {
+                    key: "1-5".into(),
+                    description: "Jump to sidebar panel".into(),
+                },
+                HelpEntry {
+                    key: "esc".into(),
+                    description: "Return to sidebar".into(),
+                },
+                HelpEntry {
+                    key: "?".into(),
+                    description: "Show this help".into(),
+                },
+                HelpEntry {
+                    key: "▸".into(),
+                    description: "Color theme...".into(),
+                },
             ],
         };
 
@@ -3486,7 +4155,8 @@ impl Gui {
                             }
                             Ok(())
                         }),
-                        is_commit: false, confirm_focused: false,
+                        is_commit: false,
+                        confirm_focused: false,
                     };
                     Ok(())
                 })),
@@ -3505,7 +4175,9 @@ impl Gui {
                                     let (summary, body) = match text.find('\n') {
                                         Some(idx) => {
                                             let s = text[..idx].to_string();
-                                            let b = text[idx + 1..].trim_start_matches('\n').to_string();
+                                            let b = text[idx + 1..]
+                                                .trim_start_matches('\n')
+                                                .to_string();
                                             (s, b)
                                         }
                                         None => (text.clone(), String::new()),
@@ -3628,7 +4300,9 @@ impl Gui {
 
     fn undo(&mut self) -> Result<()> {
         // Get reflog entries
-        let result = self.git.git_cmd()
+        let result = self
+            .git
+            .git_cmd()
             .args(&["reflog", "--format=%H", "-n", "20"])
             .run()?;
         if !result.success {
@@ -3661,7 +4335,9 @@ impl Gui {
             return Ok(()); // Nothing to redo
         }
 
-        let result = self.git.git_cmd()
+        let result = self
+            .git
+            .git_cmd()
             .args(&["reflog", "--format=%H", "-n", "20"])
             .run()?;
         if !result.success {
@@ -3898,14 +4574,20 @@ impl Gui {
                     let len = self.rebase_mode.entries.len();
                     if self.rebase_mode.selected + 1 < len {
                         self.rebase_mode.selected += 1;
-                        let area = ratatui::layout::Rect::new(0, 0, self.layout.width, self.layout.height);
+                        let area =
+                            ratatui::layout::Rect::new(0, 0, self.layout.width, self.layout.height);
                         let outer = ratatui::layout::Layout::default()
                             .direction(ratatui::layout::Direction::Vertical)
-                            .constraints([ratatui::layout::Constraint::Min(1), ratatui::layout::Constraint::Length(1)])
+                            .constraints([
+                                ratatui::layout::Constraint::Min(1),
+                                ratatui::layout::Constraint::Length(1),
+                            ])
                             .split(area);
-                        let block = ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::ALL);
+                        let block = ratatui::widgets::Block::default()
+                            .borders(ratatui::widgets::Borders::ALL);
                         let inner = block.inner(outer[0]);
-                        let has_banner = self.rebase_mode.phase == modes::rebase_mode::RebasePhase::InProgress;
+                        let has_banner =
+                            self.rebase_mode.phase == modes::rebase_mode::RebasePhase::InProgress;
                         let banner_h: u16 = if has_banner { 2 } else { 0 };
                         let list_h = inner.height.saturating_sub(1 + banner_h) as usize;
                         self.rebase_mode.ensure_visible(list_h);
@@ -3914,14 +4596,20 @@ impl Gui {
                 MouseEventKind::ScrollUp => {
                     if self.rebase_mode.selected > 0 {
                         self.rebase_mode.selected -= 1;
-                        let area = ratatui::layout::Rect::new(0, 0, self.layout.width, self.layout.height);
+                        let area =
+                            ratatui::layout::Rect::new(0, 0, self.layout.width, self.layout.height);
                         let outer = ratatui::layout::Layout::default()
                             .direction(ratatui::layout::Direction::Vertical)
-                            .constraints([ratatui::layout::Constraint::Min(1), ratatui::layout::Constraint::Length(1)])
+                            .constraints([
+                                ratatui::layout::Constraint::Min(1),
+                                ratatui::layout::Constraint::Length(1),
+                            ])
                             .split(area);
-                        let block = ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::ALL);
+                        let block = ratatui::widgets::Block::default()
+                            .borders(ratatui::widgets::Borders::ALL);
                         let inner = block.inner(outer[0]);
-                        let has_banner = self.rebase_mode.phase == modes::rebase_mode::RebasePhase::InProgress;
+                        let has_banner =
+                            self.rebase_mode.phase == modes::rebase_mode::RebasePhase::InProgress;
                         let banner_h: u16 = if has_banner { 2 } else { 0 };
                         let list_h = inner.height.saturating_sub(1 + banner_h) as usize;
                         self.rebase_mode.ensure_visible(list_h);
@@ -3929,14 +4617,20 @@ impl Gui {
                 }
                 MouseEventKind::Down(MouseButton::Left) => {
                     // Compute the list area to determine which entry was clicked
-                    let area = ratatui::layout::Rect::new(0, 0, self.layout.width, self.layout.height);
+                    let area =
+                        ratatui::layout::Rect::new(0, 0, self.layout.width, self.layout.height);
                     let outer = ratatui::layout::Layout::default()
                         .direction(ratatui::layout::Direction::Vertical)
-                        .constraints([ratatui::layout::Constraint::Min(1), ratatui::layout::Constraint::Length(1)])
+                        .constraints([
+                            ratatui::layout::Constraint::Min(1),
+                            ratatui::layout::Constraint::Length(1),
+                        ])
                         .split(area);
-                    let block = ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::ALL);
+                    let block =
+                        ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::ALL);
                     let inner = block.inner(outer[0]);
-                    let has_banner = self.rebase_mode.phase == modes::rebase_mode::RebasePhase::InProgress;
+                    let has_banner =
+                        self.rebase_mode.phase == modes::rebase_mode::RebasePhase::InProgress;
                     let banner_h: u16 = if has_banner { 2 } else { 0 };
                     // List starts after: inner.y + info_line(1) + banner_h
                     let list_y = inner.y + 1 + banner_h;
@@ -3961,21 +4655,33 @@ impl Gui {
         }
 
         // Help popup intercepts mouse scroll and click
-        if let PopupState::Help { sections, selected, scroll_offset, search_textarea } = &mut self.popup {
+        if let PopupState::Help {
+            sections,
+            selected,
+            scroll_offset,
+            search_textarea,
+        } = &mut self.popup
+        {
             // Compute total display rows so we can clamp scroll
             let search_lower = search_textarea.lines().join("").to_lowercase();
             let has_search = !search_lower.is_empty();
-            let total_rows: usize = sections.iter().map(|s| {
-                let visible = if has_search {
-                    s.entries.iter().filter(|e| {
-                        e.key.to_lowercase().contains(&search_lower)
-                            || e.description.to_lowercase().contains(&search_lower)
-                    }).count()
-                } else {
-                    s.entries.len()
-                };
-                if visible > 0 { visible + 1 } else { 0 } // +1 for header
-            }).sum();
+            let total_rows: usize = sections
+                .iter()
+                .map(|s| {
+                    let visible = if has_search {
+                        s.entries
+                            .iter()
+                            .filter(|e| {
+                                e.key.to_lowercase().contains(&search_lower)
+                                    || e.description.to_lowercase().contains(&search_lower)
+                            })
+                            .count()
+                    } else {
+                        s.entries.len()
+                    };
+                    if visible > 0 { visible + 1 } else { 0 } // +1 for header
+                })
+                .sum();
 
             match mouse.kind {
                 MouseEventKind::ScrollUp => {
@@ -3986,7 +4692,8 @@ impl Gui {
                 }
                 MouseEventKind::Down(MouseButton::Left) => {
                     // Click to select an entry in the help list
-                    let area = ratatui::layout::Rect::new(0, 0, self.layout.width, self.layout.height);
+                    let area =
+                        ratatui::layout::Rect::new(0, 0, self.layout.width, self.layout.height);
                     let popup_width = (area.width * 70 / 100).min(72).max(36);
                     let content_height = total_rows.max(1);
                     let popup_height = (content_height as u16 + 5)
@@ -3999,8 +4706,10 @@ impl Gui {
                     let inner_height = popup_height.saturating_sub(2); // borders
                     let list_height = inner_height.saturating_sub(3) as usize; // search + sep + hint
 
-                    if mouse.row >= list_start && mouse.row < list_start + list_height as u16
-                        && mouse.column >= x && mouse.column < x + popup_width
+                    if mouse.row >= list_start
+                        && mouse.row < list_start + list_height as u16
+                        && mouse.column >= x
+                        && mouse.column < x + popup_width
                     {
                         let row_in_list = (mouse.row - list_start) as usize;
                         let display_idx = *scroll_offset + row_in_list;
@@ -4010,11 +4719,15 @@ impl Gui {
                         let mut ei = 0usize;
                         let mut clicked_entry = None;
                         'sections: for section in sections.iter() {
-                            let visible_entries: Vec<_> = section.entries.iter().filter(|e| {
-                                !has_search
-                                    || e.key.to_lowercase().contains(&search_lower)
-                                    || e.description.to_lowercase().contains(&search_lower)
-                            }).collect();
+                            let visible_entries: Vec<_> = section
+                                .entries
+                                .iter()
+                                .filter(|e| {
+                                    !has_search
+                                        || e.key.to_lowercase().contains(&search_lower)
+                                        || e.description.to_lowercase().contains(&search_lower)
+                                })
+                                .collect();
                             if !visible_entries.is_empty() {
                                 if di == display_idx {
                                     // Clicked on a header — ignore
@@ -4062,7 +4775,8 @@ impl Gui {
                 }
                 MouseEventKind::Down(MouseButton::Left) => {
                     // Click to select an item in the list picker
-                    let area = ratatui::layout::Rect::new(0, 0, self.layout.width, self.layout.height);
+                    let area =
+                        ratatui::layout::Rect::new(0, 0, self.layout.width, self.layout.height);
                     let popup_width = (area.width * 60 / 100).min(60).max(30);
                     let max_popup = (area.height * 60 / 100).max(10);
                     let popup_height = max_popup.min(area.height.saturating_sub(4));
@@ -4073,21 +4787,22 @@ impl Gui {
                     let inner_height = popup_height.saturating_sub(2);
                     let list_height = inner_height.saturating_sub(3) as usize;
 
-                    if mouse.row >= list_start && mouse.row < list_start + list_height as u16
-                        && mouse.column >= x && mouse.column < x + popup_width
+                    if mouse.row >= list_start
+                        && mouse.row < list_start + list_height as u16
+                        && mouse.column >= x
+                        && mouse.column < x + popup_width
                     {
                         let row_in_list = (mouse.row - list_start) as usize;
                         // Map display row to entry index, accounting for category headers
                         let has_categories = core.items.iter().any(|i| !i.category.is_empty());
-                        let effective_scroll = core.scroll_offset.min(
-                            if has_categories {
-                                // display length includes headers
-                                let display_len = list_picker_display_idx(&core.items, total.saturating_sub(1)) + 1;
-                                display_len.saturating_sub(list_height)
-                            } else {
-                                total.saturating_sub(list_height)
-                            }
-                        );
+                        let effective_scroll = core.scroll_offset.min(if has_categories {
+                            // display length includes headers
+                            let display_len =
+                                list_picker_display_idx(&core.items, total.saturating_sub(1)) + 1;
+                            display_len.saturating_sub(list_height)
+                        } else {
+                            total.saturating_sub(list_height)
+                        });
                         let display_idx = effective_scroll + row_in_list;
 
                         if has_categories {
@@ -4145,7 +4860,8 @@ impl Gui {
                 }
                 MouseEventKind::Down(MouseButton::Left) => {
                     // Click to select a theme
-                    let area = ratatui::layout::Rect::new(0, 0, self.layout.width, self.layout.height);
+                    let area =
+                        ratatui::layout::Rect::new(0, 0, self.layout.width, self.layout.height);
                     let popup_width = (area.width * 60 / 100).min(60).max(30);
                     let max_popup = (area.height * 60 / 100).max(10);
                     let popup_height = max_popup.min(area.height.saturating_sub(4));
@@ -4156,11 +4872,14 @@ impl Gui {
                     let inner_height = popup_height.saturating_sub(2);
                     let list_height = inner_height.saturating_sub(3) as usize;
 
-                    if mouse.row >= list_start && mouse.row < list_start + list_height as u16
-                        && mouse.column >= x && mouse.column < x + popup_width
+                    if mouse.row >= list_start
+                        && mouse.row < list_start + list_height as u16
+                        && mouse.column >= x
+                        && mouse.column < x + popup_width
                     {
                         let row_in_list = (mouse.row - list_start) as usize;
-                        let effective_scroll = core.scroll_offset.min(total.saturating_sub(list_height));
+                        let effective_scroll =
+                            core.scroll_offset.min(total.saturating_sub(list_height));
                         let clicked_idx = effective_scroll + row_in_list;
                         if clicked_idx < total {
                             core.selected = clicked_idx;
@@ -4189,6 +4908,10 @@ impl Gui {
                 let full_sidebar = self.screen_mode == ScreenMode::Full && !self.diff_focused;
 
                 if in_main && !self.diff_view.is_empty() && !full_sidebar {
+                    if self.try_handle_revert_block_click(main_panel, pl, mouse.column, mouse.row) {
+                        self.diff_focused = true;
+                        return;
+                    }
                     if let Some(panel) = pl.panel_at_x(mouse.column) {
                         self.diff_view.selection = Some(TextSelection {
                             panel,
@@ -4219,7 +4942,8 @@ impl Gui {
                         // Allow dragging into gutter area of same panel (5 cols before content)
                         let col_min = cmin.saturating_sub(5);
                         sel.end_col = mouse.column.max(col_min).min(cmax.saturating_sub(1));
-                        sel.end_row = mouse.row
+                        sel.end_row = mouse
+                            .row
                             .max(pl.inner_y)
                             .min(pl.inner_end_y.saturating_sub(1));
                     }
@@ -4319,29 +5043,45 @@ impl Gui {
     }
 
     fn handle_diff_mode_mouse(&mut self, mouse: MouseEvent) {
+        use self::modes::diff_mode::{DiffModeFocus, DiffModeSelector};
         use crossterm::event::{KeyModifiers, MouseButton, MouseEventKind};
         use ratatui::layout::{Constraint, Direction, Layout, Rect};
-        use self::modes::diff_mode::{DiffModeFocus, DiffModeSelector};
 
         // Help popup intercepts mouse scroll
-        if let PopupState::Help { sections, scroll_offset, search_textarea, .. } = &mut self.popup {
+        if let PopupState::Help {
+            sections,
+            scroll_offset,
+            search_textarea,
+            ..
+        } = &mut self.popup
+        {
             let search_lower = search_textarea.lines().join("").to_lowercase();
             let has_search = !search_lower.is_empty();
-            let total_rows: usize = sections.iter().map(|s| {
-                let visible = if has_search {
-                    s.entries.iter().filter(|e| {
-                        e.key.to_lowercase().contains(&search_lower)
-                            || e.description.to_lowercase().contains(&search_lower)
-                    }).count()
-                } else {
-                    s.entries.len()
-                };
-                if visible > 0 { visible + 1 } else { 0 }
-            }).sum();
+            let total_rows: usize = sections
+                .iter()
+                .map(|s| {
+                    let visible = if has_search {
+                        s.entries
+                            .iter()
+                            .filter(|e| {
+                                e.key.to_lowercase().contains(&search_lower)
+                                    || e.description.to_lowercase().contains(&search_lower)
+                            })
+                            .count()
+                    } else {
+                        s.entries.len()
+                    };
+                    if visible > 0 { visible + 1 } else { 0 }
+                })
+                .sum();
 
             match mouse.kind {
-                MouseEventKind::ScrollUp => { *scroll_offset = scroll_offset.saturating_sub(3); }
-                MouseEventKind::ScrollDown => { *scroll_offset = (*scroll_offset + 3).min(total_rows.saturating_sub(1)); }
+                MouseEventKind::ScrollUp => {
+                    *scroll_offset = scroll_offset.saturating_sub(3);
+                }
+                MouseEventKind::ScrollDown => {
+                    *scroll_offset = (*scroll_offset + 3).min(total_rows.saturating_sub(1));
+                }
                 _ => {}
             }
             return;
@@ -4367,7 +5107,8 @@ impl Gui {
                     }
                 }
                 MouseEventKind::Down(MouseButton::Left) => {
-                    let area = ratatui::layout::Rect::new(0, 0, self.layout.width, self.layout.height);
+                    let area =
+                        ratatui::layout::Rect::new(0, 0, self.layout.width, self.layout.height);
                     let popup_width = (area.width * 60 / 100).min(60).max(30);
                     let max_popup = (area.height * 60 / 100).max(10);
                     let popup_height = max_popup.min(area.height.saturating_sub(4));
@@ -4378,19 +5119,20 @@ impl Gui {
                     let inner_height = popup_height.saturating_sub(2);
                     let list_height = inner_height.saturating_sub(3) as usize;
 
-                    if mouse.row >= list_start && mouse.row < list_start + list_height as u16
-                        && mouse.column >= x && mouse.column < x + popup_width
+                    if mouse.row >= list_start
+                        && mouse.row < list_start + list_height as u16
+                        && mouse.column >= x
+                        && mouse.column < x + popup_width
                     {
                         let row_in_list = (mouse.row - list_start) as usize;
                         let has_categories = core.items.iter().any(|i| !i.category.is_empty());
-                        let effective_scroll = core.scroll_offset.min(
-                            if has_categories {
-                                let display_len = list_picker_display_idx(&core.items, total.saturating_sub(1)) + 1;
-                                display_len.saturating_sub(list_height)
-                            } else {
-                                total.saturating_sub(list_height)
-                            }
-                        );
+                        let effective_scroll = core.scroll_offset.min(if has_categories {
+                            let display_len =
+                                list_picker_display_idx(&core.items, total.saturating_sub(1)) + 1;
+                            display_len.saturating_sub(list_height)
+                        } else {
+                            total.saturating_sub(list_height)
+                        });
                         let display_idx = effective_scroll + row_in_list;
 
                         if has_categories {
@@ -4399,7 +5141,9 @@ impl Gui {
                             let mut last_cat = String::new();
                             for item in core.items.iter() {
                                 if !item.category.is_empty() && item.category != last_cat {
-                                    if di == display_idx { break; }
+                                    if di == display_idx {
+                                        break;
+                                    }
                                     di += 1;
                                     last_cat = item.category.clone();
                                 }
@@ -4455,7 +5199,10 @@ impl Gui {
 
         // Combobox dropdown mouse handling — intercepts clicks/scrolls when editing
         if self.diff_mode.editing.is_some() && !self.diff_mode.search_results.is_empty() {
-            let anchor = if matches!(self.diff_mode.editing, Some(crate::gui::modes::diff_mode::DiffModeSelector::A)) {
+            let anchor = if matches!(
+                self.diff_mode.editing,
+                Some(crate::gui::modes::diff_mode::DiffModeSelector::A)
+            ) {
                 selector_a_rect
             } else {
                 selector_b_rect
@@ -4487,12 +5234,24 @@ impl Gui {
                                 self.diff_mode.focus = DiffModeFocus::SelectorA;
                                 self.diff_mode.start_editing(DiffModeSelector::A);
                                 let model = self.model.lock().unwrap();
-                                self.diff_mode.search_refs(&model.branches, &model.tags, &model.commits, &model.remotes, &model.head_branch_name);
+                                self.diff_mode.search_refs(
+                                    &model.branches,
+                                    &model.tags,
+                                    &model.commits,
+                                    &model.remotes,
+                                    &model.head_branch_name,
+                                );
                             } else {
                                 self.diff_mode.focus = DiffModeFocus::SelectorB;
                                 self.diff_mode.start_editing(DiffModeSelector::B);
                                 let model = self.model.lock().unwrap();
-                                self.diff_mode.search_refs(&model.branches, &model.tags, &model.commits, &model.remotes, &model.head_branch_name);
+                                self.diff_mode.search_refs(
+                                    &model.branches,
+                                    &model.tags,
+                                    &model.commits,
+                                    &model.remotes,
+                                    &model.head_branch_name,
+                                );
                             }
                             self.needs_diff_refresh = true;
                         }
@@ -4500,7 +5259,8 @@ impl Gui {
                     }
                     MouseEventKind::ScrollUp => {
                         if self.diff_mode.search_selected > 0 {
-                            self.diff_mode.search_selected = self.diff_mode.search_selected.saturating_sub(3);
+                            self.diff_mode.search_selected =
+                                self.diff_mode.search_selected.saturating_sub(3);
                             self.diff_mode.ensure_dropdown_visible(10);
                         }
                         return;
@@ -4508,7 +5268,8 @@ impl Gui {
                     MouseEventKind::ScrollDown => {
                         let len = self.diff_mode.search_results.len();
                         if len > 0 {
-                            self.diff_mode.search_selected = (self.diff_mode.search_selected + 3).min(len - 1);
+                            self.diff_mode.search_selected =
+                                (self.diff_mode.search_selected + 3).min(len - 1);
                             self.diff_mode.ensure_dropdown_visible(10);
                         }
                         return;
@@ -4523,6 +5284,10 @@ impl Gui {
                 // Check if click is in the diff panel — start text selection
                 if rect_contains(diff_rect, col, row) && !self.diff_view.is_empty() {
                     let pl = DiffPanelLayout::compute(diff_rect, &self.diff_view);
+                    if self.try_handle_revert_block_click(diff_rect, pl, col, row) {
+                        self.diff_mode.focus = DiffModeFocus::DiffExploration;
+                        return;
+                    }
                     if let Some(panel) = pl.panel_at_x(col) {
                         self.diff_view.selection = Some(TextSelection {
                             panel,
@@ -4549,13 +5314,25 @@ impl Gui {
                         // Start editing on click
                         self.diff_mode.start_editing(DiffModeSelector::A);
                         let model = self.model.lock().unwrap();
-                        self.diff_mode.search_refs(&model.branches, &model.tags, &model.commits, &model.remotes, &model.head_branch_name);
+                        self.diff_mode.search_refs(
+                            &model.branches,
+                            &model.tags,
+                            &model.commits,
+                            &model.remotes,
+                            &model.head_branch_name,
+                        );
                     } else if rect_contains(selector_b_rect, col, row) {
                         self.diff_mode.focus = DiffModeFocus::SelectorB;
                         // Start editing on click
                         self.diff_mode.start_editing(DiffModeSelector::B);
                         let model = self.model.lock().unwrap();
-                        self.diff_mode.search_refs(&model.branches, &model.tags, &model.commits, &model.remotes, &model.head_branch_name);
+                        self.diff_mode.search_refs(
+                            &model.branches,
+                            &model.tags,
+                            &model.commits,
+                            &model.remotes,
+                            &model.head_branch_name,
+                        );
                     } else if rect_contains(files_rect, col, row) {
                         self.diff_mode.focus = DiffModeFocus::CommitFiles;
                         // Click to select a file — use stored scroll offset
@@ -4579,9 +5356,7 @@ impl Gui {
                         let (cmin, cmax) = pl.content_range(sel.panel);
                         let col_min = cmin.saturating_sub(5);
                         sel.end_col = col.max(col_min).min(cmax.saturating_sub(1));
-                        sel.end_row = row
-                            .max(pl.inner_y)
-                            .min(pl.inner_end_y.saturating_sub(1));
+                        sel.end_row = row.max(pl.inner_y).min(pl.inner_end_y.saturating_sub(1));
                     }
                 }
             }
@@ -4609,7 +5384,12 @@ impl Gui {
                     // Viewport-only scroll: move scroll offset without changing selection
                     let len = self.diff_mode.visible_files_len();
                     let visible_height = files_rect.height.saturating_sub(2) as usize;
-                    scroll::scroll_viewport(&mut self.diff_mode.diff_files_scroll, -3, len, visible_height);
+                    scroll::scroll_viewport(
+                        &mut self.diff_mode.diff_files_scroll,
+                        -3,
+                        len,
+                        visible_height,
+                    );
                     self.diff_mode.viewport_manually_scrolled = true;
                 }
             }
@@ -4625,7 +5405,12 @@ impl Gui {
                     // Viewport-only scroll: move scroll offset without changing selection
                     let len = self.diff_mode.visible_files_len();
                     let visible_height = files_rect.height.saturating_sub(2) as usize;
-                    scroll::scroll_viewport(&mut self.diff_mode.diff_files_scroll, 3, len, visible_height);
+                    scroll::scroll_viewport(
+                        &mut self.diff_mode.diff_files_scroll,
+                        3,
+                        len,
+                        visible_height,
+                    );
                     self.diff_mode.viewport_manually_scrolled = true;
                 }
             }
@@ -4641,6 +5426,82 @@ impl Gui {
             }
             _ => {}
         }
+    }
+
+    fn try_handle_revert_block_click(
+        &mut self,
+        panel_rect: ratatui::layout::Rect,
+        layout: DiffPanelLayout,
+        col: u16,
+        row: u16,
+    ) -> bool {
+        if self.diff_mode.active {
+            return false;
+        }
+        if self.context_mgr.active() != ContextId::Files {
+            return false;
+        }
+        if self.diff_view.wrap || self.diff_view.is_empty() {
+            return false;
+        }
+        if !rect_contains(panel_rect, col, row) {
+            return false;
+        }
+        let Some(divider_x) = layout.divider_x() else {
+            return false;
+        };
+        if col != divider_x {
+            return false;
+        }
+        let Some(line_idx) = self.diff_view.line_index_at_row(row, &layout) else {
+            return false;
+        };
+        let Some(hunk_idx) = self.diff_view.hunk_index_for_start_line(line_idx) else {
+            return false;
+        };
+        if let Err(err) = self.revert_selected_file_hunk(hunk_idx) {
+            self.popup = PopupState::Message {
+                title: "Revert block failed".to_string(),
+                message: format!("{}", err),
+                kind: MessageKind::Error,
+            };
+        }
+        true
+    }
+
+    fn revert_selected_file_hunk(&mut self, hunk_idx: usize) -> Result<()> {
+        let Some(file_idx) = self.selected_file_index() else {
+            return Ok(());
+        };
+
+        let model = self.model.lock().unwrap();
+        let Some(file) = model.files.get(file_idx) else {
+            return Ok(());
+        };
+
+        if !file.has_unstaged_changes {
+            self.popup = PopupState::Message {
+                title: "Revert block".to_string(),
+                message: "Block revert is available only for unstaged changes.".to_string(),
+                kind: MessageKind::Info,
+            };
+            return Ok(());
+        }
+
+        let file_name = file.name.clone();
+        drop(model);
+
+        let diff = self.git.diff_file(&file_name)?;
+        if diff.is_empty() {
+            return Ok(());
+        }
+
+        self.git
+            .revert_hunk_in_worktree_from_unified_diff(&file_name, &diff, hunk_idx)?;
+        self.diff_view.selection = None;
+        self.needs_files_refresh = true;
+        self.needs_diff_refresh = true;
+        Ok(())
     }
 
     fn handle_mouse_click(&mut self, col: u16, row: u16) {
@@ -4832,7 +5693,10 @@ impl Gui {
         let panel_rect = if self.screen_mode == ScreenMode::Full && !self.diff_focused {
             fl.main_panel
         } else {
-            fl.side_panels.get(active_panel_index).copied().unwrap_or(fl.main_panel)
+            fl.side_panels
+                .get(active_panel_index)
+                .copied()
+                .unwrap_or(fl.main_panel)
         };
         // Subtract 2 for top/bottom borders
         panel_rect.height.saturating_sub(2) as usize
@@ -4845,7 +5709,10 @@ impl Gui {
 
         // If branch filters are active, reload commits for those branches only.
         if !self.commit_branch_filter.is_empty() {
-            if let Ok(filtered) = self.git.load_commits_for_branches(&self.commit_branch_filter, 300) {
+            if let Ok(filtered) = self
+                .git
+                .load_commits_for_branches(&self.commit_branch_filter, 300)
+            {
                 model.commits = filtered;
             }
         }
@@ -4864,7 +5731,10 @@ impl Gui {
             || self.context_mgr.active() == ContextId::BranchCommitFiles)
             && !self.branch_commits_name.is_empty()
         {
-            if let Ok(commits) = self.git.load_commits_for_branch(&self.branch_commits_name, 300) {
+            if let Ok(commits) = self
+                .git
+                .load_commits_for_branch(&self.branch_commits_name, 300)
+            {
                 model.sub_commits = commits;
             }
         }
@@ -4876,7 +5746,11 @@ impl Gui {
                     || self.context_mgr.active() == ContextId::BranchCommitFiles)
                     && self.sub_commits_parent_context == ContextId::RemoteBranches))
         {
-            if let Some(remote) = model.remotes.iter().find(|r| r.name == self.remote_branches_name) {
+            if let Some(remote) = model
+                .remotes
+                .iter()
+                .find(|r| r.name == self.remote_branches_name)
+            {
                 model.sub_remote_branches = remote.branches.clone();
             }
         }
@@ -5301,8 +6175,7 @@ fn setup_terminal() -> Result<(Term, bool)> {
         crossterm::event::EnableBracketedPaste,
         cursor::Hide
     )?;
-    let keyboard_enhanced =
-        crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false);
+    let keyboard_enhanced = crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false);
     if keyboard_enhanced {
         execute!(
             stdout,
@@ -5320,7 +6193,10 @@ fn setup_terminal() -> Result<(Term, bool)> {
 fn restore_terminal(terminal: &mut Term, keyboard_enhanced: bool) -> Result<()> {
     terminal::disable_raw_mode()?;
     if keyboard_enhanced {
-        execute!(terminal.backend_mut(), crossterm::event::PopKeyboardEnhancementFlags)?;
+        execute!(
+            terminal.backend_mut(),
+            crossterm::event::PopKeyboardEnhancementFlags
+        )?;
     }
     execute!(
         terminal.backend_mut(),

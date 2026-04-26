@@ -86,10 +86,7 @@ pub fn compute_layout_with_details(
             let details_width = details_width.clamp(30, main_area.width.saturating_sub(30));
             let horizontal = Layout::default()
                 .direction(Direction::Horizontal)
-                .constraints([
-                    Constraint::Min(1),
-                    Constraint::Length(details_width),
-                ])
+                .constraints([Constraint::Min(1), Constraint::Length(details_width)])
                 .split(main_area);
             return FrameLayout {
                 side_panels: Vec::new(),
@@ -120,10 +117,7 @@ pub fn compute_layout_with_details(
 
         let vertical = Layout::default()
             .direction(Direction::Vertical)
-            .constraints([
-                Constraint::Length(side_height),
-                Constraint::Min(1),
-            ])
+            .constraints([Constraint::Length(side_height), Constraint::Min(1)])
             .split(main_area);
 
         let side_area = vertical[0];
@@ -178,10 +172,7 @@ pub fn compute_layout_with_details(
 
     let horizontal = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Length(side_width),
-            Constraint::Min(1),
-        ])
+        .constraints([Constraint::Length(side_width), Constraint::Min(1)])
         .split(main_area);
 
     let side_area = horizontal[0];
@@ -223,10 +214,7 @@ pub fn compute_layout_with_details(
             let details_height = DETAILS_TARGET_HEIGHT.min(available).max(MIN_DETAILS_HEIGHT);
             let parts = Layout::default()
                 .direction(Direction::Vertical)
-                .constraints([
-                    Constraint::Length(details_height),
-                    Constraint::Min(1),
-                ])
+                .constraints([Constraint::Length(details_height), Constraint::Min(1)])
                 .split(main_panel);
             Some((parts[0], parts[1]))
         } else {

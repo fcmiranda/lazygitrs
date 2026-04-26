@@ -42,9 +42,7 @@ impl GitCommands {
 
     pub fn create_tag(&self, name: &str, message: &str) -> Result<()> {
         if message.is_empty() {
-            self.git()
-                .args(&["tag", name])
-                .run_expecting_success()?;
+            self.git().args(&["tag", name]).run_expecting_success()?;
         } else {
             self.git()
                 .args(&["tag", "-a", name, "-m", message])

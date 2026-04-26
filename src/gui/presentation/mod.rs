@@ -1,11 +1,11 @@
 pub mod branches;
 pub mod commit_details;
 pub mod commit_files;
-pub mod diff_mode;
-pub mod rebase_mode;
 pub mod commits;
+pub mod diff_mode;
 pub mod files;
 pub mod graph;
+pub mod rebase_mode;
 pub mod reflog;
 pub mod remote_branches;
 pub mod remotes;

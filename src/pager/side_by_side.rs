@@ -1,9 +1,9 @@
+use ratatui::Frame;
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::Span;
 use ratatui::widgets::{Block, Borders, Paragraph};
-use ratatui::Frame;
 
 use crate::config::Theme;
 
@@ -134,7 +134,11 @@ impl DiffPanelLayout {
             }
         } else {
             let total_chrome = gutter * 2 + divider;
-            let content_w = if inner_w > total_chrome { inner_w - total_chrome } else { 0 };
+            let content_w = if inner_w > total_chrome {
+                inner_w - total_chrome
+            } else {
+                0
+            };
             let panel_w = content_w / 2;
 
             let old_content_x = inner_x + gutter;
@@ -182,6 +186,15 @@ impl DiffPanelLayout {
         match panel {
             DiffPanel::Old => (self.old_content_x, self.old_content_end_x),
             DiffPanel::New => (self.new_content_x, self.new_content_end_x),
+        }
+    }
+
+    /// Get the divider X column between old and new panels (both-side view only).
+    pub fn divider_x(&self) -> Option<u16> {
+        if self.is_new_file || self.old_content_end_x == 0 || self.new_content_x == 0 {
+            None
+        } else {
+            Some(self.old_content_end_x)
         }
     }
 }
@@ -420,7 +433,13 @@ impl DiffViewState {
     }
 
     /// Parse old/new content into a ParsedDiff on any thread (no &self needed).
-    pub fn parse_content(filename: &str, old: &str, new: &str, tab_width: usize, file_exists_on_disk: bool) -> ParsedDiff {
+    pub fn parse_content(
+        filename: &str,
+        old: &str,
+        new: &str,
+        tab_width: usize,
+        file_exists_on_disk: bool,
+    ) -> ParsedDiff {
         let lines = super::diff_algo::compute_side_by_side(old, new, tab_width);
         let hunk_starts = super::diff_algo::find_hunk_starts(&lines);
         let sections = vec![FileSection {
@@ -440,7 +459,12 @@ impl DiffViewState {
     }
 
     /// Parse raw diff output into a ParsedDiff on any thread (no &self needed).
-    pub fn parse_diff_output(filename: &str, diff_output: &str, tab_width: usize, file_exists_on_disk: bool) -> ParsedDiff {
+    pub fn parse_diff_output(
+        filename: &str,
+        diff_output: &str,
+        tab_width: usize,
+        file_exists_on_disk: bool,
+    ) -> ParsedDiff {
         let file_diffs = parse_multi_file_diff(diff_output);
 
         if file_diffs.len() <= 1 {
@@ -449,7 +473,8 @@ impl DiffViewState {
                 .first()
                 .map(|(name, _)| name.as_str())
                 .unwrap_or(filename);
-            let mut parsed = Self::parse_content(actual_name, &old, &new, tab_width, file_exists_on_disk);
+            let mut parsed =
+                Self::parse_content(actual_name, &old, &new, tab_width, file_exists_on_disk);
             let hunks = parse_hunk_headers(diff_output);
             parsed.hunk_line_offsets = build_hunk_line_offsets(&hunks, &parsed.lines, 0);
             parsed
@@ -620,14 +645,12 @@ impl DiffViewState {
 
                 // Compute hunk line offsets for this section
                 let hunks = parse_hunk_headers(file_diff);
-                let section_offsets = build_hunk_line_offsets(
-                    &hunks,
-                    &self.lines[section_start..],
-                    0,
-                );
+                let section_offsets =
+                    build_hunk_line_offsets(&hunks, &self.lines[section_start..], 0);
                 // Adjust indices to be global (relative to self.lines)
                 for (idx, old_off, new_off) in section_offsets {
-                    self.hunk_line_offsets.push((section_start + idx, old_off, new_off));
+                    self.hunk_line_offsets
+                        .push((section_start + idx, old_off, new_off));
                 }
 
                 // Create highlighters for this section
@@ -665,11 +688,7 @@ impl DiffViewState {
     }
 
     pub fn next_hunk(&mut self) {
-        if let Some(next) = self
-            .hunk_starts
-            .iter()
-            .find(|&&h| h > self.scroll_offset)
-        {
+        if let Some(next) = self.hunk_starts.iter().find(|&&h| h > self.scroll_offset) {
             self.scroll_offset = *next;
         }
     }
@@ -689,8 +708,35 @@ impl DiffViewState {
         self.lines.is_empty()
     }
 
+    /// Map a terminal row within the diff panel inner area to the visible diff line index.
+    /// This is exact when wrapping is disabled.
+    pub fn line_index_at_row(&self, row: u16, layout: &DiffPanelLayout) -> Option<usize> {
+        if row < layout.inner_y || row >= layout.inner_end_y {
+            return None;
+        }
+        let idx = self.scroll_offset + (row - layout.inner_y) as usize;
+        if idx < self.lines.len() {
+            Some(idx)
+        } else {
+            None
+        }
+    }
+
+    /// Return true when the given line index is the first line of a diff hunk.
+    pub fn is_hunk_start_line(&self, line_idx: usize) -> bool {
+        self.hunk_starts.binary_search(&line_idx).is_ok()
+    }
+
+    /// Get the zero-based hunk index for a hunk-start line.
+    pub fn hunk_index_for_start_line(&self, line_idx: usize) -> Option<usize> {
+        self.hunk_starts.iter().position(|&idx| idx == line_idx)
+    }
+
     /// Get the highlighters for a given section index.
-    fn highlighters_for_section(&self, section_index: usize) -> Option<(&FileHighlighter, &FileHighlighter)> {
+    fn highlighters_for_section(
+        &self,
+        section_index: usize,
+    ) -> Option<(&FileHighlighter, &FileHighlighter)> {
         self.sections
             .get(section_index)
             .map(|s| (&s.old_highlighter, &s.new_highlighter))
@@ -706,6 +752,7 @@ pub fn render_diff(
     theme: &Theme,
     focused: bool,
     diff_loading: bool,
+    show_revert_markers: bool,
 ) {
     let border_style = if focused {
         theme.active_border
@@ -722,7 +769,7 @@ pub fn render_diff(
         let block = Block::default()
             .title(" Diff ")
             .borders(theme.panel_borders)
-        .border_type(theme.panel_border_type)
+            .border_type(theme.panel_border_type)
             .border_style(border_style);
         let widget = Paragraph::new(msg);
         frame.render_widget(widget.block(block), area);
@@ -1017,14 +1064,30 @@ pub fn render_diff(
                     }
                     let y = inner.y + row as u16;
 
-                    let left_gutter_text = if chunk_idx == 0 { left_num.clone() } else { "   · ".to_string() };
-                    let right_gutter_text = if chunk_idx == 0 { right_num.clone() } else { "   · ".to_string() };
+                    let left_gutter_text = if chunk_idx == 0 {
+                        left_num.clone()
+                    } else {
+                        "   · ".to_string()
+                    };
+                    let right_gutter_text = if chunk_idx == 0 {
+                        right_num.clone()
+                    } else {
+                        "   · ".to_string()
+                    };
 
                     // Left gutter + content
-                    buf_write_str(buf, inner.x, y, &left_gutter_text, gutter_style, gutter_width);
+                    buf_write_str(
+                        buf,
+                        inner.x,
+                        y,
+                        &left_gutter_text,
+                        gutter_style,
+                        gutter_width,
+                    );
                     buf_write_str(buf, inner.x + gutter_width, y, " ", content_gap_style, 1);
                     if is_insert {
-                        let slash: String = std::iter::repeat('/').take(panel_width as usize).collect();
+                        let slash: String =
+                            std::iter::repeat('/').take(panel_width as usize).collect();
                         let slash_inner: String = std::iter::repeat('/')
                             .take(left_content_inner_width as usize)
                             .collect();
@@ -1059,11 +1122,32 @@ pub fn render_diff(
                         );
                     }
 
-                    // Divider
-                    buf_write_str(buf, div_x, y, "│", divider_style, divider_width);
+                    // Divider or revert marker (first visual row of a hunk only).
+                    let show_marker = show_revert_markers
+                        && !state.wrap
+                        && chunk_idx == 0
+                        && state.is_hunk_start_line(line_idx);
+                    let (divider_char, style) = if show_marker {
+                        (
+                            "R",
+                            Style::default()
+                                .fg(theme.accent_secondary)
+                                .add_modifier(Modifier::BOLD),
+                        )
+                    } else {
+                        ("│", divider_style)
+                    };
+                    buf_write_str(buf, div_x, y, divider_char, style, divider_width);
 
                     // Right gutter + content
-                    buf_write_str(buf, right_gutter_x, y, &right_gutter_text, right_gutter_style, gutter_width);
+                    buf_write_str(
+                        buf,
+                        right_gutter_x,
+                        y,
+                        &right_gutter_text,
+                        right_gutter_style,
+                        gutter_width,
+                    );
                     buf_write_str(buf, right_content_x, y, " ", content_gap_style, 1);
                     if is_delete {
                         let slash_inner: String = std::iter::repeat('/')
@@ -1139,11 +1223,30 @@ pub fn render_diff(
                     state.horizontal_scroll,
                 );
 
-                // Divider
-                buf_write_str(buf, div_x, y, "│", divider_style, divider_width);
+                // Divider or revert marker.
+                let show_marker =
+                    show_revert_markers && !state.wrap && state.is_hunk_start_line(line_idx);
+                let (divider_char, style) = if show_marker {
+                    (
+                        "R",
+                        Style::default()
+                            .fg(theme.accent_secondary)
+                            .add_modifier(Modifier::BOLD),
+                    )
+                } else {
+                    ("│", divider_style)
+                };
+                buf_write_str(buf, div_x, y, divider_char, style, divider_width);
 
                 // Right gutter
-                buf_write_str(buf, right_gutter_x, y, &right_num, right_gutter_style, gutter_width);
+                buf_write_str(
+                    buf,
+                    right_gutter_x,
+                    y,
+                    &right_num,
+                    right_gutter_style,
+                    gutter_width,
+                );
                 buf_write_str(buf, right_content_x, y, " ", content_gap_style, 1);
 
                 // Right content
@@ -1232,7 +1335,14 @@ fn buf_write_str(buf: &mut Buffer, x: u16, y: u16, text: &str, style: Style, max
 /// Write styled spans directly to the buffer at (x, y), clamped to max_width.
 /// `h_scroll` skips the first N display columns of content.
 #[inline]
-fn buf_write_spans(buf: &mut Buffer, x: u16, y: u16, spans: &[Span<'_>], max_width: u16, h_scroll: usize) {
+fn buf_write_spans(
+    buf: &mut Buffer,
+    x: u16,
+    y: u16,
+    spans: &[Span<'_>],
+    max_width: u16,
+    h_scroll: usize,
+) {
     let buf_area = buf.area();
     if y < buf_area.y || y >= buf_area.y + buf_area.height {
         return;
@@ -1284,7 +1394,11 @@ fn wrap_spans<'a>(spans: &[Span<'a>], width: usize) -> Vec<Vec<Span<'a>>> {
         .flat_map(|sp| {
             let style = sp.style;
             sp.content.chars().filter_map(move |ch| {
-                if unicode_display_width(ch) > 0 { Some((ch, style)) } else { None }
+                if unicode_display_width(ch) > 0 {
+                    Some((ch, style))
+                } else {
+                    None
+                }
             })
         })
         .collect();
@@ -1433,7 +1547,10 @@ fn build_word_diff_spans<'a>(
                         .add_modifier(Modifier::BOLD),
                 )
             } else {
-                Span::styled(seg.text.clone(), Style::default().bg(bg).fg(theme.syntax_default))
+                Span::styled(
+                    seg.text.clone(),
+                    Style::default().bg(bg).fg(theme.syntax_default),
+                )
             }
         })
         .collect()
@@ -1476,7 +1593,9 @@ pub fn render_diff_search_highlights(
     };
 
     let visible_height = area.height.saturating_sub(2) as usize; // -2 for borders
-    let highlight_style = Style::default().bg(theme.diff_search_highlight_bg).fg(theme.diff_search_highlight_fg);
+    let highlight_style = Style::default()
+        .bg(theme.diff_search_highlight_bg)
+        .fg(theme.diff_search_highlight_fg);
     let current_highlight_style = Style::default()
         .bg(theme.diff_search_cursor_bg)
         .fg(theme.diff_search_cursor_fg)
@@ -1529,12 +1648,7 @@ pub fn render_diff_search_highlights(
 }
 
 /// Render a search bar at the bottom of the diff panel area.
-pub fn render_diff_search_bar(
-    frame: &mut Frame,
-    area: Rect,
-    state: &DiffViewState,
-    theme: &Theme,
-) {
+pub fn render_diff_search_bar(frame: &mut Frame, area: Rect, state: &DiffViewState, theme: &Theme) {
     // Only render if search is active (typing) or has a query (dismissed but results shown)
     if !state.search_active && state.search_query.is_empty() {
         return;
@@ -1581,7 +1695,9 @@ pub fn render_diff_search_bar(
         let prefix_rect = Rect::new(bar_rect.x, bar_y, prefix_width, 1);
         let prefix = Paragraph::new(Span::styled(
             " /",
-            Style::default().fg(theme.diff_grid_fg).bg(theme.diff_grid_bg),
+            Style::default()
+                .fg(theme.diff_grid_fg)
+                .bg(theme.diff_grid_bg),
         ));
         frame.render_widget(prefix, prefix_rect);
 
@@ -1591,17 +1707,22 @@ pub fn render_diff_search_bar(
         }
 
         if !match_info.is_empty() {
-            let suffix_rect = Rect::new(bar_rect.x + prefix_width + ta_width, bar_y, suffix_width, 1);
+            let suffix_rect =
+                Rect::new(bar_rect.x + prefix_width + ta_width, bar_y, suffix_width, 1);
             let suffix = Paragraph::new(Span::styled(
                 match_info,
-                Style::default().fg(theme.diff_grid_fg).bg(theme.diff_grid_bg),
+                Style::default()
+                    .fg(theme.diff_grid_fg)
+                    .bg(theme.diff_grid_bg),
             ));
             frame.render_widget(suffix, suffix_rect);
         }
     } else {
         // Dismissed search — show query + match info
         let text = format!(" /{}{}", state.search_query, match_info);
-        let style = Style::default().fg(theme.diff_grid_fg).bg(theme.diff_grid_bg);
+        let style = Style::default()
+            .fg(theme.diff_grid_fg)
+            .bg(theme.diff_grid_bg);
         buf_write_str(
             frame.buffer_mut(),
             bar_rect.x,
@@ -1763,7 +1884,8 @@ fn build_hunk_line_offsets(
                         .as_ref()
                         .map(|(n, _)| *n >= content_old_start)
                         .unwrap_or(false)
-                        || dl.new_line
+                        || dl
+                            .new_line
                             .as_ref()
                             .map(|(n, _)| *n >= content_new_start)
                             .unwrap_or(false)

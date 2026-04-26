@@ -17,10 +17,7 @@ impl App {
 
         // Validate git repo
         if !GitCommands::is_valid_repo(&repo_path) {
-            anyhow::bail!(
-                "'{}' is not a git repository",
-                repo_path.display()
-            );
+            anyhow::bail!("'{}' is not a git repository", repo_path.display());
         }
 
         Ok(Self { config, repo_path })
@@ -32,8 +29,7 @@ impl App {
         self.config.app_state.add_recent_repo(&repo_str);
         let _ = self.config.save_state();
 
-        let git = GitCommands::new(&self.repo_path)
-            .context("Failed to initialize git commands")?;
+        let git = GitCommands::new(&self.repo_path).context("Failed to initialize git commands")?;
 
         let mut gui = Gui::new(self.config, git)?;
         gui.run()?;

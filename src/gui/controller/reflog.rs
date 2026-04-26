@@ -3,8 +3,8 @@ use crossterm::event::KeyEvent;
 
 use crate::config::KeybindingConfig;
 use crate::config::keybindings::parse_key;
-use crate::gui::popup::{MenuItem, PopupState};
 use crate::gui::Gui;
+use crate::gui::popup::{MenuItem, PopupState};
 use crate::os::platform::Platform;
 
 pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) -> Result<()> {
@@ -77,15 +77,15 @@ fn enter_reflog_commit_files(gui: &mut Gui) -> Result<()> {
                 &model.commit_files,
                 &gui.commit_files_collapsed_dirs,
             );
-            gui.context_mgr.commit_files_list_len_override =
-                Some(gui.commit_file_tree_nodes.len());
+            gui.context_mgr.commit_files_list_len_override = Some(gui.commit_file_tree_nodes.len());
         } else {
             gui.commit_file_tree_nodes.clear();
             gui.context_mgr.commit_files_list_len_override = None;
         }
 
         // Switch to CommitFiles context
-        gui.context_mgr.set_active(crate::gui::context::ContextId::CommitFiles);
+        gui.context_mgr
+            .set_active(crate::gui::context::ContextId::CommitFiles);
         gui.context_mgr.set_selection(0);
         gui.needs_diff_refresh = true;
     }
@@ -180,7 +180,12 @@ fn cherry_pick_reflog_entry(gui: &mut Gui) -> Result<()> {
         let n = gui.cherry_pick_clipboard.len();
         gui.popup = PopupState::Message {
             title: "Cherry-pick".to_string(),
-            message: format!("Copied commit {} ({} commit{} copied)", short, n, if n == 1 { "" } else { "s" }),
+            message: format!(
+                "Copied commit {} ({} commit{} copied)",
+                short,
+                n,
+                if n == 1 { "" } else { "s" }
+            ),
             kind: crate::gui::popup::MessageKind::Info,
         };
     }

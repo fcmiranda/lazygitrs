@@ -3,8 +3,8 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::config::KeybindingConfig;
 use crate::config::keybindings::parse_key;
-use crate::gui::popup::{MenuItem, PopupState, make_textarea};
 use crate::gui::Gui;
+use crate::gui::popup::{MenuItem, PopupState, make_textarea};
 
 pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) -> Result<()> {
     // Enter: drill into remote branches
@@ -90,12 +90,14 @@ fn add_remote(gui: &mut Gui) -> Result<()> {
                         }
                         Ok(())
                     }),
-                    is_commit: false, confirm_focused: false,
+                    is_commit: false,
+                    confirm_focused: false,
                 };
             }
             Ok(())
         }),
-        is_commit: false, confirm_focused: false,
+        is_commit: false,
+        confirm_focused: false,
     };
     Ok(())
 }
@@ -194,10 +196,14 @@ fn show_push_menu(gui: &mut Gui) -> Result<()> {
                 key: Some("u".to_string()),
                 action: Some(Box::new(move |gui| {
                     let branch = b2.clone();
-                    gui.start_remote_op("Push", &format!("Pushing -u origin {}...", branch), move |git| {
-                        git.push_with_upstream("origin", &branch)?;
-                        Ok(())
-                    });
+                    gui.start_remote_op(
+                        "Push",
+                        &format!("Pushing -u origin {}...", branch),
+                        move |git| {
+                            git.push_with_upstream("origin", &branch)?;
+                            Ok(())
+                        },
+                    );
                     Ok(())
                 })),
             },

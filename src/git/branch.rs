@@ -5,7 +5,8 @@ use crate::model::Branch;
 
 impl GitCommands {
     pub fn load_branches(&self) -> Result<Vec<Branch>> {
-        let format = "%(HEAD)|%(refname:short)|%(objectname:short)|%(upstream:short)|%(upstream:track)";
+        let format =
+            "%(HEAD)|%(refname:short)|%(objectname:short)|%(upstream:short)|%(upstream:track)";
         let result = self
             .git()
             .args(&[
@@ -67,13 +68,7 @@ impl GitCommands {
     fn branch_recency(&self, branch_name: &str) -> Result<String> {
         let result = self
             .git()
-            .args(&[
-                "log",
-                "-1",
-                "--format=%cr",
-                branch_name,
-                "--",
-            ])
+            .args(&["log", "-1", "--format=%cr", branch_name, "--"])
             .run()?;
 
         if result.success {
@@ -125,9 +120,7 @@ impl GitCommands {
     }
 
     pub fn rebase_branch(&self, name: &str) -> Result<()> {
-        self.git()
-            .args(&["rebase", name])
-            .run_expecting_success()?;
+        self.git().args(&["rebase", name]).run_expecting_success()?;
         Ok(())
     }
 }
