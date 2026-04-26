@@ -3,8 +3,11 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::config::KeybindingConfig;
 use crate::config::keybindings::parse_key;
-use crate::gui::popup::{CommitInputFocus, MenuItem, PopupState, make_textarea, make_commit_summary_textarea, make_commit_body_textarea};
 use crate::gui::Gui;
+use crate::gui::popup::{
+    CommitInputFocus, MenuItem, PopupState, make_commit_body_textarea,
+    make_commit_summary_textarea, make_textarea,
+};
 use crate::os::platform::Platform;
 
 pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) -> Result<()> {
@@ -120,7 +123,10 @@ fn toggle_stage(gui: &mut Gui) -> Result<()> {
                 let model = gui.model.lock().unwrap();
                 // Check if any child has unstaged changes
                 let any_unstaged = child_indices.iter().any(|&i| {
-                    model.files.get(i).map_or(false, |f| f.has_unstaged_changes || !f.tracked)
+                    model
+                        .files
+                        .get(i)
+                        .map_or(false, |f| f.has_unstaged_changes || !f.tracked)
                 });
                 let names: Vec<String> = child_indices
                     .iter()
@@ -161,7 +167,10 @@ fn toggle_stage(gui: &mut Gui) -> Result<()> {
 
 fn toggle_stage_all(gui: &mut Gui) -> Result<()> {
     let model = gui.model.lock().unwrap();
-    let any_unstaged = model.files.iter().any(|f| f.has_unstaged_changes || !f.tracked);
+    let any_unstaged = model
+        .files
+        .iter()
+        .any(|f| f.has_unstaged_changes || !f.tracked);
     drop(model);
 
     if any_unstaged {
@@ -226,7 +235,8 @@ fn open_ai_commit_prompt(gui: &mut Gui) -> Result<()> {
     if !any_staged {
         gui.popup = PopupState::Confirm {
             title: "No files staged".to_string(),
-            message: "You have not staged any files. Stage all and generate AI commit message?".to_string(),
+            message: "You have not staged any files. Stage all and generate AI commit message?"
+                .to_string(),
             on_confirm: Box::new(|gui| {
                 gui.git.stage_all()?;
                 gui.popup = PopupState::CommitInput {
@@ -278,7 +288,12 @@ fn copy_to_clipboard_menu(gui: &mut Gui) -> Result<()> {
     let is_deleted = file.deleted;
     drop(model);
 
-    let abs_path = gui.git.repo_path().join(&rel_path).to_string_lossy().to_string();
+    let abs_path = gui
+        .git
+        .repo_path()
+        .join(&rel_path)
+        .to_string_lossy()
+        .to_string();
     let rel_for_diff = rel_path.clone();
     let file_name_copy = file_name.clone();
     let rel_path_copy = rel_path.clone();
@@ -400,7 +415,12 @@ fn open_in_editor(gui: &mut Gui) -> Result<()> {
         let rel_path = file.name.clone();
         drop(model);
 
-        let abs_path = gui.git.repo_path().join(&rel_path).to_string_lossy().to_string();
+        let abs_path = gui
+            .git
+            .repo_path()
+            .join(&rel_path)
+            .to_string_lossy()
+            .to_string();
         let edit_template = &gui.config.user_config.os.edit;
         if !edit_template.is_empty() {
             crate::config::user_config::OsConfig::run_template(edit_template, &abs_path)?;
@@ -421,7 +441,12 @@ fn open_in_default_program(gui: &mut Gui) -> Result<()> {
         let rel_path = file.name.clone();
         drop(model);
 
-        let abs_path = gui.git.repo_path().join(&rel_path).to_string_lossy().to_string();
+        let abs_path = gui
+            .git
+            .repo_path()
+            .join(&rel_path)
+            .to_string_lossy()
+            .to_string();
         let open_template = &gui.config.user_config.os.open;
         crate::config::user_config::OsConfig::run_template(open_template, &abs_path)?;
     }
@@ -513,7 +538,8 @@ fn open_stash_message_prompt(gui: &mut Gui, kind: StashKind) {
             gui.needs_refresh = true;
             Ok(())
         }),
-        is_commit: false, confirm_focused: false,
+        is_commit: false,
+        confirm_focused: false,
     };
 }
 
@@ -526,7 +552,8 @@ fn stash_changes(gui: &mut Gui) -> Result<()> {
             gui.needs_refresh = true;
             Ok(())
         }),
-        is_commit: false, confirm_focused: false,
+        is_commit: false,
+        confirm_focused: false,
     };
     Ok(())
 }
@@ -707,7 +734,8 @@ fn commit_with_editor(gui: &mut Gui) -> Result<()> {
             gui.needs_refresh = true;
             Ok(())
         }),
-        is_commit: false, confirm_focused: false,
+        is_commit: false,
+        confirm_focused: false,
     };
     Ok(())
 }

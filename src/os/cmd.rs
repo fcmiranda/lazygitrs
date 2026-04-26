@@ -30,7 +30,7 @@ pub fn log_command(desc: &str) {
                 // Keep last 100 entries
                 if entries.len() > 100 {
                     let excess = entries.len() - 100;
-                entries.drain(..excess);
+                    entries.drain(..excess);
                 }
             }
         }
@@ -139,22 +139,21 @@ impl CmdBuilder {
         cmd.stderr(Stdio::piped());
 
         let output = if let Some(ref stdin_data) = self.stdin_data {
-            let mut child = cmd.spawn().with_context(|| {
-                format!("Failed to spawn: {} {:?}", self.program, self.args)
-            })?;
+            let mut child = cmd
+                .spawn()
+                .with_context(|| format!("Failed to spawn: {} {:?}", self.program, self.args))?;
 
             if let Some(ref mut stdin) = child.stdin {
                 use std::io::Write;
                 stdin.write_all(stdin_data.as_bytes())?;
             }
 
-            child.wait_with_output().with_context(|| {
-                format!("Failed to wait: {} {:?}", self.program, self.args)
-            })?
+            child
+                .wait_with_output()
+                .with_context(|| format!("Failed to wait: {} {:?}", self.program, self.args))?
         } else {
-            cmd.output().with_context(|| {
-                format!("Failed to run: {} {:?}", self.program, self.args)
-            })?
+            cmd.output()
+                .with_context(|| format!("Failed to run: {} {:?}", self.program, self.args))?
         };
 
         Ok(CmdResult::from_output(output))

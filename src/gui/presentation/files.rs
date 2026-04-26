@@ -5,8 +5,8 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::ListItem;
 
 use crate::config::Theme;
-use crate::model::file_tree::FileTreeNode;
 use crate::model::Model;
+use crate::model::file_tree::FileTreeNode;
 
 /// Render file list as a flat list (no tree structure).
 pub fn render_file_list<'a>(model: &Model, theme: &Theme) -> Vec<ListItem<'a>> {
@@ -46,9 +46,10 @@ pub fn render_file_tree<'a>(
                 // Directory is green if ALL child files are fully staged
                 let all_staged = !node.child_file_indices.is_empty()
                     && node.child_file_indices.iter().all(|&idx| {
-                        model.files.get(idx).is_some_and(|f| {
-                            f.has_staged_changes && !f.has_unstaged_changes
-                        })
+                        model
+                            .files
+                            .get(idx)
+                            .is_some_and(|f| f.has_staged_changes && !f.has_unstaged_changes)
                     });
 
                 let dir_style = if all_staged {

@@ -53,11 +53,7 @@ impl RebaseAction {
 impl GitCommands {
     /// Interactive rebase: apply a single action to a specific commit.
     /// Uses GIT_SEQUENCE_EDITOR to non-interactively modify the todo list.
-    pub fn rebase_interactive_action(
-        &self,
-        commit_hash: &str,
-        action: RebaseAction,
-    ) -> Result<()> {
+    pub fn rebase_interactive_action(&self, commit_hash: &str, action: RebaseAction) -> Result<()> {
         // Find the parent of the target commit for the rebase base
         let parent = self.commit_parent(commit_hash)?;
 
@@ -214,7 +210,8 @@ impl GitCommands {
             todo_content.replace('\'', "'\\''")
         );
 
-        let result = self.git()
+        let result = self
+            .git()
             .args(&["rebase", "-i", "--autostash", base_hash])
             .env("GIT_SEQUENCE_EDITOR", &editor_script)
             // Prevent git from opening an interactive editor for reword/edit
@@ -276,7 +273,12 @@ impl GitCommands {
         // Read head-name (branch being rebased)
         let head_name = std::fs::read_to_string(rebase_dir.join("head-name"))
             .ok()
-            .map(|s| s.trim().strip_prefix("refs/heads/").unwrap_or(s.trim()).to_string())
+            .map(|s| {
+                s.trim()
+                    .strip_prefix("refs/heads/")
+                    .unwrap_or(s.trim())
+                    .to_string()
+            })
             .unwrap_or_default();
 
         // Read onto hash
@@ -333,7 +335,10 @@ impl GitCommands {
         let hashes: Vec<&str> = entries.iter().map(|e| e.hash.as_str()).collect();
         // Use --no-walk so we get exactly the commits we asked for
         let mut cmd = self.git();
-        cmd = cmd.arg("log").arg("--no-walk").arg("--format=%H|%s|%an|%at");
+        cmd = cmd
+            .arg("log")
+            .arg("--no-walk")
+            .arg("--format=%H|%s|%an|%at");
         for h in &hashes {
             cmd = cmd.arg(*h);
         }

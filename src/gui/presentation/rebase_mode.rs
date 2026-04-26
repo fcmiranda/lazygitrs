@@ -50,20 +50,14 @@ fn render_main_block(frame: &mut Frame, area: Rect, state: &RebaseModeState, the
 
     match state.phase {
         RebasePhase::Planning => {
-            title_spans.push(Span::styled(
-                " ~ ",
-                Style::default().fg(theme.text_dimmed),
-            ));
+            title_spans.push(Span::styled(" ~ ", Style::default().fg(theme.text_dimmed)));
             title_spans.push(Span::styled(
                 format!("{} commits", state.entries.len()),
                 Style::default().fg(theme.text_strong),
             ));
         }
         RebasePhase::InProgress => {
-            title_spans.push(Span::styled(
-                " ~ ",
-                Style::default().fg(theme.text_dimmed),
-            ));
+            title_spans.push(Span::styled(" ~ ", Style::default().fg(theme.text_dimmed)));
             title_spans.push(Span::styled(
                 format!("{}/{}", state.done_count, state.total_count),
                 Style::default().fg(theme.text_strong),
@@ -88,9 +82,9 @@ fn render_main_block(frame: &mut Frame, area: Rect, state: &RebaseModeState, the
     let sections = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1),              // branch + base info line
-            Constraint::Length(banner_height),   // progress banner (InProgress only)
-            Constraint::Min(1),                 // list
+            Constraint::Length(1),             // branch + base info line
+            Constraint::Length(banner_height), // progress banner (InProgress only)
+            Constraint::Min(1),                // list
         ])
         .split(inner);
 
@@ -131,7 +125,10 @@ fn render_info_line(frame: &mut Frame, area: Rect, state: &RebaseModeState, them
 /// Render the "Rebase paused at ..." progress banner (InProgress only).
 fn render_progress_banner(frame: &mut Frame, area: Rect, state: &RebaseModeState, theme: &Theme) {
     // Find the current (paused) entry
-    let current = state.entries.iter().find(|e| e.status == EntryStatus::Current);
+    let current = state
+        .entries
+        .iter()
+        .find(|e| e.status == EntryStatus::Current);
     let remaining = state.remaining_count();
 
     // Separator line above the banner
@@ -183,8 +180,8 @@ fn render_progress_banner(frame: &mut Frame, area: Rect, state: &RebaseModeState
         Style::default().fg(theme.text_dimmed),
     ));
 
-    let banner = Paragraph::new(Line::from(spans))
-        .style(Style::default().bg(theme.rebase_paused_bg));
+    let banner =
+        Paragraph::new(Line::from(spans)).style(Style::default().bg(theme.rebase_paused_bg));
     frame.render_widget(banner, banner_area);
 }
 
@@ -255,9 +252,7 @@ fn render_list(frame: &mut Frame, area: Rect, state: &RebaseModeState, theme: &T
             if is_done {
                 spans.push(Span::styled(
                     action_label,
-                    Style::default()
-                        .fg(theme.text_dimmed)
-                        .bg(theme.selected_bg),
+                    Style::default().fg(theme.text_dimmed).bg(theme.selected_bg),
                 ));
             } else if is_current {
                 spans.push(Span::styled(
@@ -335,10 +330,7 @@ fn render_list(frame: &mut Frame, area: Rect, state: &RebaseModeState, theme: &T
                 format!("{} ", state.base_short_hash),
                 Style::default().fg(theme.text_dimmed),
             ),
-            Span::styled(
-                &state.base_message,
-                Style::default().fg(theme.text_dimmed),
-            ),
+            Span::styled(&state.base_message, Style::default().fg(theme.text_dimmed)),
         ];
         items.push(ListItem::new(Line::from(base_spans)));
     }
@@ -377,7 +369,9 @@ fn render_status_bar(frame: &mut Frame, area: Rect, state: &RebaseModeState, the
         ],
     };
 
-    let key_style = Style::default().fg(theme.text).add_modifier(ratatui::style::Modifier::BOLD);
+    let key_style = Style::default()
+        .fg(theme.text)
+        .add_modifier(ratatui::style::Modifier::BOLD);
     let desc_style = Style::default().fg(theme.text_dimmed);
     let spans: Vec<Span> = hints
         .iter()

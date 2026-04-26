@@ -15,7 +15,6 @@ pub enum MenuAsyncResult {
     OpenUrl(String),
 }
 
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageKind {
     Error,
@@ -109,10 +108,7 @@ pub struct ChecklistItem {
 
 impl PartialEq for PopupState {
     fn eq(&self, other: &Self) -> bool {
-        matches!(
-            (self, other),
-            (PopupState::None, PopupState::None)
-        )
+        matches!((self, other), (PopupState::None, PopupState::None))
     }
 }
 
@@ -142,7 +138,11 @@ pub fn make_help_search_textarea() -> TextArea<'static> {
 
     let mut ta = make_textarea("Type to filter...");
     ta.set_style(Style::default().fg(Color::Yellow));
-    ta.set_cursor_style(Style::default().fg(Color::Yellow).add_modifier(ratatui::style::Modifier::REVERSED));
+    ta.set_cursor_style(
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(ratatui::style::Modifier::REVERSED),
+    );
     ta
 }
 

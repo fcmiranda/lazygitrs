@@ -24,7 +24,11 @@ impl GitCommands {
 
             let name = if raw.contains(" -> ") {
                 let parts: Vec<&str> = raw.splitn(2, " -> ").collect();
-                format!("{} -> {}", unquote_porcelain_path(parts[0]), unquote_porcelain_path(parts.get(1).copied().unwrap_or("")))
+                format!(
+                    "{} -> {}",
+                    unquote_porcelain_path(parts[0]),
+                    unquote_porcelain_path(parts.get(1).copied().unwrap_or(""))
+                )
             } else {
                 unquote_porcelain_path(raw)
             };
@@ -46,7 +50,10 @@ impl GitCommands {
                 tracked,
                 added: x == 'A' || y == 'A' || !tracked,
                 deleted: x == 'D' || y == 'D',
-                has_merge_conflicts: x == 'U' || y == 'U' || (x == 'A' && y == 'A') || (x == 'D' && y == 'D'),
+                has_merge_conflicts: x == 'U'
+                    || y == 'U'
+                    || (x == 'A' && y == 'A')
+                    || (x == 'D' && y == 'D'),
             });
         }
 
@@ -105,9 +112,7 @@ impl GitCommands {
 
     pub fn discard_file(&self, path: &str, added: bool) -> Result<()> {
         // Unstage first if needed (ignore errors — file may not be staged)
-        let _ = self.git()
-            .args(&["reset", "HEAD", "--", path])
-            .run();
+        let _ = self.git().args(&["reset", "HEAD", "--", path]).run();
 
         if added {
             // New/untracked file: just delete it
@@ -173,18 +178,46 @@ fn unquote_porcelain_path(raw: &str) -> String {
         if c == b'\\' && i + 1 < inner.len() {
             let n = inner[i + 1];
             match n {
-                b'a' => { out.push(0x07); i += 2; }
-                b'b' => { out.push(0x08); i += 2; }
-                b't' => { out.push(b'\t'); i += 2; }
-                b'n' => { out.push(b'\n'); i += 2; }
-                b'v' => { out.push(0x0b); i += 2; }
-                b'f' => { out.push(0x0c); i += 2; }
-                b'r' => { out.push(b'\r'); i += 2; }
-                b'"' => { out.push(b'"'); i += 2; }
-                b'\\' => { out.push(b'\\'); i += 2; }
-                b'0'..=b'7' if i + 3 < inner.len()
-                    && (b'0'..=b'7').contains(&inner[i + 2])
-                    && (b'0'..=b'7').contains(&inner[i + 3]) =>
+                b'a' => {
+                    out.push(0x07);
+                    i += 2;
+                }
+                b'b' => {
+                    out.push(0x08);
+                    i += 2;
+                }
+                b't' => {
+                    out.push(b'\t');
+                    i += 2;
+                }
+                b'n' => {
+                    out.push(b'\n');
+                    i += 2;
+                }
+                b'v' => {
+                    out.push(0x0b);
+                    i += 2;
+                }
+                b'f' => {
+                    out.push(0x0c);
+                    i += 2;
+                }
+                b'r' => {
+                    out.push(b'\r');
+                    i += 2;
+                }
+                b'"' => {
+                    out.push(b'"');
+                    i += 2;
+                }
+                b'\\' => {
+                    out.push(b'\\');
+                    i += 2;
+                }
+                b'0'..=b'7'
+                    if i + 3 < inner.len()
+                        && (b'0'..=b'7').contains(&inner[i + 2])
+                        && (b'0'..=b'7').contains(&inner[i + 3]) =>
                 {
                     let val = ((inner[i + 1] - b'0') << 6)
                         | ((inner[i + 2] - b'0') << 3)
@@ -192,7 +225,10 @@ fn unquote_porcelain_path(raw: &str) -> String {
                     out.push(val);
                     i += 4;
                 }
-                _ => { out.push(c); i += 1; }
+                _ => {
+                    out.push(c);
+                    i += 1;
+                }
             }
         } else {
             out.push(c);
@@ -214,9 +250,13 @@ fn parse_status_codes(x: char, y: char) -> (bool, bool, bool, FileStatus) {
         (' ', 'D') => (false, true, true, FileStatus::Deleted),
         ('R', ' ') | ('R', 'M') => (true, false, true, FileStatus::Renamed),
         ('C', ' ') | ('C', 'M') => (true, false, true, FileStatus::Copied),
-        ('U', 'U') | ('A', 'A') | ('D', 'D') | ('U', 'A') | ('A', 'U') | ('U', 'D') | ('D', 'U') => {
-            (false, true, true, FileStatus::Unmerged)
-        }
+        ('U', 'U')
+        | ('A', 'A')
+        | ('D', 'D')
+        | ('U', 'A')
+        | ('A', 'U')
+        | ('U', 'D')
+        | ('D', 'U') => (false, true, true, FileStatus::Unmerged),
         _ => (x != ' ', y != ' ', true, FileStatus::Modified),
     }
 }

@@ -5,7 +5,10 @@ use crate::model::Worktree;
 
 impl GitCommands {
     pub fn load_worktrees(&self) -> Result<Vec<Worktree>> {
-        let result = self.git().args(&["worktree", "list", "--porcelain"]).run()?;
+        let result = self
+            .git()
+            .args(&["worktree", "list", "--porcelain"])
+            .run()?;
         if !result.success {
             return Ok(Vec::new());
         }

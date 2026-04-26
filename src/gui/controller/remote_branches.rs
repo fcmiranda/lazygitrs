@@ -3,9 +3,9 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::config::KeybindingConfig;
 use crate::config::keybindings::parse_key;
+use crate::gui::Gui;
 use crate::gui::context::ContextId;
 use crate::gui::popup::PopupState;
-use crate::gui::Gui;
 
 pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) -> Result<()> {
     // Escape: go back to Remotes list
@@ -80,7 +80,10 @@ fn checkout_remote_branch(gui: &mut Gui) -> Result<()> {
 
         gui.popup = PopupState::Confirm {
             title: "Checkout".to_string(),
-            message: format!("Checkout '{}/{}' as local branch '{}'?", remote, branch, branch),
+            message: format!(
+                "Checkout '{}/{}' as local branch '{}'?",
+                remote, branch, branch
+            ),
             on_confirm: Box::new(move |gui| {
                 gui.git.checkout_remote_branch(&remote, &branch)?;
                 gui.needs_refresh = true;
@@ -144,7 +147,10 @@ fn delete_remote_branch(gui: &mut Gui) -> Result<()> {
 
         gui.popup = PopupState::Confirm {
             title: "Delete remote branch".to_string(),
-            message: format!("Delete remote branch '{}/{}'?\nThis will push --delete to the remote.", remote, branch),
+            message: format!(
+                "Delete remote branch '{}/{}'?\nThis will push --delete to the remote.",
+                remote, branch
+            ),
             on_confirm: Box::new(move |gui| {
                 gui.git.delete_remote_branch(&remote, &branch)?;
                 gui.needs_refresh = true;

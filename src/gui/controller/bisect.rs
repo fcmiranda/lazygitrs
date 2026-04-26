@@ -1,7 +1,7 @@
 use anyhow::Result;
 
-use crate::gui::popup::{MenuItem, PopupState};
 use crate::gui::Gui;
+use crate::gui::popup::{MenuItem, PopupState};
 
 /// Handle bisect options from the commits panel.
 pub fn show_bisect_menu(gui: &mut Gui) -> Result<()> {
