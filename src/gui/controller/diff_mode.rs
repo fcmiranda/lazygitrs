@@ -566,7 +566,7 @@ pub fn reload_diff_files(gui: &mut Gui) -> Result<()> {
         return Ok(());
     }
     // Clear the diff view since we're loading new files
-    gui.diff_view = crate::pager::side_by_side::DiffViewState::new();
+    gui.diff_view = gui.new_diff_view();
 
     match gui.git.diff_refs_files(&ref_a, &ref_b) {
         Ok(files) => {
@@ -688,12 +688,12 @@ pub fn maybe_request_diff(gui: &mut Gui, generation: u64, diff_key: String) {
             } else {
                 gui.diff_loading = false;
                 gui.diff_loading_since = None;
-                gui.diff_view = DiffViewState::new();
+                gui.diff_view = gui.new_diff_view();
             }
         } else {
             gui.diff_loading = false;
             gui.diff_loading_since = None;
-            gui.diff_view = DiffViewState::new();
+            gui.diff_view = gui.new_diff_view();
         }
     } else {
         gui.diff_loading = false;

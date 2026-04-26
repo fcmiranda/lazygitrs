@@ -43,6 +43,48 @@ lazygitrs
       # Using modelcli
       generateCommand: 'DIFF=$(git diff --cached) && modelcli "Generate a conventional commit message for this diff. Always provide a bulletpoint body. $DIFF"'
   ```
+### Configuration (`~/.config/lazygitrs/config.yml`)
+
+`lazygitrs` reads config from `~/.config/lazygitrs/config.yml`.
+If that file does not exist, it falls back to `~/.config/lazygit/config.yml`.
+
+Example:
+
+```yml
+# ~/.config/lazygitrs/config.yml
+gui:
+  sideBySide:
+    # false = no highlighted background for gutter numbers and +/- signs (default)
+    highlightGutter: false
+
+git:
+  commit:
+    # Using claude
+    generateCommand: "claude -p 'Generate a conventional commit message for this diff.'"
+    # Using opencode
+    generateCommand: "opencode run 'Generate a conventional commit message for this diff.'"
+    # Using modelcli
+    generateCommand: 'DIFF=$(git diff --cached) && modelcli "Generate a conventional commit message for this diff. Always provide a bulletpoint body. $DIFF"'
+```
+
+### Build from source (global install)
+
+```sh
+git clone https://github.com/Blankeos/lazygitrs.git
+cd lazygitrs
+cargo build --release
+sudo install -m 755 target/release/lazygitrs /usr/local/bin/lazygitrs
+```
+
+Optional alias if you want to call it as `lazygirts`:
+
+```sh
+sudo ln -sf /usr/local/bin/lazygitrs /usr/local/bin/lazygirts
+```
+
+### What's different
+
+- [x] **AI commit messages** — works with whatever agent you already use (claude, opencode, codex, or my minimal shim [modelcli](https://github.com/blankeos/modelcli))
 
 - [x] **Side-by-side diffs** with syntax highlighting by default, no pager hacks needed
 - [x] **Better diff navigation UX** — `[]` new/old only views, `{}` for hunk traveling, `hjkl←↑↓→` for line-by-line scrolling, supports mouse select/scroll too. Lots inspired by [lumen](https://github.com/jnsahaj/lumen)

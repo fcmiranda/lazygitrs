@@ -98,6 +98,8 @@ pub struct GuiConfig {
     pub show_bottom_line: bool,
     #[serde(rename = "nerdFontsVersion")]
     pub nerd_fonts_version: String,
+    #[serde(rename = "sideBySide")]
+    pub side_by_side: SideBySideConfig,
 }
 
 impl Default for GuiConfig {
@@ -113,6 +115,25 @@ impl Default for GuiConfig {
             show_command_log: true,
             show_bottom_line: true,
             nerd_fonts_version: "3".to_string(),
+            side_by_side: SideBySideConfig::default(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct SideBySideConfig {
+    /// Whether to apply add/remove background highlight to the diff gutter
+    /// (line numbers and +/- marker).
+    #[serde(rename = "highlightGutter")]
+    pub highlight_gutter: bool,
+}
+
+impl Default for SideBySideConfig {
+    fn default() -> Self {
+        Self {
+            // Keep the new no-highlight gutter behavior enabled by default.
+            highlight_gutter: false,
         }
     }
 }
