@@ -72,10 +72,7 @@ fn set_override_value(root: &mut serde_yaml::Value, raw_path: &str, value: Strin
     if let Some(stripped) = path.strip_prefix("keybinding/") {
         path = stripped;
     }
-    let segments: Vec<&str> = path
-        .split(['.', '/'])
-        .filter(|s| !s.is_empty())
-        .collect();
+    let segments: Vec<&str> = path.split(['.', '/']).filter(|s| !s.is_empty()).collect();
     if segments.is_empty() {
         return false;
     }
@@ -472,10 +469,7 @@ pub fn parse_key(s: &str) -> Option<KeyEvent> {
         // Ctrl modifier
         if let Some(key) = inner.strip_prefix("c-") {
             let ch = key.chars().next()?;
-            return Some(KeyEvent::new(
-                KeyCode::Char(ch),
-                KeyModifiers::CONTROL,
-            ));
+            return Some(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::CONTROL));
         }
 
         // Alt modifier
@@ -493,6 +487,7 @@ pub fn parse_key(s: &str) -> Option<KeyEvent> {
             "backspace" | "bs" => {
                 Some(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE))
             }
+            "backspace" | "bs" => Some(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE)),
             "delete" | "del" => Some(KeyEvent::new(KeyCode::Delete, KeyModifiers::NONE)),
             "space" => Some(KeyEvent::new(KeyCode::Char(' '), KeyModifiers::NONE)),
             "up" => Some(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)),

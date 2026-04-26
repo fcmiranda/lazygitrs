@@ -15,7 +15,7 @@ pub mod tag;
 pub mod worktree;
 
 use std::path::{Path, PathBuf};
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 
 use anyhow::Result;
 
@@ -34,7 +34,10 @@ pub enum ModelPart {
     Worktrees(Vec<model::Worktree>),
     Submodules(Vec<submodule::Submodule>),
     Reflog(Vec<model::Commit>),
-    DiffStats { added: usize, deleted: usize },
+    DiffStats {
+        added: usize,
+        deleted: usize,
+    },
     RepoStatus {
         is_rebasing: bool,
         is_merging: bool,

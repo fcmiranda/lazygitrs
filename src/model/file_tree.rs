@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
-use super::File;
 use super::CommitFile;
+use super::File;
 
 /// A node in the flattened file tree for display.
 #[derive(Debug, Clone)]
@@ -38,7 +38,8 @@ pub fn build_file_tree(files: &[File], collapsed_dirs: &HashSet<String>) -> Vec<
     entries.sort_by(|a, b| sort_dirs_first(&a.0, &b.0));
 
     // First pass: collect child file indices per directory path
-    let mut dir_children: std::collections::HashMap<String, Vec<usize>> = std::collections::HashMap::new();
+    let mut dir_children: std::collections::HashMap<String, Vec<usize>> =
+        std::collections::HashMap::new();
     for (parts, file_idx) in &entries {
         for depth in 0..parts.len().saturating_sub(1) {
             let dir_path = parts[..=depth].join("/");
@@ -244,7 +245,8 @@ pub fn build_commit_file_tree(
     entries.sort_by(|a, b| sort_dirs_first(&a.0, &b.0));
 
     // First pass: collect child file indices per directory path
-    let mut dir_children: std::collections::HashMap<String, Vec<usize>> = std::collections::HashMap::new();
+    let mut dir_children: std::collections::HashMap<String, Vec<usize>> =
+        std::collections::HashMap::new();
     for (parts, file_idx) in &entries {
         for depth in 0..parts.len().saturating_sub(1) {
             let dir_path = parts[..=depth].join("/");

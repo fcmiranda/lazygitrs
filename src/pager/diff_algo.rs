@@ -1,7 +1,7 @@
 use similar::{ChangeTag, TextDiff};
 
-use super::{expand_tabs, ChangeType, DiffLine};
 use super::word_diff::compute_word_diff;
+use super::{ChangeType, DiffLine, expand_tabs};
 
 /// Computes a side-by-side diff using GitHub-style pairing.
 ///
@@ -72,10 +72,8 @@ pub fn compute_side_by_side(old: &str, new: &str, tab_width: usize) -> Vec<DiffL
 
                     let (old_segments, new_segments) =
                         if matches!(change_type, ChangeType::Modified) {
-                            let old_text =
-                                old_line.as_ref().map(|(_, t)| t.as_str()).unwrap_or("");
-                            let new_text =
-                                new_line.as_ref().map(|(_, t)| t.as_str()).unwrap_or("");
+                            let old_text = old_line.as_ref().map(|(_, t)| t.as_str()).unwrap_or("");
+                            let new_text = new_line.as_ref().map(|(_, t)| t.as_str()).unwrap_or("");
                             if let Some((old_segs, new_segs)) =
                                 compute_word_diff(old_text, new_text)
                             {
@@ -101,10 +99,7 @@ pub fn compute_side_by_side(old: &str, new: &str, tab_width: usize) -> Vec<DiffL
             ChangeTag::Insert => {
                 lines.push(DiffLine {
                     old_line: None,
-                    new_line: Some((
-                        new_num,
-                        expand_tabs(change.value().trim_end(), tab_width),
-                    )),
+                    new_line: Some((new_num, expand_tabs(change.value().trim_end(), tab_width))),
                     change_type: ChangeType::Insert,
                     old_segments: None,
                     new_segments: None,

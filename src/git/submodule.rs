@@ -68,9 +68,7 @@ impl GitCommands {
 
     pub fn remove_submodule(&self, path: &str) -> Result<()> {
         // git rm removes the submodule entry and working tree
-        self.git()
-            .args(&["rm", path])
-            .run_expecting_success()?;
+        self.git().args(&["rm", path]).run_expecting_success()?;
         Ok(())
     }
 }

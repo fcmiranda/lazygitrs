@@ -315,7 +315,12 @@ impl OsConfig {
     }
 
     /// Run a command template replacing `{{filename}}`, `{{line}}`, and `{{column}}` with the given values.
-    pub fn run_template_at_line(template: &str, filename: &str, line: usize, column: usize) -> anyhow::Result<()> {
+    pub fn run_template_at_line(
+        template: &str,
+        filename: &str,
+        line: usize,
+        column: usize,
+    ) -> anyhow::Result<()> {
         if template.is_empty() {
             anyhow::bail!("No command configured");
         }

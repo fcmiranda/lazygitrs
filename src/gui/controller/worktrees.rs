@@ -2,8 +2,8 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::config::KeybindingConfig;
-use crate::gui::popup::{PopupState, make_textarea};
 use crate::gui::Gui;
+use crate::gui::popup::{PopupState, make_textarea};
 
 pub fn handle_key(gui: &mut Gui, key: KeyEvent, _keybindings: &KeybindingConfig) -> Result<()> {
     // Switch to worktree
@@ -37,7 +37,10 @@ fn switch_worktree(gui: &mut Gui) -> Result<()> {
 
         gui.popup = PopupState::Confirm {
             title: "Switch worktree".to_string(),
-            message: format!("Open lazygitrs in worktree '{}' ({})?\nThis will launch a new instance.", branch, path),
+            message: format!(
+                "Open lazygitrs in worktree '{}' ({})?\nThis will launch a new instance.",
+                branch, path
+            ),
             on_confirm: Box::new(move |gui| {
                 // Spawn a new lazygitrs instance in the worktree directory
                 let exe = std::env::current_exe().unwrap_or_else(|_| "lazygitrs".into());
@@ -75,7 +78,8 @@ fn create_worktree(gui: &mut Gui) -> Result<()> {
             }
             Ok(())
         }),
-        is_commit: false, confirm_focused: false,
+        is_commit: false,
+        confirm_focused: false,
     };
     Ok(())
 }
@@ -93,7 +97,10 @@ fn remove_worktree(gui: &mut Gui) -> Result<()> {
 
         gui.popup = PopupState::Confirm {
             title: "Remove worktree".to_string(),
-            message: format!("Remove worktree '{}' ({})?\nThis won't delete the branch.", branch, path),
+            message: format!(
+                "Remove worktree '{}' ({})?\nThis won't delete the branch.",
+                branch, path
+            ),
             on_confirm: Box::new(move |gui| {
                 gui.git.remove_worktree(&path, false)?;
                 gui.needs_refresh = true;

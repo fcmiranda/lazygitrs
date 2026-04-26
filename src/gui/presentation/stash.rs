@@ -15,10 +15,7 @@ pub fn render_stash_list<'a>(model: &Model, theme: &Theme) -> Vec<ListItem<'a>> 
                     format!(" {} ", entry.ref_name()),
                     Style::default().fg(theme.stash_index),
                 ),
-                Span::styled(
-                    entry.name.clone(),
-                    Style::default().fg(theme.stash_message),
-                ),
+                Span::styled(entry.name.clone(), Style::default().fg(theme.stash_message)),
             ]);
 
             ListItem::new(line)

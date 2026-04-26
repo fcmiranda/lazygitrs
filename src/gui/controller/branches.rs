@@ -3,8 +3,8 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::config::KeybindingConfig;
 use crate::config::keybindings::parse_key;
-use crate::gui::popup::{MenuItem, MessageKind, PopupState, make_textarea};
 use crate::gui::Gui;
+use crate::gui::popup::{MenuItem, MessageKind, PopupState, make_textarea};
 use crate::os::platform::Platform;
 
 pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) -> Result<()> {
@@ -113,7 +113,7 @@ fn checkout_previous(gui: &mut Gui) -> Result<()> {
 }
 
 fn checkout_picker(gui: &mut Gui) -> Result<()> {
-    use crate::gui::popup::{ListPickerItem, ListPickerCore, make_help_search_textarea};
+    use crate::gui::popup::{ListPickerCore, ListPickerItem, make_help_search_textarea};
 
     let model = gui.model.lock().unwrap();
     let mut items = Vec::new();
@@ -211,7 +211,8 @@ fn new_branch(gui: &mut Gui) -> Result<()> {
             }
             Ok(())
         }),
-        is_commit: false, confirm_focused: false,
+        is_commit: false,
+        confirm_focused: false,
     };
     Ok(())
 }
@@ -234,41 +235,39 @@ fn delete_branch(gui: &mut Gui) -> Result<()> {
         let upstream_for_remote = upstream.clone();
         let upstream_for_both = upstream.clone();
 
-        let mut items = vec![
-            MenuItem {
-                label: "Delete local branch".to_string(),
-                description: String::new(),
-                key: Some("c".to_string()),
-                action: Some(Box::new(move |gui| {
-                    match gui.git.delete_branch(&name_local, false) {
-                        Ok(()) => {
-                            gui.needs_refresh = true;
-                        }
-                        Err(e) => {
-                            let err_msg = format!("{}", e);
-                            if err_msg.contains("not fully merged") {
-                                let name_force = name_local.clone();
-                                gui.popup = PopupState::Confirm {
-                                    title: "Force delete?".to_string(),
-                                    message: format!(
-                                        "'{}' is not fully merged. Are you sure you want to delete it?",
-                                        name_local
-                                    ),
-                                    on_confirm: Box::new(move |gui| {
-                                        gui.git.delete_branch(&name_force, true)?;
-                                        gui.needs_refresh = true;
-                                        Ok(())
-                                    }),
-                                };
-                            } else {
-                                return Err(e);
-                            }
+        let mut items = vec![MenuItem {
+            label: "Delete local branch".to_string(),
+            description: String::new(),
+            key: Some("c".to_string()),
+            action: Some(Box::new(move |gui| {
+                match gui.git.delete_branch(&name_local, false) {
+                    Ok(()) => {
+                        gui.needs_refresh = true;
+                    }
+                    Err(e) => {
+                        let err_msg = format!("{}", e);
+                        if err_msg.contains("not fully merged") {
+                            let name_force = name_local.clone();
+                            gui.popup = PopupState::Confirm {
+                                title: "Force delete?".to_string(),
+                                message: format!(
+                                    "'{}' is not fully merged. Are you sure you want to delete it?",
+                                    name_local
+                                ),
+                                on_confirm: Box::new(move |gui| {
+                                    gui.git.delete_branch(&name_force, true)?;
+                                    gui.needs_refresh = true;
+                                    Ok(())
+                                }),
+                            };
+                        } else {
+                            return Err(e);
                         }
                     }
-                    Ok(())
-                })),
-            },
-        ];
+                }
+                Ok(())
+            })),
+        }];
 
         if has_remote {
             items.push(MenuItem {
@@ -374,22 +373,38 @@ fn rebase_branch(gui: &mut Gui) -> Result<()> {
         let items = vec![
             MenuItem {
                 label: format!("Simple rebase onto '{}'", name_for_simple),
-                description: if is_same_branch { "Already on this branch".to_string() } else { String::new() },
+                description: if is_same_branch {
+                    "Already on this branch".to_string()
+                } else {
+                    String::new()
+                },
                 key: Some("s".to_string()),
-                action: if is_same_branch { None } else { Some(Box::new(move |gui| {
-                    gui.git.rebase_branch(&name_for_simple)?;
-                    gui.needs_refresh = true;
-                    Ok(())
-                })) },
+                action: if is_same_branch {
+                    None
+                } else {
+                    Some(Box::new(move |gui| {
+                        gui.git.rebase_branch(&name_for_simple)?;
+                        gui.needs_refresh = true;
+                        Ok(())
+                    }))
+                },
             },
             MenuItem {
                 label: format!("Interactive rebase onto '{}'", name_for_interactive),
-                description: if is_same_branch { "Already on this branch".to_string() } else { String::new() },
+                description: if is_same_branch {
+                    "Already on this branch".to_string()
+                } else {
+                    String::new()
+                },
                 key: Some("i".to_string()),
-                action: if is_same_branch { None } else { Some(Box::new(move |gui| {
-                    enter_interactive_rebase_onto(gui, &name_for_interactive)?;
-                    Ok(())
-                })) },
+                action: if is_same_branch {
+                    None
+                } else {
+                    Some(Box::new(move |gui| {
+                        enter_interactive_rebase_onto(gui, &name_for_interactive)?;
+                        Ok(())
+                    }))
+                },
             },
             MenuItem {
                 label: format!("Rebase onto base branch ({})", name_for_base),
@@ -494,7 +509,8 @@ pub fn enter_interactive_rebase_onto(gui: &mut Gui, onto_ref: &str) -> Result<()
         }
     };
 
-    gui.rebase_mode.enter(branch_name, &base, &commits_to_rebase);
+    gui.rebase_mode
+        .enter(branch_name, &base, &commits_to_rebase);
     drop(model);
     Ok(())
 }
@@ -518,7 +534,8 @@ fn rename_branch(gui: &mut Gui) -> Result<()> {
                 }
                 Ok(())
             }),
-            is_commit: false, confirm_focused: false,
+            is_commit: false,
+            confirm_focused: false,
         };
     }
     Ok(())

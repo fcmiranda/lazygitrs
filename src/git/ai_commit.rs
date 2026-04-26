@@ -2,7 +2,7 @@ use std::io::Write;
 use std::path::Path;
 use std::process::{Command, Stdio};
 
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 /// Generate a commit message by piping `git diff --cached` via stdin to the configured command.
 pub fn generate_commit_message(repo_path: &Path, generate_command: &str) -> Result<String> {
@@ -112,7 +112,8 @@ mod tests {
 
     #[test]
     fn test_strip_single_backticks_first_line_only() {
-        let input = "`feat: something something`\n\nother content of the commit here stuff\nblah blah blah";
+        let input =
+            "`feat: something something`\n\nother content of the commit here stuff\nblah blah blah";
         assert_eq!(
             strip_markdown_fences(input),
             "feat: something something\n\nother content of the commit here stuff\nblah blah blah"

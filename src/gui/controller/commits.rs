@@ -3,8 +3,8 @@ use crossterm::event::KeyEvent;
 
 use crate::config::KeybindingConfig;
 use crate::config::keybindings::parse_key;
-use crate::gui::popup::{MenuItem, PopupState, make_textarea};
 use crate::gui::Gui;
+use crate::gui::popup::{MenuItem, PopupState, make_textarea};
 use crate::os::platform::Platform;
 
 pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) -> Result<()> {
@@ -172,7 +172,8 @@ fn reword_commit(gui: &mut Gui) -> Result<()> {
                 }
                 Ok(())
             }),
-            is_commit: false, confirm_focused: false,
+            is_commit: false,
+            confirm_focused: false,
         };
     }
     Ok(())
@@ -353,7 +354,8 @@ fn squash_above_commits_menu(gui: &mut Gui) -> Result<()> {
                 key: Some("b".to_string()),
                 action: if !last_hash.is_empty() {
                     Some(Box::new(move |gui| {
-                        gui.git.rebase_autosquash(&format!("{}^", last_hash_clone))?;
+                        gui.git
+                            .rebase_autosquash(&format!("{}^", last_hash_clone))?;
                         gui.needs_refresh = true;
                         Ok(())
                     }))
@@ -385,7 +387,8 @@ fn tag_commit(gui: &mut Gui) -> Result<()> {
                 }
                 Ok(())
             }),
-            is_commit: false, confirm_focused: false,
+            is_commit: false,
+            confirm_focused: false,
         };
     }
     Ok(())
@@ -632,7 +635,9 @@ pub fn copy_commit_to_clipboard_menu_for(
         let hash_for_diff = hash.clone();
 
         // Check if commit has a body (for strikethrough on empty)
-        let has_body = gui.git.commit_message_body(&hash)
+        let has_body = gui
+            .git
+            .commit_message_body(&hash)
             .map(|b| !b.trim().is_empty())
             .unwrap_or(false);
 
@@ -669,7 +674,11 @@ pub fn copy_commit_to_clipboard_menu_for(
                 },
                 MenuItem {
                     label: "Commit message body".to_string(),
-                    description: if has_body { String::new() } else { "Commit has no message body".to_string() },
+                    description: if has_body {
+                        String::new()
+                    } else {
+                        "Commit has no message body".to_string()
+                    },
                     key: Some("b".to_string()),
                     action: if has_body {
                         Some(Box::new(move |gui| {
@@ -713,7 +722,11 @@ pub fn copy_commit_to_clipboard_menu_for(
                 },
                 MenuItem {
                     label: "Commit tags".to_string(),
-                    description: if has_tags { String::new() } else { "Commit has no tags".to_string() },
+                    description: if has_tags {
+                        String::new()
+                    } else {
+                        "Commit has no tags".to_string()
+                    },
                     key: Some("t".to_string()),
                     action: if has_tags {
                         Some(Box::new(move |_gui| {
@@ -797,8 +810,7 @@ fn enter_commit_files(gui: &mut Gui) -> Result<()> {
                 &model.commit_files,
                 &gui.commit_files_collapsed_dirs,
             );
-            gui.context_mgr.commit_files_list_len_override =
-                Some(gui.commit_file_tree_nodes.len());
+            gui.context_mgr.commit_files_list_len_override = Some(gui.commit_file_tree_nodes.len());
         } else {
             gui.commit_file_tree_nodes.clear();
             let model = gui.model.lock().unwrap();
@@ -807,7 +819,8 @@ fn enter_commit_files(gui: &mut Gui) -> Result<()> {
         }
 
         // Switch to CommitFiles context
-        gui.context_mgr.set_active(crate::gui::context::ContextId::CommitFiles);
+        gui.context_mgr
+            .set_active(crate::gui::context::ContextId::CommitFiles);
         gui.context_mgr.set_selection(0);
         gui.needs_diff_refresh = true;
     }
@@ -878,7 +891,8 @@ fn enter_interactive_rebase(gui: &mut Gui) -> Result<()> {
         return Ok(());
     }
 
-    gui.rebase_mode.enter(branch_name, base_commit, &commits_to_rebase);
+    gui.rebase_mode
+        .enter(branch_name, base_commit, &commits_to_rebase);
     drop(model);
 
     Ok(())

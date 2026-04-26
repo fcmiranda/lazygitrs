@@ -3,9 +3,9 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::config::KeybindingConfig;
 use crate::config::keybindings::parse_key;
+use crate::gui::Gui;
 use crate::gui::context::ContextId;
 use crate::gui::popup::{MenuItem, PopupState};
-use crate::gui::Gui;
 use crate::model::FileChangeStatus;
 use crate::os::platform::Platform;
 
@@ -75,14 +75,18 @@ fn copy_to_clipboard_menu(gui: &mut Gui) -> Result<()> {
 
     // Resolve file index (tree view maps node -> file index)
     let file_idx = if gui.show_commit_file_tree {
-        gui.commit_file_tree_nodes.get(selected).and_then(|n| n.file_index)
+        gui.commit_file_tree_nodes
+            .get(selected)
+            .and_then(|n| n.file_index)
     } else {
         Some(selected)
     };
 
     let model = gui.model.lock().unwrap();
     let Some(idx) = file_idx else { return Ok(()) };
-    let Some(file) = model.commit_files.get(idx) else { return Ok(()) };
+    let Some(file) = model.commit_files.get(idx) else {
+        return Ok(());
+    };
 
     let file_name = file.name.clone();
     let status = file.status;
@@ -127,8 +131,7 @@ fn copy_to_clipboard_menu(gui: &mut Gui) -> Result<()> {
                 action: if has_old {
                     Some(Box::new(move |gui| {
                         let parent_ref = format!("{}^1", hash_for_old);
-                        let content =
-                            gui.git.file_content_at_commit(&parent_ref, &path_for_old)?;
+                        let content = gui.git.file_content_at_commit(&parent_ref, &path_for_old)?;
                         Platform::copy_to_clipboard(&content)?;
                         Ok(())
                     }))
@@ -146,8 +149,9 @@ fn copy_to_clipboard_menu(gui: &mut Gui) -> Result<()> {
                 key: Some("w".to_string()),
                 action: if has_new {
                     Some(Box::new(move |gui| {
-                        let content =
-                            gui.git.file_content_at_commit(&hash_for_new, &path_for_new)?;
+                        let content = gui
+                            .git
+                            .file_content_at_commit(&hash_for_new, &path_for_new)?;
                         Platform::copy_to_clipboard(&content)?;
                         Ok(())
                     }))
@@ -160,9 +164,7 @@ fn copy_to_clipboard_menu(gui: &mut Gui) -> Result<()> {
                 description: String::new(),
                 key: Some("d".to_string()),
                 action: Some(Box::new(move |gui| {
-                    let diff = gui
-                        .git
-                        .diff_commit_file(&hash_for_diff, &path_for_diff)?;
+                    let diff = gui.git.diff_commit_file(&hash_for_diff, &path_for_diff)?;
                     Platform::copy_to_clipboard(&diff)?;
                     Ok(())
                 })),
@@ -187,8 +189,7 @@ pub fn update_commit_file_tree_state(gui: &mut Gui) {
             &model.commit_files,
             &gui.commit_files_collapsed_dirs,
         );
-        gui.context_mgr.commit_files_list_len_override =
-            Some(gui.commit_file_tree_nodes.len());
+        gui.context_mgr.commit_files_list_len_override = Some(gui.commit_file_tree_nodes.len());
     } else {
         gui.commit_file_tree_nodes.clear();
         gui.context_mgr.commit_files_list_len_override = None;
