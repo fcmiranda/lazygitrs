@@ -1088,6 +1088,8 @@ pub fn render_diff(
             }
         }
     }
+
+    render_vertical_scrollbar(buf, state, area, inner, theme);
 }
 
 /// Render a file header separator line spanning the full width.
@@ -1177,6 +1179,57 @@ fn unicode_display_width(ch: char) -> usize {
         return 0;
     }
     unicode_width::UnicodeWidthChar::width(ch).unwrap_or(1)
+}
+
+fn render_vertical_scrollbar(
+    buf: &mut Buffer,
+    state: &DiffViewState,
+    area: Rect,
+    inner: Rect,
+    theme: &Theme,
+) {
+    if inner.width == 0 || inner.height == 0 {
+        return;
+    }
+
+    // Search bar is rendered on the last inner row, so keep the scrollbar above it.
+    let search_bar_visible = state.search_active || !state.search_query.is_empty();
+    let effective_height = if search_bar_visible {
+        inner.height.saturating_sub(1)
+    } else {
+        inner.height
+    };
+
+    if effective_height == 0 {
+        return;
+    }
+
+    let total = state.lines.len();
+    let visible = effective_height as usize;
+    if total <= visible {
+        return;
+    }
+
+    // Draw scrollbar on the exact right border column of the diff block.
+    let x = area.x + area.width.saturating_sub(1);
+    let y0 = inner.y;
+
+    let thumb_h = ((visible * visible) / total).max(1).min(visible);
+    let max_offset = total.saturating_sub(visible);
+    let travel = visible.saturating_sub(thumb_h);
+    let thumb_top = if max_offset == 0 {
+        0
+    } else {
+        (state.scroll_offset.min(max_offset) * travel) / max_offset
+    };
+
+    let thumb_style = Style::default()
+        .fg(theme.accent)
+        .add_modifier(Modifier::BOLD);
+    for dy in thumb_top..thumb_top.saturating_add(thumb_h) {
+        // Slim thumb so it feels lighter over the border line.
+        buf_write_str(buf, x, y0 + dy as u16, "█", thumb_style, 1);
+    }
 }
 
 /// Split a list of styled spans into visual rows of at most `width` display columns each.
