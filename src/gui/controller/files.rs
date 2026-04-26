@@ -40,6 +40,9 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) 
     if matches_key(key, &keybindings.files.commit_changes) {
         return open_commit_prompt(gui);
     }
+    if matches_key(key, &keybindings.files.generate_ai_commit) {
+        return open_ai_commit_prompt(gui);
+    }
 
     if matches_key(key, &keybindings.files.toggle_staged_all) {
         return toggle_stage_all(gui);
@@ -223,6 +226,52 @@ fn open_commit_prompt(gui: &mut Gui) -> Result<()> {
             Ok(())
         }),
     };
+    Ok(())
+}
+
+fn open_ai_commit_prompt(gui: &mut Gui) -> Result<()> {
+    let model = gui.model.lock().unwrap();
+    let any_staged = model.files.iter().any(|f| f.has_staged_changes);
+    drop(model);
+
+    if !any_staged {
+        gui.popup = PopupState::Confirm {
+            title: "No files staged".to_string(),
+            message: "You have not staged any files. Stage all and generate AI commit message?".to_string(),
+            on_confirm: Box::new(|gui| {
+                gui.git.stage_all()?;
+                gui.popup = PopupState::CommitInput {
+                    summary_textarea: make_commit_summary_textarea(),
+                    body_textarea: make_commit_body_textarea(),
+                    focus: CommitInputFocus::Summary,
+                    on_confirm: Box::new(|gui, message| {
+                        if !message.is_empty() {
+                            gui.git.create_commit(message, false)?;
+                            gui.needs_refresh = true;
+                        }
+                        Ok(())
+                    }),
+                };
+                gui.trigger_ai_commit_generation_from_editor();
+                Ok(())
+            }),
+        };
+        return Ok(());
+    }
+
+    gui.popup = PopupState::CommitInput {
+        summary_textarea: make_commit_summary_textarea(),
+        body_textarea: make_commit_body_textarea(),
+        focus: CommitInputFocus::Summary,
+        on_confirm: Box::new(|gui, message| {
+            if !message.is_empty() {
+                gui.git.create_commit(message, false)?;
+                gui.needs_refresh = true;
+            }
+            Ok(())
+        }),
+    };
+    gui.trigger_ai_commit_generation_from_editor();
     Ok(())
 }
 
