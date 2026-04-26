@@ -95,7 +95,8 @@ fn render_selector(
     };
     let block = Block::default()
         .title(number_label)
-        .borders(Borders::ALL)
+        .borders(theme.panel_borders)
+        .border_type(theme.panel_border_type)
         .border_style(border);
 
     if editing {
@@ -137,7 +138,8 @@ fn render_commit_files(
     let title = format!(" 3 Commit Files ({}{}) ", state.diff_files.len(), tree_indicator);
     let block = Block::default()
         .title(title)
-        .borders(Borders::ALL)
+        .borders(theme.panel_borders)
+        .border_type(theme.panel_border_type)
         .border_style(border);
 
     if state.diff_files.is_empty() {
@@ -286,7 +288,8 @@ fn render_diff_panel(
         };
         let block = Block::default()
             .title(" 4 Diff ")
-            .borders(Borders::ALL)
+            .borders(theme.panel_borders)
+        .border_type(theme.panel_border_type)
             .border_style(border);
         let msg = if diff_loading_show {
             " Loading diff..."
@@ -456,7 +459,8 @@ fn render_dropdown(
         .collect();
 
     let block = Block::default()
-        .borders(Borders::ALL)
+        .borders(theme.panel_borders)
+        .border_type(theme.panel_border_type)
         .border_style(theme.active_border);
 
     let list = List::new(items)

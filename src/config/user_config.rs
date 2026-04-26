@@ -128,6 +128,10 @@ pub struct ThemeConfig {
     pub selected_line_bg_color: Vec<String>,
     #[serde(rename = "optionsTextColor")]
     pub options_text_color: Vec<String>,
+    #[serde(rename = "borderType")]
+    pub border_type: String,
+    #[serde(rename = "borderSides")]
+    pub border_sides: Vec<String>,
 }
 
 impl Default for ThemeConfig {
@@ -137,6 +141,8 @@ impl Default for ThemeConfig {
             inactive_border_color: vec!["default".to_string()],
             selected_line_bg_color: vec!["blue".to_string()],
             options_text_color: vec!["blue".to_string()],
+            border_type: "plain".to_string(),
+            border_sides: vec!["all".to_string()],
         }
     }
 }

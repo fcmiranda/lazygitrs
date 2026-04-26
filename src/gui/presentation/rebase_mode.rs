@@ -74,7 +74,8 @@ fn render_main_block(frame: &mut Frame, area: Rect, state: &RebaseModeState, the
 
     let block = Block::default()
         .title(Line::from(title_spans))
-        .borders(Borders::ALL)
+        .borders(theme.panel_borders)
+        .border_type(theme.panel_border_type)
         .border_style(theme.active_border);
 
     let inner = block.inner(area);
