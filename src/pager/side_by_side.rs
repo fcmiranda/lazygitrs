@@ -717,7 +717,8 @@ pub fn render_diff(
         };
         let block = Block::default()
             .title(" Diff ")
-            .borders(Borders::ALL)
+            .borders(theme.panel_borders)
+        .border_type(theme.panel_border_type)
             .border_style(border_style);
         let widget = Paragraph::new(msg);
         frame.render_widget(widget.block(block), area);
@@ -737,7 +738,8 @@ pub fn render_diff(
 
     let block = Block::default()
         .title(title)
-        .borders(Borders::ALL)
+        .borders(theme.panel_borders)
+        .border_type(theme.panel_border_type)
         .border_style(border_style);
 
     let inner = block.inner(area);
