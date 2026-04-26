@@ -1,2 +1,3 @@
 _tmp_*
 target/
+src/gui/views.rs

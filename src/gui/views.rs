@@ -1815,6 +1815,9 @@ fn render_status_bar(
     // Diff scroll info
     if !diff_view.is_empty() {
         hints.extend([("J/K", "scroll diff"), ("{/}", "hunks")]);
+        if ctx_mgr.active() == ContextId::Files {
+            hints.extend([("<c-j>/<c-k>", "revert blocks")]);
+        }
     }
 
     let key_style = Style::default()
