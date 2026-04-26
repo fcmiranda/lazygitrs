@@ -266,6 +266,7 @@ impl Gui {
             .app_state
             .show_command_log
             .unwrap_or(config.user_config.gui.show_command_log);
+        let diff_highlight_gutter = config.user_config.gui.side_by_side.highlight_gutter;
         let diff_line_wrap = config.app_state.diff_line_wrap.unwrap_or(false);
         let show_commit_details = config.app_state.show_commit_details.unwrap_or(true);
         let command_log = crate::os::cmd::new_command_log();
@@ -307,7 +308,7 @@ impl Gui {
             layout: LayoutState::default(),
             popup: PopupState::None,
             diff_view: {
-                let mut dv = DiffViewState::new();
+                let mut dv = DiffViewState::new_with_options(diff_highlight_gutter);
                 dv.wrap = diff_line_wrap;
                 dv
             },
@@ -375,6 +376,10 @@ impl Gui {
             commit_details_scroll_hash: String::new(),
             show_commit_details,
         })
+    }
+
+    pub fn new_diff_view(&self) -> DiffViewState {
+        DiffViewState::new_with_options(self.config.user_config.gui.side_by_side.highlight_gutter)
     }
 
     /// Get the currently active theme.
@@ -635,7 +640,7 @@ impl Gui {
                     self.diff_view.apply_parsed(parsed);
                 }
                 DiffPayload::Empty => {
-                    self.diff_view = DiffViewState::new();
+                    self.diff_view = self.new_diff_view();
                 }
             }
         }
@@ -990,7 +995,7 @@ impl Gui {
 
             // Clear stale diff when selection changes
             if selection_changed {
-                self.diff_view = DiffViewState::new();
+                self.diff_view = self.new_diff_view();
             }
 
             self.diff_loading = true;
@@ -1016,7 +1021,7 @@ impl Gui {
 
         // Clear stale diff when selection changes so user sees "Loading..." instead of old content
         if selection_changed {
-            self.diff_view = DiffViewState::new();
+            self.diff_view = self.new_diff_view();
         }
 
         let model = self.model.lock().unwrap();
@@ -1143,15 +1148,15 @@ impl Gui {
                             });
                         } else {
                             drop(model);
-                            self.diff_view = DiffViewState::new();
+                            self.diff_view = self.new_diff_view();
                         }
                     } else {
                         drop(model);
-                        self.diff_view = DiffViewState::new();
+                        self.diff_view = self.new_diff_view();
                     }
                 } else {
                     drop(model);
-                    self.diff_view = DiffViewState::new();
+                    self.diff_view = self.new_diff_view();
                 }
             }
             ContextId::Commits => {
@@ -1384,16 +1389,16 @@ impl Gui {
                             });
                         } else {
                             drop(model);
-                            self.diff_view = DiffViewState::new();
+                            self.diff_view = self.new_diff_view();
                         }
                     } else {
                         drop(model);
-                        self.diff_view = DiffViewState::new();
+                        self.diff_view = self.new_diff_view();
                     }
                 } else {
                     // No file selected — clear diff
                     drop(model);
-                    self.diff_view = DiffViewState::new();
+                    self.diff_view = self.new_diff_view();
                 }
             }
             _ => {
@@ -1625,7 +1630,7 @@ impl Gui {
         // Diff/Compare mode (W)
         if key.code == KeyCode::Char('W') {
             self.diff_mode.enter();
-            self.diff_view = DiffViewState::new();
+            self.diff_view = self.new_diff_view();
             return Ok(());
         }
 
@@ -3335,7 +3340,7 @@ impl Gui {
                         gui.needs_refresh = false;
                         gui.needs_diff_refresh = true;
                         gui.context_mgr = context::ContextManager::new();
-                        gui.diff_view = DiffViewState::new();
+                        gui.diff_view = gui.new_diff_view();
                         if gui.show_file_tree {
                             gui.update_file_tree_state();
                         }

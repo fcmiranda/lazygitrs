@@ -223,6 +223,8 @@ pub struct DiffViewState {
     pub side_view: DiffSideView,
     /// Whether long lines are wrapped to fit the panel width.
     pub wrap: bool,
+    /// Whether add/remove background highlight should be applied in gutter cells.
+    pub highlight_gutter: bool,
     /// Whether the currently viewed file exists in the working tree on disk.
     pub file_exists_on_disk: bool,
     /// Hunk line number offsets for unified diffs. Each entry is
@@ -257,6 +259,7 @@ impl Default for DiffViewState {
             selection: None,
             side_view: DiffSideView::Both,
             wrap: false,
+            highlight_gutter: false,
             file_exists_on_disk: false,
             hunk_line_offsets: Vec::new(),
             search_active: false,
@@ -269,9 +272,10 @@ impl Default for DiffViewState {
 }
 
 impl DiffViewState {
-    pub fn new() -> Self {
+    pub fn new_with_options(highlight_gutter: bool) -> Self {
         Self {
             tab_width: 4,
+            highlight_gutter,
             ..Default::default()
         }
     }
@@ -764,11 +768,13 @@ pub fn render_diff(
 
     let visible_height = inner.height as usize;
     let buf = frame.buffer_mut();
+    let content_gap_style = Style::default();
 
     if single_side.is_some() || is_new_file {
         // Single-panel mode: new file, old-only, or new-only
         let show_panel = single_side.unwrap_or(DiffPanel::New); // new-file defaults to New
         let content_width = inner.width.saturating_sub(gutter_width);
+        let content_inner_width = content_width.saturating_sub(1);
 
         let mut row = 0usize;
         for (idx_offset, diff_line) in state.lines[state.scroll_offset..].iter().enumerate() {
@@ -820,9 +826,13 @@ pub fn render_diff(
 
             let line_num = state
                 .file_line_number(line_idx, show_panel)
-                .map(|n| format!("{:>4} ", n))
+                .map(|n| format_gutter_line_num(n, diff_line.change_type, show_panel))
                 .unwrap_or_else(|| "     ".to_string());
-            let gutter_style = Style::default().fg(theme.diff_gutter).bg(bg);
+            let gutter_style = if state.highlight_gutter {
+                Style::default().fg(theme.diff_gutter).bg(bg)
+            } else {
+                Style::default().fg(theme.diff_line_number)
+            };
 
             if state.wrap && line_data.is_some() {
                 let spans = build_content_spans(
@@ -847,12 +857,21 @@ pub fn render_diff(
                         "   · ".to_string()
                     };
                     buf_write_str(buf, inner.x, y, &gutter_text, gutter_style, gutter_width);
-                    buf_write_spans(buf, inner.x + gutter_width, y, chunk, content_width, 0);
+                    buf_write_str(buf, inner.x + gutter_width, y, " ", content_gap_style, 1);
+                    buf_write_spans(
+                        buf,
+                        inner.x + gutter_width + 1,
+                        y,
+                        chunk,
+                        content_inner_width,
+                        0,
+                    );
                     row += 1;
                 }
             } else {
                 let y = inner.y + row as u16;
                 buf_write_str(buf, inner.x, y, &line_num, gutter_style, gutter_width);
+                buf_write_str(buf, inner.x + gutter_width, y, " ", content_gap_style, 1);
                 if line_data.is_some() {
                     let spans = build_content_spans(
                         line_data.as_ref().map(|(n, t)| (*n, t.as_str())),
@@ -862,12 +881,28 @@ pub fn render_diff(
                         highlighter,
                         bg,
                         theme,
-                        content_width as usize,
+                        content_inner_width as usize,
                     );
-                    buf_write_spans(buf, inner.x + gutter_width, y, &spans, content_width, state.horizontal_scroll);
+                    buf_write_spans(
+                        buf,
+                        inner.x + gutter_width + 1,
+                        y,
+                        &spans,
+                        content_inner_width,
+                        state.horizontal_scroll,
+                    );
                 } else {
-                    let fill: String = std::iter::repeat(' ').take(content_width as usize).collect();
-                    buf_write_str(buf, inner.x + gutter_width, y, &fill, Style::default().bg(bg), content_width);
+                    let fill: String = std::iter::repeat(' ')
+                        .take(content_inner_width as usize)
+                        .collect();
+                    buf_write_str(
+                        buf,
+                        inner.x + gutter_width + 1,
+                        y,
+                        &fill,
+                        Style::default().bg(bg),
+                        content_inner_width,
+                    );
                 }
                 row += 1;
             }
@@ -887,6 +922,8 @@ pub fn render_diff(
         let right_content_width = inner
             .width
             .saturating_sub(gutter_width * 2 + panel_width + divider_width);
+        let left_content_inner_width = panel_width.saturating_sub(1);
+        let right_content_inner_width = right_content_width.saturating_sub(1);
 
         let mut row = 0usize;
         for (idx_offset, diff_line) in state.lines[state.scroll_offset..].iter().enumerate() {
@@ -909,17 +946,25 @@ pub fn render_diff(
                 .unwrap_or((&default_hl, &default_hl));
 
             let (left_bg, right_bg) = line_bg_colors(diff_line.change_type, theme);
-            let gutter_style = Style::default().fg(theme.diff_gutter).bg(left_bg);
-            let right_gutter_style = Style::default().fg(theme.diff_gutter).bg(right_bg);
+            let gutter_style = if state.highlight_gutter {
+                Style::default().fg(theme.diff_gutter).bg(left_bg)
+            } else {
+                Style::default().fg(theme.diff_line_number)
+            };
+            let right_gutter_style = if state.highlight_gutter {
+                Style::default().fg(theme.diff_gutter).bg(right_bg)
+            } else {
+                Style::default().fg(theme.diff_line_number)
+            };
             let divider_style = Style::default().fg(theme.diff_gutter);
 
             let left_num = state
                 .file_line_number(line_idx, DiffPanel::Old)
-                .map(|n| format!("{:>4} ", n))
+                .map(|n| format_gutter_line_num(n, diff_line.change_type, DiffPanel::Old))
                 .unwrap_or_else(|| "     ".to_string());
             let right_num = state
                 .file_line_number(line_idx, DiffPanel::New)
-                .map(|n| format!("{:>4} ", n))
+                .map(|n| format_gutter_line_num(n, diff_line.change_type, DiffPanel::New))
                 .unwrap_or_else(|| "     ".to_string());
 
             let is_insert = diff_line.change_type == ChangeType::Insert;
@@ -977,16 +1022,41 @@ pub fn render_diff(
 
                     // Left gutter + content
                     buf_write_str(buf, inner.x, y, &left_gutter_text, gutter_style, gutter_width);
+                    buf_write_str(buf, inner.x + gutter_width, y, " ", content_gap_style, 1);
                     if is_insert {
                         let slash: String = std::iter::repeat('/').take(panel_width as usize).collect();
-                        buf_write_str(buf, inner.x + gutter_width, y, &slash,
-                            Style::default().fg(theme.diff_line_number).bg(left_bg), panel_width);
+                        let slash_inner: String = std::iter::repeat('/')
+                            .take(left_content_inner_width as usize)
+                            .collect();
+                        buf_write_str(
+                            buf,
+                            inner.x + gutter_width + 1,
+                            y,
+                            &slash_inner,
+                            Style::default().fg(theme.diff_line_number).bg(left_bg),
+                            left_content_inner_width,
+                        );
                     } else if let Some(chunk) = left_wrapped.get(chunk_idx) {
-                        buf_write_spans(buf, inner.x + gutter_width, y, chunk, panel_width, 0);
+                        buf_write_spans(
+                            buf,
+                            inner.x + gutter_width + 1,
+                            y,
+                            chunk,
+                            left_content_inner_width,
+                            0,
+                        );
                     } else {
-                        let fill: String = std::iter::repeat(' ').take(panel_width as usize).collect();
-                        buf_write_str(buf, inner.x + gutter_width, y, &fill,
-                            Style::default().bg(left_bg), panel_width);
+                        let fill: String = std::iter::repeat(' ')
+                            .take(left_content_inner_width as usize)
+                            .collect();
+                        buf_write_str(
+                            buf,
+                            inner.x + gutter_width + 1,
+                            y,
+                            &fill,
+                            Style::default().bg(left_bg),
+                            left_content_inner_width,
+                        );
                     }
 
                     // Divider
@@ -994,16 +1064,40 @@ pub fn render_diff(
 
                     // Right gutter + content
                     buf_write_str(buf, right_gutter_x, y, &right_gutter_text, right_gutter_style, gutter_width);
+                    buf_write_str(buf, right_content_x, y, " ", content_gap_style, 1);
                     if is_delete {
-                        let slash: String = std::iter::repeat('/').take(right_content_width as usize).collect();
-                        buf_write_str(buf, right_content_x, y, &slash,
-                            Style::default().fg(theme.diff_line_number).bg(right_bg), right_content_width);
+                        let slash_inner: String = std::iter::repeat('/')
+                            .take(right_content_inner_width as usize)
+                            .collect();
+                        buf_write_str(
+                            buf,
+                            right_content_x + 1,
+                            y,
+                            &slash_inner,
+                            Style::default().fg(theme.diff_line_number).bg(right_bg),
+                            right_content_inner_width,
+                        );
                     } else if let Some(chunk) = right_wrapped.get(chunk_idx) {
-                        buf_write_spans(buf, right_content_x, y, chunk, right_content_width, 0);
+                        buf_write_spans(
+                            buf,
+                            right_content_x + 1,
+                            y,
+                            chunk,
+                            right_content_inner_width,
+                            0,
+                        );
                     } else {
-                        let fill: String = std::iter::repeat(' ').take(right_content_width as usize).collect();
-                        buf_write_str(buf, right_content_x, y, &fill,
-                            Style::default().bg(right_bg), right_content_width);
+                        let fill: String = std::iter::repeat(' ')
+                            .take(right_content_inner_width as usize)
+                            .collect();
+                        buf_write_str(
+                            buf,
+                            right_content_x + 1,
+                            y,
+                            &fill,
+                            Style::default().bg(right_bg),
+                            right_content_inner_width,
+                        );
                     }
 
                     row += 1;
@@ -1013,10 +1107,13 @@ pub fn render_diff(
 
                 // Left gutter
                 buf_write_str(buf, inner.x, y, &left_num, gutter_style, gutter_width);
+                buf_write_str(buf, inner.x + gutter_width, y, " ", content_gap_style, 1);
 
                 // Left content
                 let left_spans = if is_insert {
-                    let slash_fill: String = std::iter::repeat('/').take(panel_width as usize).collect();
+                    let slash_fill: String = std::iter::repeat('/')
+                        .take(left_content_inner_width as usize)
+                        .collect();
                     vec![Span::styled(
                         slash_fill,
                         Style::default().fg(theme.diff_line_number).bg(left_bg),
@@ -1030,20 +1127,30 @@ pub fn render_diff(
                         old_highlighter,
                         left_bg,
                         theme,
-                        panel_width as usize,
+                        left_content_inner_width as usize,
                     )
                 };
-                buf_write_spans(buf, inner.x + gutter_width, y, &left_spans, panel_width, state.horizontal_scroll);
+                buf_write_spans(
+                    buf,
+                    inner.x + gutter_width + 1,
+                    y,
+                    &left_spans,
+                    left_content_inner_width,
+                    state.horizontal_scroll,
+                );
 
                 // Divider
                 buf_write_str(buf, div_x, y, "│", divider_style, divider_width);
 
                 // Right gutter
                 buf_write_str(buf, right_gutter_x, y, &right_num, right_gutter_style, gutter_width);
+                buf_write_str(buf, right_content_x, y, " ", content_gap_style, 1);
 
                 // Right content
                 let right_spans = if is_delete {
-                    let slash_fill: String = std::iter::repeat('/').take(panel_width as usize).collect();
+                    let slash_fill: String = std::iter::repeat('/')
+                        .take(right_content_inner_width as usize)
+                        .collect();
                     vec![Span::styled(
                         slash_fill,
                         Style::default().fg(theme.diff_line_number).bg(right_bg),
@@ -1057,10 +1164,17 @@ pub fn render_diff(
                         new_highlighter,
                         right_bg,
                         theme,
-                        panel_width as usize,
+                        right_content_inner_width as usize,
                     )
                 };
-                buf_write_spans(buf, right_content_x, y, &right_spans, right_content_width, state.horizontal_scroll);
+                buf_write_spans(
+                    buf,
+                    right_content_x + 1,
+                    y,
+                    &right_spans,
+                    right_content_inner_width,
+                    state.horizontal_scroll,
+                );
 
                 row += 1;
             }
@@ -1227,6 +1341,18 @@ fn line_bg_colors(change_type: ChangeType, theme: &Theme) -> (Color, Color) {
         ChangeType::Insert => (Color::Reset, theme.diff_add_bg),
         ChangeType::Modified => (theme.diff_remove_bg, theme.diff_add_bg),
     }
+}
+
+/// Format a 5-column gutter line number with a side-aware marker:
+/// - Right panel: `+` for inserted/modified lines
+/// - Left panel: `-` for deleted/modified lines
+fn format_gutter_line_num(line_num: usize, change_type: ChangeType, panel: DiffPanel) -> String {
+    let marker = match (panel, change_type) {
+        (DiffPanel::New, ChangeType::Insert | ChangeType::Modified) => '+',
+        (DiffPanel::Old, ChangeType::Delete | ChangeType::Modified) => '-',
+        _ => ' ',
+    };
+    format!("{:>4}{}", line_num, marker)
 }
 
 /// Build styled spans for one side of a diff line.
