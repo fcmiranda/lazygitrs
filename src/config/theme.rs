@@ -1,4 +1,5 @@
 use ratatui::style::{Color, Modifier, Style};
+use ratatui::widgets::{BorderType, Borders};
 use serde::Deserialize;
 use super::user_config::ThemeConfig;
 
@@ -14,6 +15,8 @@ pub struct Theme {
     pub selected_line: Style,
     pub options_text: Style,
     pub title: Style,
+    pub panel_borders: Borders,
+    pub panel_border_type: BorderType,
 
     // ── Diff ─────────────────────────────────────────────────────────
     pub diff_add: Style,
@@ -172,6 +175,8 @@ impl Theme {
         if let Some(color) = parse_color_list(&config.options_text_color) {
             theme.options_text = Style::default().fg(color);
         }
+        theme.panel_border_type = parse_border_type(&config.border_type);
+        theme.panel_borders = parse_border_sides(&config.border_sides);
 
         theme
     }
@@ -187,6 +192,8 @@ impl Theme {
             title: Style::default()
                 .fg(Color::White)
                 .add_modifier(Modifier::BOLD),
+            panel_borders: Borders::ALL,
+            panel_border_type: BorderType::Plain,
             diff_add: Style::default().fg(Color::Green),
             diff_remove: Style::default().fg(Color::Red),
             diff_context: Style::default().fg(Color::Gray),
@@ -449,6 +456,8 @@ impl ThemeJson {
             selected_line: Style::default().bg(selected_bg),
             options_text: Style::default().fg(info),
             title: Style::default().fg(text_strong).add_modifier(Modifier::BOLD),
+            panel_borders: Borders::ALL,
+            panel_border_type: BorderType::Plain,
 
             diff_add: Style::default().fg(diff_add),
             diff_remove: Style::default().fg(diff_remove),
@@ -557,6 +566,42 @@ impl ThemeJson {
             remote_branch_name: info,
             remote_branch_detail: text_dimmed,
         }
+    }
+}
+
+fn parse_border_type(raw: &str) -> BorderType {
+    match raw.trim().to_lowercase().as_str() {
+        "rounded" | "round" => BorderType::Rounded,
+        "double" => BorderType::Double,
+        "thick" => BorderType::Thick,
+        "quadrantinside" | "quadrant-inside" | "quadrant_inside" => BorderType::QuadrantInside,
+        "quadrantoutside" | "quadrant-outside" | "quadrant_outside" => BorderType::QuadrantOutside,
+        _ => BorderType::Plain,
+    }
+}
+
+fn parse_border_sides(raw: &[String]) -> Borders {
+    if raw.is_empty() {
+        return Borders::ALL;
+    }
+
+    let mut borders = Borders::NONE;
+    for side in raw {
+        match side.trim().to_lowercase().as_str() {
+            "all" => return Borders::ALL,
+            "none" => return Borders::NONE,
+            "top" => borders |= Borders::TOP,
+            "bottom" => borders |= Borders::BOTTOM,
+            "left" => borders |= Borders::LEFT,
+            "right" => borders |= Borders::RIGHT,
+            _ => {}
+        }
+    }
+
+    if borders == Borders::NONE {
+        Borders::ALL
+    } else {
+        borders
     }
 }
 
