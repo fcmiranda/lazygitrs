@@ -991,6 +991,30 @@ impl Gui {
         });
     }
 
+    fn begin_ai_commit_generation_ui(&mut self) {
+        self.popup = PopupState::Loading {
+            title: "AI Commit".to_string(),
+            message: "Generating commit message...".to_string(),
+        };
+        self.start_ai_commit_generation();
+    }
+
+    pub fn trigger_ai_commit_generation_from_editor(&mut self) {
+        let generate_cmd = self.config.user_config.git.commit.generate_command.trim();
+        if generate_cmd.is_empty() {
+            self.popup = PopupState::Message {
+                title: "AI generation unavailable".to_string(),
+                message: "Set git.commit.generateCommand in your config first.".to_string(),
+                kind: MessageKind::Error,
+            };
+            return;
+        }
+
+        let stashed = std::mem::replace(&mut self.popup, PopupState::None);
+        self.pending_commit_popup = Some(stashed);
+        self.begin_ai_commit_generation_ui();
+    }
+
     /// Request diff loading on a background thread if selection changed.
     fn maybe_request_diff(&mut self) {
         // Rebase mode has no diff to load
@@ -2420,10 +2444,9 @@ impl Gui {
                     }
                 } else if is_commit
                     && !confirm_focused
-                    && key.code == KeyCode::Char('o')
-                    && key.modifiers.contains(KeyModifiers::CONTROL)
+                    && matches_key(key, &self.config.user_config.keybinding.commit_message.commit_menu)
                 {
-                    // <c-o> in commit message editor: open commit menu
+                    // Commit message editor menu key (configurable)
                     self.show_commit_editor_menu()?;
                 } else if !confirm_focused {
                     // Forward all other keys to the textarea (only when textarea is focused)
@@ -2465,7 +2488,6 @@ impl Gui {
                 }
             }
             PopupState::CommitInput { focus, .. } => {
-                use crossterm::event::KeyModifiers;
                 let focus = *focus;
 
                 // Tab toggles focus between summary and body
@@ -2545,9 +2567,13 @@ impl Gui {
                     self.saved_commit_popup = Some(stashed);
                     self.commit_history_idx = None;
                 }
-                // Ctrl+O: open commit menu
-                else if key.code == KeyCode::Char('o') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                // Open commit menu key (configurable)
+                else if matches_key(key, &self.config.user_config.keybinding.commit_message.commit_menu) {
                     self.show_commit_editor_menu()?;
+                }
+                // AI generate key (configurable)
+                else if matches_key(key, &self.config.user_config.keybinding.commit_message.ai_generate) {
+                    self.trigger_ai_commit_generation_from_editor();
                 }
                 // Up/Down on summary: cycle commit history
                 else if focus == popup::CommitInputFocus::Summary
@@ -3202,6 +3228,7 @@ impl Gui {
                     HelpEntry { key: "<enter>".into(), description: "Toggle dir / Focus diff".into() },
                     HelpEntry { key: "<space>".into(), description: "Stage / Unstage".into() },
                     HelpEntry { key: kb.files.commit_changes.clone(), description: "Commit".into() },
+                    HelpEntry { key: kb.files.generate_ai_commit.clone(), description: "Generate AI commit".into() },
                     HelpEntry { key: kb.files.amend_last_commit.clone(), description: "Amend last commit".into() },
                     HelpEntry { key: kb.files.commit_changes_with_editor.clone(), description: "Commit with editor".into() },
                     HelpEntry { key: kb.files.toggle_staged_all.clone(), description: "Toggle stage all".into() },
@@ -3618,11 +3645,7 @@ impl Gui {
                 description: String::new(),
                 key: Some("g".to_string()),
                 action: Some(Box::new(|gui| {
-                    gui.popup = PopupState::Loading {
-                        title: "AI Commit".to_string(),
-                        message: "Generating commit message...".to_string(),
-                    };
-                    gui.start_ai_commit_generation();
+                    gui.begin_ai_commit_generation_ui();
                     Ok(())
                 })),
             });
