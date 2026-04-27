@@ -2263,6 +2263,34 @@ impl Gui {
                         }
                     }
                 }
+                // Shift+Enter (or Ctrl+J, which some terminals emit for Shift+Enter): insert a
+                // newline in the body. Without this branch, Ctrl+J hits tui_textarea's default
+                // binding for `delete_line_by_head`, wiping what the user just typed.
+                else if (key.code == KeyCode::Enter && key.modifiers.contains(KeyModifiers::SHIFT))
+                    || (key.code == KeyCode::Char('j') && key.modifiers.contains(KeyModifiers::CONTROL))
+                {
+                    if let PopupState::CommitInput { focus, summary_textarea, body_textarea, .. } = &mut self.popup {
+                        if *focus == popup::CommitInputFocus::Summary {
+                            *focus = popup::CommitInputFocus::Body;
+                            let visible = ratatui::style::Style::default().add_modifier(ratatui::style::Modifier::REVERSED);
+                            let hidden = ratatui::style::Style::default();
+                            summary_textarea.set_cursor_style(hidden);
+                            body_textarea.set_cursor_style(visible);
+                        }
+                        body_textarea.insert_newline();
+                        let popup_width = (self.layout.width * 60 / 100).min(60).max(30);
+                        let popup_inner = popup_width.saturating_sub(4) as usize;
+                        let config_width = self.config.user_config.git.commit.auto_wrap_width;
+                        let effective_width = if config_width > 0 {
+                            popup_inner.min(config_width)
+                        } else {
+                            popup_inner
+                        };
+                        if effective_width > 0 {
+                            auto_wrap_textarea(body_textarea, effective_width);
+                        }
+                    }
+                }
                 // Enter on summary: submit the commit
                 else if focus == popup::CommitInputFocus::Summary && key.code == KeyCode::Enter {
                     let popup = std::mem::replace(&mut self.popup, PopupState::None);

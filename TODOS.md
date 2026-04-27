@@ -159,7 +159,9 @@
   - Just like in local branches, you always see the 'current branch' as the first item. Now here, we should be able to see that the first branch is the current branch item you see is the remote version of the current branch, if possible.
   - Currently in remote branches subtab, I can see the remotes connected to this repo... I can press 'enter' to see the branches, after that I can't really press 'enter' on any item on there anymore. Desired: I should be able to press 'enter' to subview visit into a 'branch' (to see commits), and then a 'commit' (to see files).. Just like in the local branches view.
 
-- [ ] When I do shift+enter while on the commit message body part... It's clearing what I typed instead of doing the same behavior as 'enter'. Weird. Expectation, it behaves like 'enter' as in creates a new line too.
+- [x] When I do shift+enter while on the commit message body part... It's clearing what I typed instead of doing the same behavior as 'enter'. Weird. Expectation, it behaves like 'enter' as in creates a new line too.
+
+- [ ] Another keyboard improvement, when I press 'cmd+v' it doesn't actually paste in 1 frame. It seems to type what I had on my clipboard using the keyboard. so i.e. I pasted something really long, I see it sort of incrementing the text to that point instead of pasting it ' instantly'.
 
 - [x] When Im on '3 Branches'. I want `y` to have an option to 'copy branch name'.
 
