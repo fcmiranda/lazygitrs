@@ -2276,7 +2276,17 @@ impl Gui {
                 } else if !confirm_focused {
                     // Forward all other keys to the textarea (only when textarea is focused)
                     if let PopupState::Input { textarea, is_commit, .. } = &mut self.popup {
-                        textarea.input(key);
+                        // Cmd+Backspace: delete only the current visual row (each soft-wrap
+                        // row is its own textarea line), not the whole field. Without this
+                        // explicit handling, terminals that don't translate Cmd+Backspace
+                        // into Ctrl+U fall through and behave inconsistently.
+                        if key.code == KeyCode::Backspace
+                            && key.modifiers.contains(KeyModifiers::SUPER)
+                        {
+                            textarea.delete_line_by_head();
+                        } else {
+                            textarea.input(key);
+                        }
                         let popup_width = (self.layout.width * 60 / 100)
                             .min(60)
                             .max(30)
@@ -2461,15 +2471,33 @@ impl Gui {
                                 let mut handled = true;
                                 let alt = key.modifiers.contains(KeyModifiers::ALT);
                                 let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
+                                let cmd = key.modifiers.contains(KeyModifiers::SUPER);
                                 match key.code {
-                                    KeyCode::Char(c) if !ctrl && !alt => {
+                                    KeyCode::Char(c) if !ctrl && !alt && !cmd => {
                                         body_state.insert_char(c);
+                                    }
+                                    // Cmd+Backspace / Ctrl+U: delete to start of visual line.
+                                    // Most macOS terminals (Zed, WezTerm, …) intercept Cmd and
+                                    // never forward it to the app, so the readline shortcut is
+                                    // the only one that works everywhere.
+                                    KeyCode::Backspace if cmd => {
+                                        body_state.delete_to_visual_line_start(wrap_width);
+                                    }
+                                    KeyCode::Char('u') if ctrl => {
+                                        body_state.delete_to_visual_line_start(wrap_width);
                                     }
                                     // Opt+Backspace / Ctrl+W: delete previous word.
                                     KeyCode::Backspace if alt => body_state.delete_word_left(),
                                     KeyCode::Char('w') if ctrl => body_state.delete_word_left(),
                                     KeyCode::Backspace => body_state.backspace(),
                                     KeyCode::Delete => body_state.delete(),
+                                    // Cmd+Left/Right and Ctrl+A/E: jump to start/end of visual
+                                    // row. Same reason as Cmd+Backspace — Ctrl is the portable
+                                    // binding.
+                                    KeyCode::Left if cmd => body_state.move_visual_line_start(wrap_width),
+                                    KeyCode::Right if cmd => body_state.move_visual_line_end(wrap_width),
+                                    KeyCode::Char('a') if ctrl => body_state.move_visual_line_start(wrap_width),
+                                    KeyCode::Char('e') if ctrl => body_state.move_visual_line_end(wrap_width),
                                     // Opt+Left/Right: jump by word (matches the new-branch input
                                     // and the rest of the readline-style world).
                                     KeyCode::Left if alt => body_state.move_word_left(),

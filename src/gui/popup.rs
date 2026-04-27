@@ -279,6 +279,49 @@ impl BodySoftWrap {
         self.raw.replace_range(start_byte..end_byte, "");
     }
 
+    /// Cmd+Left equivalent: jump to the start of the current visual row,
+    /// respecting soft-wrap boundaries (not just paragraph boundaries).
+    pub fn move_visual_line_start(&mut self, wrap_width: usize) {
+        let layout = WrapLayout::build(&self.raw, wrap_width.max(1));
+        let (row, _) = layout.cursor_to_visual(self.cursor);
+        self.cursor = layout.lines[row].raw_start;
+    }
+
+    /// Cmd+Right equivalent: jump to the end of the current visual row.
+    pub fn move_visual_line_end(&mut self, wrap_width: usize) {
+        let layout = WrapLayout::build(&self.raw, wrap_width.max(1));
+        let (row, _) = layout.cursor_to_visual(self.cursor);
+        let line = &layout.lines[row];
+        self.cursor = line.raw_start + line.char_len;
+    }
+
+    /// Cmd+Backspace equivalent: delete from cursor back to the start of the
+    /// current visual row. Stops at the row boundary so a single chord doesn't
+    /// nuke the whole paragraph.
+    pub fn delete_to_visual_line_start(&mut self, wrap_width: usize) {
+        let layout = WrapLayout::build(&self.raw, wrap_width.max(1));
+        let (row, _) = layout.cursor_to_visual(self.cursor);
+        let start = layout.lines[row].raw_start;
+        let end = self.cursor;
+        if start >= end {
+            return;
+        }
+        let start_byte = self
+            .raw
+            .char_indices()
+            .nth(start)
+            .map(|(b, _)| b)
+            .unwrap_or(self.raw.len());
+        let end_byte = self
+            .raw
+            .char_indices()
+            .nth(end)
+            .map(|(b, _)| b)
+            .unwrap_or(self.raw.len());
+        self.raw.replace_range(start_byte..end_byte, "");
+        self.cursor = start;
+    }
+
     pub fn move_home(&mut self) {
         let chars: Vec<char> = self.raw.chars().collect();
         let mut i = self.cursor;
