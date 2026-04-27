@@ -158,3 +158,23 @@
 - [x] In 'remote branches' improvements and parity.
   - Just like in local branches, you always see the 'current branch' as the first item. Now here, we should be able to see that the first branch is the current branch item you see is the remote version of the current branch, if possible.
   - Currently in remote branches subtab, I can see the remotes connected to this repo... I can press 'enter' to see the branches, after that I can't really press 'enter' on any item on there anymore. Desired: I should be able to press 'enter' to subview visit into a 'branch' (to see commits), and then a 'commit' (to see files).. Just like in the local branches view.
+
+- [ ] When I do shift+enter while on the commit message body part... It's clearing what I typed instead of doing the same behavior as 'enter'. Weird. Expectation, it behaves like 'enter' as in creates a new line too.
+
+- [ ] When Im on '3 Branches'. I want `y` to have an option to 'copy branch name'.
+
+- [ ] In '1 Status' I want to see details like
+  - repo url (just origin remote, I think)
+  - And 'contributors' - whichever is the cheapest way to get that data (i would personally refrain from traversing the entire commits history and get the contirbutors)
+  - I want pressing y or o to work here as well.
+    - The same ones I get from '3 branches' tab.
+
+- [ ] I tried passing a long 'web-1000-read-from-new-something-index-for-something-index' in 'new branch. Ended up having...
+      web-1000-read-from-new-someth
+      ng-index-for-something-indexi
+
+  I think this is because of text wrapping for textarea inputs. But this is actually very annoying please fix. You feel like there's a better architecture for this maybe? + I feel like the 'text-wrapping' with the `\n` hack right now SHOULD NOT affect the actual output I gave (in case that isnt the behavior yet).. because I know we did essentially a 'hack' to make text inputs wrap the text within the widths of their input boxes with textarea.
+
+  [ ] Related: I also noticed, the text wrapping is only applied for when I type or paste. But not resize.
+  - [ ] Also noticed a major bug related to this... If I resize super small, the program crashes... thread 'main' panicked at (...) index outside of buffer: the area is Rect { x: 0, y: 0, width: 29, height: 38 } but index is (29,13)
+        I also noticed for crashes like this (error not relevant ).. It shows the crash message right? But I cant actually stop the program anymore and just looks like whenever I move my mouse that: 35;1;18M35;1;18M35;2;18M35 (basically prints a bunch of those characters in the terminal making it unusable, that I have to close it)

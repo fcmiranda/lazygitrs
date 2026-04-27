@@ -32,7 +32,27 @@ struct Cli {
     debug: bool,
 }
 
+/// Restore the terminal on panic so the user isn't left in raw mode + mouse
+/// capture (which makes the shell unusable — every mouse move spews escape
+/// sequences into the prompt).
+fn install_panic_hook() {
+    let prev = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let mut stdout = std::io::stdout();
+        let _ = crossterm::execute!(
+            stdout,
+            crossterm::event::DisableMouseCapture,
+            crossterm::event::DisableFocusChange,
+            crossterm::terminal::LeaveAlternateScreen,
+            crossterm::cursor::Show,
+        );
+        let _ = crossterm::terminal::disable_raw_mode();
+        prev(info);
+    }));
+}
+
 fn main() {
+    install_panic_hook();
     let cli = Cli::parse();
 
     // Set up logging if debug mode

@@ -571,6 +571,39 @@ impl Gui {
                     Event::Mouse(mouse) => self.handle_mouse(mouse),
                     Event::Resize(w, h) => {
                         self.layout.update_size(w, h);
+                        // Re-flow any active commit-message textarea to the new width so
+                        // wrapping stays consistent with what the user sees.
+                        let popup_width = (w * 60 / 100).min(60).max(30).min(w);
+                        let popup_inner = popup_width.saturating_sub(4) as usize;
+                        let config_width = self.config.user_config.git.commit.auto_wrap_width;
+                        let effective_width = if config_width > 0 {
+                            popup_inner.min(config_width)
+                        } else {
+                            popup_inner
+                        };
+                        match &mut self.popup {
+                            PopupState::Input { textarea, is_commit: true, .. } => {
+                                if effective_width > 0 {
+                                    auto_wrap_textarea(textarea, effective_width);
+                                }
+                            }
+                            PopupState::Input { textarea, is_commit: false, .. } => {
+                                // Single-line input: re-flow the soft wrap to the new width.
+                                let raw: String = textarea.lines().join("");
+                                if popup_inner > 0 && !raw.is_empty() {
+                                    let mut new_ta = popup::make_textarea("");
+                                    new_ta.insert_str(&raw);
+                                    soft_wrap_textarea(&mut new_ta, popup_inner);
+                                    *textarea = new_ta;
+                                }
+                            }
+                            PopupState::CommitInput { body_textarea, .. } => {
+                                if effective_width > 0 {
+                                    auto_wrap_textarea(body_textarea, effective_width);
+                                }
+                            }
+                            _ => {}
+                        }
                     }
                     Event::FocusGained if self.config.user_config.git.auto_refresh => {
                         self.needs_refresh = true;
@@ -2076,7 +2109,13 @@ impl Gui {
                 {
                     let popup = std::mem::replace(&mut self.popup, PopupState::None);
                     if let PopupState::Input { textarea, on_confirm, is_commit: was_commit, .. } = popup {
-                        let text = textarea.lines().join("\n");
+                        // Commit messages preserve hard-wrapped newlines; single-line inputs
+                        // strip soft-wrap newlines to recover the user's literal text.
+                        let text = if was_commit {
+                            textarea.lines().join("\n")
+                        } else {
+                            textarea.lines().join("")
+                        };
                         // Save to commit history before calling on_confirm
                         if was_commit && !text.trim().is_empty() {
                             // Remove duplicate if it exists
@@ -2171,20 +2210,29 @@ impl Gui {
                     self.show_commit_editor_menu()?;
                 } else if !confirm_focused {
                     // Forward all other keys to the textarea (only when textarea is focused)
-                    if let PopupState::Input { textarea, .. } = &mut self.popup {
+                    if let PopupState::Input { textarea, is_commit, .. } = &mut self.popup {
                         textarea.input(key);
-                        // Auto-wrap: hard-wrap lines so they never exceed the visible width.
-                        // Use the smaller of config wrap width and actual popup inner width.
-                        let popup_width = (self.layout.width * 60 / 100).min(60).max(30);
-                        let popup_inner = popup_width.saturating_sub(4) as usize; // borders + margin
-                        let config_width = self.config.user_config.git.commit.auto_wrap_width;
-                        let effective_width = if config_width > 0 {
-                            popup_inner.min(config_width)
-                        } else {
-                            popup_inner
-                        };
-                        if effective_width > 0 {
-                            auto_wrap_textarea(textarea, effective_width);
+                        let popup_width = (self.layout.width * 60 / 100)
+                            .min(60)
+                            .max(30)
+                            .min(self.layout.width);
+                        let popup_inner = popup_width.saturating_sub(4) as usize;
+                        if *is_commit {
+                            // Hard-wrap: line breaks become part of the committed message
+                            // (matches lazygit's 72-char convention).
+                            let config_width = self.config.user_config.git.commit.auto_wrap_width;
+                            let effective_width = if config_width > 0 {
+                                popup_inner.min(config_width)
+                            } else {
+                                popup_inner
+                            };
+                            if effective_width > 0 {
+                                auto_wrap_textarea(textarea, effective_width);
+                            }
+                        } else if popup_inner > 0 {
+                            // Soft-wrap: visual only — newlines are stripped on submit so
+                            // the original text (including spaces) round-trips exactly.
+                            soft_wrap_textarea(textarea, popup_inner);
                         }
                     }
                 }
@@ -4802,6 +4850,74 @@ fn split_commit_message(msg: &str) -> (String, String) {
 
 /// Auto-wrap all lines in a textarea so no line exceeds `wrap_width`.
 /// Rebuilds the entire textarea content with hard line breaks at word boundaries.
+/// Soft-wrap: like `auto_wrap_textarea` but preserves every character (including
+/// spaces at line breaks). Inserts visual newlines only — callers join with `""`
+/// at submit time to recover the original string. Used for single-line popup
+/// inputs (branch name, tag name, etc.) that need browser-textarea-style visual
+/// wrapping without polluting the value sent downstream.
+fn soft_wrap_textarea(textarea: &mut tui_textarea::TextArea<'static>, wrap_width: usize) {
+    if wrap_width == 0 {
+        return;
+    }
+
+    let raw: String = textarea.lines().join("");
+    if raw.is_empty() {
+        return;
+    }
+    let chars: Vec<char> = raw.chars().collect();
+
+    // Skip if already laid out correctly: every line ≤ wrap_width, and every
+    // non-final line is exactly wrap_width chars.
+    let lines = textarea.lines();
+    let last = lines.len().saturating_sub(1);
+    let already_ok = lines.iter().enumerate().all(|(i, l)| {
+        let n = l.chars().count();
+        if i < last { n == wrap_width } else { n <= wrap_width }
+    });
+    if already_ok {
+        return;
+    }
+
+    // Track absolute char offset of cursor so we can restore it after rewrap.
+    let (cursor_row, cursor_col) = textarea.cursor();
+    let mut cursor_abs = 0usize;
+    for (i, line) in textarea.lines().iter().enumerate() {
+        let line_chars = line.chars().count();
+        if i < cursor_row {
+            cursor_abs += line_chars;
+        } else {
+            cursor_abs += cursor_col.min(line_chars);
+            break;
+        }
+    }
+
+    let mut wrapped: Vec<String> = Vec::new();
+    let mut start = 0;
+    while start < chars.len() {
+        let end = (start + wrap_width).min(chars.len());
+        wrapped.push(chars[start..end].iter().collect());
+        start = end;
+    }
+    let new_text = wrapped.join("\n");
+
+    // Map cursor back into the wrapped layout (each row is exactly wrap_width
+    // chars except possibly the last).
+    let new_row = cursor_abs / wrap_width;
+    let new_col = cursor_abs % wrap_width;
+
+    textarea.select_all();
+    textarea.cut();
+    textarea.insert_str(&new_text);
+    textarea.move_cursor(tui_textarea::CursorMove::Top);
+    textarea.move_cursor(tui_textarea::CursorMove::Head);
+    for _ in 0..new_row {
+        textarea.move_cursor(tui_textarea::CursorMove::Down);
+    }
+    for _ in 0..new_col {
+        textarea.move_cursor(tui_textarea::CursorMove::Forward);
+    }
+}
+
 fn auto_wrap_textarea(textarea: &mut tui_textarea::TextArea<'static>, wrap_width: usize) {
     if wrap_width == 0 {
         return;

@@ -1612,7 +1612,12 @@ pub fn render_selection_overlay(frame: &mut Frame, diff_view: &mut DiffViewState
 const SPINNER_CHARS: &[char] = &['·', '✻', '✽', '✶', '✳', '✢'];
 
 pub fn render_popup(frame: &mut Frame, popup: &PopupState, area: Rect, spinner_frame: usize, theme: &Theme) {
-    let popup_width = (area.width * 60 / 100).min(60).max(30);
+    // Bail out early on terminals too small to host any popup — better than
+    // panicking inside a render with an out-of-bounds rect.
+    if area.width < 4 || area.height < 4 {
+        return;
+    }
+    let popup_width = (area.width * 60 / 100).min(60).max(30).min(area.width);
     let x = (area.width.saturating_sub(popup_width)) / 2;
 
     match popup {
@@ -1698,6 +1703,10 @@ pub fn render_popup(frame: &mut Frame, popup: &PopupState, area: Rect, spinner_f
             // Textarea popup: taller to allow multiline editing
             // Add extra row for commit dialogs to fit the confirm button row
             let ta_height = if *is_commit { 14u16 } else { 12u16 };
+            let ta_height = ta_height.min(area.height);
+            if ta_height < 3 || popup_width < 3 {
+                return;
+            }
             let ta_y = (area.height.saturating_sub(ta_height)) / 2;
             let ta_rect = Rect::new(x, ta_y, popup_width, ta_height);
             frame.render_widget(Clear, ta_rect);
@@ -1748,13 +1757,15 @@ pub fn render_popup(frame: &mut Frame, popup: &PopupState, area: Rect, spinner_f
                             " Confirm ",
                         )
                     };
-                    let btn_width = btn_text.len() as u16;
-                    let btn_x = btn_area.x + btn_area.width.saturating_sub(btn_width);
-                    let btn_rect = Rect::new(btn_x, btn_area.y, btn_width, 1);
-                    frame.render_widget(
-                        Paragraph::new(Line::from(Span::styled(btn_text, btn_style))),
-                        btn_rect,
-                    );
+                    let btn_width = (btn_text.len() as u16).min(btn_area.width);
+                    if btn_width > 0 {
+                        let btn_x = btn_area.x + btn_area.width.saturating_sub(btn_width);
+                        let btn_rect = Rect::new(btn_x, btn_area.y, btn_width, 1);
+                        frame.render_widget(
+                            Paragraph::new(Line::from(Span::styled(btn_text, btn_style))),
+                            btn_rect,
+                        );
+                    }
                 } else {
                     frame.render_widget(textarea, inner);
                 }
@@ -2144,7 +2155,7 @@ pub fn render_popup(frame: &mut Frame, popup: &PopupState, area: Rect, spinner_f
             }
 
             // Sizing: use more of the screen for help
-            let popup_width = (area.width * 70 / 100).min(72).max(36);
+            let popup_width = (area.width * 70 / 100).min(72).max(36).min(area.width);
             let content_height = display.len().max(1);
             // search bar (1) + separator (1) + content + hint (1) + borders (2)
             let popup_height = (content_height as u16 + 5)
@@ -2341,7 +2352,10 @@ fn render_list_picker(
     }
 
     // Popup frame
-    let popup_width = (area.width * width_pct / 100).min(width_max).max(width_min);
+    let popup_width = (area.width * width_pct / 100)
+        .min(width_max)
+        .max(width_min)
+        .min(area.width);
     let max_popup = (area.height * 60 / 100).max(10);
     let popup_height = max_popup.min(area.height.saturating_sub(4));
     let x = (area.width.saturating_sub(popup_width)) / 2;
