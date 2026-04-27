@@ -2,6 +2,21 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.16] - 2026-04-27
+
+### Bug Fixes
+
+- Handle shift+enter to insert newlines in body.
+- Textarea wrapping and terminal state on resize/panic.
+
+### Features
+
+- Add visual-line aware keyboard shortcuts for soft-wrapped text.
+- Add repo URL and contributors to status view.
+- Implement soft-wrapping for commit body input.
+- Enable instant text pasting in inputs.
+- Add branch name copy option in branches view.
+
 ## [0.0.15] - 2026-04-22
 
 ### Bug Fixes
