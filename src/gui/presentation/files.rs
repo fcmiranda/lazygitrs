@@ -9,6 +9,9 @@ use crate::model::file_tree::FileTreeNode;
 use crate::model::Model;
 
 /// Render file list as a flat list (no tree structure).
+///
+/// Filename is shown first in the strong style, followed by the directory
+/// path in a dimmed style — Zed-style.
 pub fn render_file_list<'a>(model: &Model, theme: &Theme) -> Vec<ListItem<'a>> {
     model
         .files
@@ -16,13 +19,23 @@ pub fn render_file_list<'a>(model: &Model, theme: &Theme) -> Vec<ListItem<'a>> {
         .map(|file| {
             let (status_style, status_icon) = file_status_display(file, theme);
             let name_style = file_name_style(file, theme);
+            let dim_style = Style::default().fg(theme.text_dimmed);
 
-            let line = Line::from(vec![
+            let path = file.display_name.as_str();
+            let (dir, name) = match path.rfind('/') {
+                Some(idx) => (&path[..=idx], &path[idx + 1..]),
+                None => ("", path),
+            };
+
+            let mut spans = vec![
                 Span::styled(format!(" {} ", status_icon), status_style),
-                Span::styled(file.display_name.clone(), name_style),
-            ]);
+                Span::styled(name.to_string(), name_style),
+            ];
+            if !dir.is_empty() {
+                spans.push(Span::styled(format!(" {}", dir), dim_style));
+            }
 
-            ListItem::new(line)
+            ListItem::new(Line::from(spans))
         })
         .collect()
 }
@@ -54,7 +67,7 @@ pub fn render_file_tree<'a>(
                 let dir_style = if all_staged {
                     theme.file_staged
                 } else {
-                    Style::default().fg(theme.text_strong)
+                    Style::default().fg(theme.text_dimmed)
                 };
 
                 let is_root = node.path == ".";

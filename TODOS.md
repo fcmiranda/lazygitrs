@@ -180,3 +180,5 @@
   [x] Related: I also noticed, the text wrapping is only applied for when I type or paste. But not resize.
   - [x] Also noticed a major bug related to this... If I resize super small, the program crashes... thread 'main' panicked at (...) index outside of buffer: the area is Rect { x: 0, y: 0, width: 29, height: 38 } but index is (29,13)
         I also noticed for crashes like this (error not relevant ).. It shows the crash message right? But I cant actually stop the program anymore and just looks like whenever I move my mouse that: 35;1;18M35;1;18M35;2;18M35 (basically prints a bunch of those characters in the terminal making it unusable, that I have to close it)
+
+- [x] Imitate Zed's 'diff' when it comes to listing it in anon-filetree format. it looks like (Image1) while currently it looks like lazygit's.
