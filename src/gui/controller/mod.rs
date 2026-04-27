@@ -12,6 +12,7 @@ pub mod reflog;
 pub mod remote_branches;
 pub mod remotes;
 pub mod stash;
+pub mod status;
 pub mod submodules;
 pub mod tags;
 pub mod worktrees;

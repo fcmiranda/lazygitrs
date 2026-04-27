@@ -222,6 +222,52 @@ impl GitCommands {
     }
 }
 
+impl GitCommands {
+    /// Get the origin repo HTTPS URL, returning an empty string on failure.
+    pub fn load_repo_url(&self) -> String {
+        self.get_repo_url().unwrap_or_default()
+    }
+
+    /// Load top contributors using `git shortlog -sn` capped to recent commits
+    /// to avoid traversing the entire history on large repos.
+    pub fn load_contributors(&self, max_commits: usize, top_n: usize) -> Vec<(String, usize)> {
+        let max_arg = format!("--max-count={}", max_commits);
+        let result = self
+            .git()
+            .args(&["shortlog", "-sn", "-e", "HEAD", &max_arg])
+            .env("GIT_PAGER", "cat")
+            .run();
+        let Ok(result) = result else { return Vec::new() };
+        if !result.success {
+            return Vec::new();
+        }
+
+        let mut out: Vec<(String, usize)> = Vec::new();
+        for line in result.stdout.lines() {
+            let trimmed = line.trim_start();
+            let mut parts = trimmed.splitn(2, char::is_whitespace);
+            let count_str = parts.next().unwrap_or("");
+            let rest = parts.next().unwrap_or("").trim();
+            let Ok(count) = count_str.parse::<usize>() else {
+                continue;
+            };
+            // Strip "<email>" suffix if present.
+            let name = match rest.rfind('<') {
+                Some(i) => rest[..i].trim().to_string(),
+                None => rest.to_string(),
+            };
+            if name.is_empty() {
+                continue;
+            }
+            out.push((name, count));
+            if out.len() >= top_n {
+                break;
+            }
+        }
+        out
+    }
+}
+
 /// Convert a git remote URL (SSH or HTTPS) to a plain HTTPS base URL.
 fn remote_url_to_https(url: &str) -> String {
     let mut u = url.to_string();

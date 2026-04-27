@@ -42,10 +42,12 @@ pub enum ModelPart {
         is_bisecting: bool,
         rebase_onto_hash: String,
     },
+    RepoUrl(String),
+    Contributors(Vec<(String, usize)>),
 }
 
 /// Total number of `ModelPart` variants that `load_model_streaming` sends.
-pub const MODEL_PART_COUNT: usize = 11;
+pub const MODEL_PART_COUNT: usize = 13;
 
 /// Facade for all git operations. Mirrors lazygit's GitCommand.
 pub struct GitCommands {
@@ -95,6 +97,8 @@ impl GitCommands {
             let h_reflog = s.spawn(|| self.load_reflog(100));
             let h_shortstat = s.spawn(|| self.diff_shortstat());
             let h_status = s.spawn(|| self.repo_status());
+            let h_repo_url = s.spawn(|| self.load_repo_url());
+            let h_contribs = s.spawn(|| self.load_contributors(500, 10));
 
             model.files = h_files.join().unwrap()?;
             model.branches = h_branches.join().unwrap()?;
@@ -118,6 +122,9 @@ impl GitCommands {
                 model.is_bisecting = status.is_bisecting;
                 model.rebase_onto_hash = status.rebase_onto_hash;
             }
+
+            model.repo_url = h_repo_url.join().unwrap_or_default();
+            model.contributors = h_contribs.join().unwrap_or_default();
 
             Ok(model)
         })
@@ -166,6 +173,20 @@ impl GitCommands {
                 if let Ok((added, deleted)) = git.diff_shortstat() {
                     let _ = tx.send(ModelPart::DiffStats { added, deleted });
                 }
+            });
+        }
+        {
+            let tx = tx.clone();
+            let git = Arc::clone(self);
+            std::thread::spawn(move || {
+                let _ = tx.send(ModelPart::RepoUrl(git.load_repo_url()));
+            });
+        }
+        {
+            let tx = tx.clone();
+            let git = Arc::clone(self);
+            std::thread::spawn(move || {
+                let _ = tx.send(ModelPart::Contributors(git.load_contributors(500, 10)));
             });
         }
         {

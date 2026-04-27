@@ -429,6 +429,8 @@ impl Gui {
                             model.is_bisecting = is_bisecting;
                             model.rebase_onto_hash = rebase_onto_hash;
                         }
+                        ModelPart::RepoUrl(url) => model.repo_url = url,
+                        ModelPart::Contributors(c) => model.contributors = c,
                     }
                     self.initial_load_received += 1;
                 }
@@ -1748,10 +1750,7 @@ impl Gui {
                 controller::tags::handle_key(self, key, &keybindings)?;
             }
             ContextId::Status => {
-                // Enter on status shows recent repos
-                if key.code == KeyCode::Enter {
-                    self.show_recent_repos()?;
-                }
+                controller::status::handle_key(self, key, &keybindings)?;
             }
             ContextId::Worktrees => {
                 controller::worktrees::handle_key(self, key, &keybindings)?;
@@ -3182,6 +3181,8 @@ impl Gui {
                 title: "Status".into(),
                 entries: vec![
                     HelpEntry { key: "<enter>".into(), description: "Recent repos".into() },
+                    HelpEntry { key: "y".into(), description: "Copy to clipboard menu".into() },
+                    HelpEntry { key: "o".into(), description: "Open in browser menu".into() },
                 ],
             },
             _ => HelpSection {

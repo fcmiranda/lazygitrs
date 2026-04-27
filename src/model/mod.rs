@@ -52,6 +52,10 @@ pub struct Model {
     pub is_bisecting: bool,
     /// Short hash of the commit being rebased onto (from .git/rebase-merge/onto).
     pub rebase_onto_hash: String,
+    /// HTTPS URL of the origin remote (empty if no origin or unset).
+    pub repo_url: String,
+    /// Top contributors as (name, commit_count), descending. Capped traversal.
+    pub contributors: Vec<(String, usize)>,
 }
 
 #[derive(Debug, Clone)]

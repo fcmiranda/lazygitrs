@@ -1059,9 +1059,23 @@ fn render_status_main(
     )));
     lines.push(Line::from(""));
     lines.push(Line::from(format!(" Branch: {}", branch_name)));
+    if !model.repo_url.is_empty() {
+        lines.push(Line::from(format!(" Repo:   {}", model.repo_url)));
+    }
     lines.push(Line::from(format!(" Commits: {}", model.commits.len())));
     lines.push(Line::from(format!(" Files: {}", model.files.len())));
     lines.push(Line::from(format!(" Version: v{}", env!("CARGO_PKG_VERSION"))));
+
+    if !model.contributors.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            " Contributors",
+            Style::default().fg(theme.text_dimmed),
+        )));
+        for (name, count) in model.contributors.iter().take(10) {
+            lines.push(Line::from(format!("   {:>4}  {}", count, name)));
+        }
+    }
 
     // In-progress operation banners
     if model.is_rebasing {

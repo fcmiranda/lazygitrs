@@ -165,7 +165,7 @@
 
 - [x] When Im on '3 Branches'. I want `y` to have an option to 'copy branch name'.
 
-- [ ] In '1 Status' I want to see details like
+- [x] In '1 Status' I want to see details like
   - repo url (just origin remote, I think)
   - And 'contributors' - whichever is the cheapest way to get that data (i would personally refrain from traversing the entire commits history and get the contirbutors)
   - I want pressing y or o to work here as well.
