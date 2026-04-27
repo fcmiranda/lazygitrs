@@ -187,6 +187,6 @@
 
 - [x] Quick good change about commit message modal. Like lazygit, let's not get rid of the current input when I press 'Esc' so that I won't lose progress even when I do that. But to make it convenient, add a 'Clear' option when I do ctrl+m so I won't need to manually erase the text inside all the 'Summary' and 'Description' textboxes.
 
-- [ ] I need that even though I'm focusing on 'Diff panel'.. I still want to be able to Shift+P.. So Shift+P (push), is like universal.
+- [x] I need that even though I'm focusing on 'Diff panel'.. I still want to be able to Shift+P.. So Shift+P (push), is like universal.
 
 - [ ] When I'm in cmdk dialogs i.e. 'Keybindings' (?), Checkout (c). cmd+v to paste does not work.

@@ -1416,6 +1416,19 @@ impl Gui {
         }
     }
 
+    /// Repo-level keybindings that work regardless of which panel is focused
+    /// (including the diff panel). Returns Ok(true) if the key was consumed.
+    fn try_handle_global_repo_keys(&mut self, key: KeyEvent) -> Result<bool> {
+        let kb = self.config.user_config.keybinding.clone();
+        if matches_key(key, &kb.universal.push_files)
+            || matches_key(key, &kb.universal.pull_files)
+        {
+            controller::remotes::handle_key(self, key, &kb)?;
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
     fn handle_key(&mut self, key: KeyEvent) -> Result<()> {
         // Popup takes priority
         if self.popup != PopupState::None {
@@ -1614,17 +1627,11 @@ impl Gui {
             }
         }
 
-        // Push (global)
-        if matches_key(key, &keybindings.universal.push_files) {
-            controller::remotes::handle_key(self, key, &self.config.user_config.keybinding.clone())?;
+        // Push/Pull (global)
+        if self.try_handle_global_repo_keys(key)? {
             return Ok(());
         }
-
-        // Pull (global)
-        if matches_key(key, &keybindings.universal.pull_files) {
-            controller::remotes::handle_key(self, key, &self.config.user_config.keybinding.clone())?;
-            return Ok(());
-        }
+        let keybindings = &self.config.user_config.keybinding;
 
         // Screen mode toggle (+ to enlarge, _ to shrink, matching lazygit)
         if matches_key(key, &keybindings.universal.next_screen_mode) {
@@ -1865,6 +1872,11 @@ impl Gui {
                     }
                 }
             }
+        }
+
+        // Push/Pull are global — they fire even when the diff panel is focused.
+        if self.try_handle_global_repo_keys(key)? {
+            return Ok(());
         }
 
         let keybindings = &self.config.user_config.keybinding;
