@@ -158,6 +158,9 @@ pub struct Gui {
     pub rebase_mode: RebaseModeState,
     /// Stashed commit editor popup while commit menu or AI generation is shown.
     pending_commit_popup: Option<PopupState>,
+    /// Persists the commit editor across Esc so re-opening doesn't lose typed text.
+    /// Cleared on successful commit or explicit Clear from the commit menu.
+    pub(crate) saved_commit_popup: Option<PopupState>,
     /// Temporarily holds a menu popup during action execution so async actions can restore it.
     pending_menu_popup: Option<PopupState>,
     /// Search bar textarea (1-line editor for search input).
@@ -347,6 +350,7 @@ impl Gui {
             diff_mode: DiffModeState::new(),
             rebase_mode: RebaseModeState::new(),
             pending_commit_popup: None,
+            saved_commit_popup: None,
             pending_menu_popup: None,
             search_textarea: None,
             last_refresh_at: Instant::now(),
@@ -2376,6 +2380,8 @@ impl Gui {
                             self.save_commit_history();
                         }
                         self.commit_history_idx = None;
+                        // Successful submit: drop any stashed in-progress editor.
+                        self.saved_commit_popup = None;
                         if let Err(e) = on_confirm(self, &text) {
                             self.popup = PopupState::Message {
                                 title: "Error".to_string(),
@@ -2385,9 +2391,10 @@ impl Gui {
                         }
                     }
                 }
-                // Esc: cancel
+                // Esc: stash editor so re-opening commit prompt restores in-progress text.
                 else if key.code == KeyCode::Esc {
-                    self.popup = PopupState::None;
+                    let stashed = std::mem::replace(&mut self.popup, PopupState::None);
+                    self.saved_commit_popup = Some(stashed);
                     self.commit_history_idx = None;
                 }
                 // Ctrl+O: open commit menu
@@ -3427,6 +3434,33 @@ impl Gui {
                 })),
             },
         ];
+
+        items.push(popup::MenuItem {
+            label: "Clear summary and description".to_string(),
+            description: String::new(),
+            key: Some("x".to_string()),
+            action: Some(Box::new(|gui| {
+                if let Some(mut editor) = gui.pending_commit_popup.take() {
+                    if let PopupState::CommitInput {
+                        ref mut summary_textarea,
+                        ref mut body_textarea,
+                        ref mut body_state,
+                        ref mut focus,
+                        ..
+                    } = editor
+                    {
+                        summary_textarea.select_all();
+                        summary_textarea.cut();
+                        body_state.set_text(String::new());
+                        let wrap = gui.commit_body_wrap_width();
+                        body_state.render_into(body_textarea, wrap);
+                        *focus = popup::CommitInputFocus::Summary;
+                    }
+                    gui.popup = editor;
+                }
+                Ok(())
+            })),
+        });
 
         if has_generate {
             items.push(popup::MenuItem {
