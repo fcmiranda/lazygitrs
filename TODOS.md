@@ -195,3 +195,5 @@
 
 - [ ] Change 'Keybindings' panel (?) to 'Keybindings & Commands'. The only command we have currently is 'Color theme...' (change this to 'Color theme' only no ellipses).
   - Another useful command is
+
+- [x] Flat file view. When I 'add' something, it reorders them in the list which is weird.

@@ -411,7 +411,7 @@ impl Gui {
                 while let Ok(part) = rx.try_recv() {
                     let mut model = self.model.lock().unwrap();
                     match part {
-                        ModelPart::Files(v) => { model.files = v; got_files = true; }
+                        ModelPart::Files(v) => { model.set_files(v); got_files = true; }
                         ModelPart::Branches(v) => model.branches = v,
                         ModelPart::Commits(v) => model.commits = v,
                         ModelPart::Stash(v) => model.stash_entries = v,
@@ -4813,7 +4813,7 @@ impl Gui {
     fn refresh(&mut self) -> Result<()> {
         let new_model = self.git.load_model()?;
         let mut model = self.model.lock().unwrap();
-        *model = new_model;
+        model.replace_keeping_file_order(new_model);
 
         // If branch filters are active, reload commits for those branches only.
         if !self.commit_branch_filter.is_empty() {
@@ -4920,7 +4920,7 @@ impl Gui {
 
         let mut model = self.model.lock().unwrap();
         if let Ok(f) = files {
-            model.files = f;
+            model.set_files(f);
         }
         if let Ok((added, deleted)) = shortstat {
             model.total_additions = added;
