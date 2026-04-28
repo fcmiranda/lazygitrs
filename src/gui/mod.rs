@@ -2526,6 +2526,7 @@ impl Gui {
                 }
             }
             PopupState::CommitInput { focus, .. } => {
+                use crossterm::event::KeyModifiers;
                 let focus = *focus;
 
                 // Tab toggles focus between summary and body
@@ -2693,21 +2694,6 @@ impl Gui {
                                     }
                                     None => {}
                                 }
-                                Some(idx) => {
-                                    let new_idx = idx - 1;
-                                    self.commit_history_idx = Some(new_idx);
-                                    let msg = &self.commit_message_history[new_idx];
-                                    let (summary, body) = split_commit_message(msg);
-                                    let mut new_summary = popup::make_commit_summary_textarea();
-                                    new_summary.insert_str(&summary);
-                                    *summary_textarea = new_summary;
-                                    let mut new_body = popup::make_commit_body_textarea();
-                                    if !body.is_empty() {
-                                        new_body.insert_str(&body);
-                                    }
-                                    *body_textarea = new_body;
-                                }
-                                None => {}
                             },
                             _ => {}
                         }
