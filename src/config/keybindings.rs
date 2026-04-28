@@ -40,6 +40,8 @@ pub struct UniversalKeybinding {
     pub quit_without_changing_directory: String,
     #[serde(rename = "togglePanel")]
     pub toggle_panel: String,
+    #[serde(rename = "togglePanelReverse")]
+    pub toggle_panel_reverse: String,
     #[serde(rename = "prevItem")]
     pub prev_item: String,
     #[serde(rename = "nextItem")]
@@ -118,6 +120,7 @@ impl Default for UniversalKeybinding {
             return_key: "<escape>".into(),
             quit_without_changing_directory: "Q".into(),
             toggle_panel: "<tab>".into(),
+            toggle_panel_reverse: "<backtab>".into(),
             prev_item: "k".into(),
             next_item: "j".into(),
             prev_item_alt: "<up>".into(),
@@ -398,6 +401,7 @@ pub fn parse_key(s: &str) -> Option<KeyEvent> {
             "enter" => Some(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
             "escape" | "esc" => Some(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
             "tab" => Some(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)),
+            "backtab" | "shift-tab" => Some(KeyEvent::new(KeyCode::BackTab, KeyModifiers::SHIFT)),
             "backspace" | "bs" => {
                 Some(KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE))
             }
