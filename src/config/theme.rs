@@ -21,6 +21,10 @@ pub struct Theme {
     pub diff_context: Style,
     pub diff_add_bg: Color,
     pub diff_remove_bg: Color,
+    pub diff_add_gutter_bg: Color,
+    pub diff_remove_gutter_bg: Color,
+    pub diff_add_gutter_fg: Color,
+    pub diff_remove_gutter_fg: Color,
     pub diff_add_word: Color,
     pub diff_remove_word: Color,
 
@@ -192,6 +196,10 @@ impl Theme {
             diff_context: Style::default().fg(Color::Gray),
             diff_add_bg: Color::Rgb(0, 60, 0),
             diff_remove_bg: Color::Rgb(60, 0, 0),
+            diff_add_gutter_bg: Color::Rgb(0, 30, 0),
+            diff_remove_gutter_bg: Color::Rgb(30, 0, 0),
+            diff_add_gutter_fg: Color::Rgb(120, 180, 120),
+            diff_remove_gutter_fg: Color::Rgb(200, 120, 120),
             diff_add_word: Color::Rgb(0, 120, 0),
             diff_remove_word: Color::Rgb(120, 0, 0),
             commit_hash: Style::default().fg(Color::Yellow),
@@ -415,6 +423,8 @@ impl ThemeJson {
         let diff_context = self.diff_context.as_deref().and_then(parse_hex).unwrap_or(text_dimmed);
         let diff_add_bg = self.diff_add_bg.as_deref().and_then(parse_hex).unwrap_or(dark.diff_add_bg);
         let diff_remove_bg = self.diff_remove_bg.as_deref().and_then(parse_hex).unwrap_or(dark.diff_remove_bg);
+        let diff_add_gutter_bg = mix_colors(diff_add_bg, Color::Rgb(0, 0, 0), 110);
+        let diff_remove_gutter_bg = mix_colors(diff_remove_bg, Color::Rgb(0, 0, 0), 110);
         let diff_add_word = self.diff_add_word.as_deref().and_then(parse_hex).unwrap_or(dark.diff_add_word);
         let diff_remove_word = self.diff_remove_word.as_deref().and_then(parse_hex).unwrap_or(dark.diff_remove_word);
         let diff_line_number = self.diff_line_number.as_deref().and_then(parse_hex).unwrap_or(dark.diff_line_number);
@@ -455,6 +465,10 @@ impl ThemeJson {
             diff_context: Style::default().fg(diff_context),
             diff_add_bg,
             diff_remove_bg,
+            diff_add_gutter_bg,
+            diff_remove_gutter_bg,
+            diff_add_gutter_fg: mix_colors(diff_add, Color::Rgb(255, 255, 255), 30),
+            diff_remove_gutter_fg: mix_colors(diff_remove, Color::Rgb(255, 255, 255), 30),
             diff_add_word,
             diff_remove_word,
 

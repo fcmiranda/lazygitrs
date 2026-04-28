@@ -815,12 +815,34 @@ pub fn render_diff(
                     _ => Color::Reset,
                 }
             };
+            let gutter_bg = if is_new_file {
+                theme.diff_add_gutter_bg
+            } else {
+                match (diff_line.change_type, show_panel) {
+                    (ChangeType::Delete, DiffPanel::Old) => theme.diff_remove_gutter_bg,
+                    (ChangeType::Insert, DiffPanel::New) => theme.diff_add_gutter_bg,
+                    (ChangeType::Modified, DiffPanel::Old) => theme.diff_remove_gutter_bg,
+                    (ChangeType::Modified, DiffPanel::New) => theme.diff_add_gutter_bg,
+                    _ => Color::Reset,
+                }
+            };
+            let gutter_fg = if is_new_file {
+                theme.diff_add_gutter_fg
+            } else {
+                match (diff_line.change_type, show_panel) {
+                    (ChangeType::Delete, DiffPanel::Old) => theme.diff_remove_gutter_fg,
+                    (ChangeType::Insert, DiffPanel::New) => theme.diff_add_gutter_fg,
+                    (ChangeType::Modified, DiffPanel::Old) => theme.diff_remove_gutter_fg,
+                    (ChangeType::Modified, DiffPanel::New) => theme.diff_add_gutter_fg,
+                    _ => theme.diff_gutter,
+                }
+            };
 
             let line_num = state
                 .file_line_number(line_idx, show_panel)
                 .map(|n| format!("{:>4} ", n))
                 .unwrap_or_else(|| "     ".to_string());
-            let gutter_style = Style::default().fg(theme.diff_gutter).bg(bg);
+            let gutter_style = Style::default().fg(gutter_fg).bg(gutter_bg);
 
             if state.wrap && line_data.is_some() {
                 let spans = build_content_spans(
@@ -907,8 +929,10 @@ pub fn render_diff(
                 .unwrap_or((&default_hl, &default_hl));
 
             let (left_bg, right_bg) = line_bg_colors(diff_line.change_type, theme);
-            let gutter_style = Style::default().fg(theme.diff_gutter).bg(left_bg);
-            let right_gutter_style = Style::default().fg(theme.diff_gutter).bg(right_bg);
+            let (left_gutter_bg, right_gutter_bg) = gutter_bg_colors(diff_line.change_type, theme);
+            let (left_gutter_fg, right_gutter_fg) = gutter_fg_colors(diff_line.change_type, theme);
+            let gutter_style = Style::default().fg(left_gutter_fg).bg(left_gutter_bg);
+            let right_gutter_style = Style::default().fg(right_gutter_fg).bg(right_gutter_bg);
             let divider_style = Style::default().fg(theme.diff_gutter);
 
             let left_num = state
@@ -1224,6 +1248,28 @@ fn line_bg_colors(change_type: ChangeType, theme: &Theme) -> (Color, Color) {
         ChangeType::Delete => (theme.diff_remove_bg, Color::Reset),
         ChangeType::Insert => (Color::Reset, theme.diff_add_bg),
         ChangeType::Modified => (theme.diff_remove_bg, theme.diff_add_bg),
+    }
+}
+
+/// Get gutter background colors for a diff line. Slightly darker than the
+/// content background so the gutter visually separates from the code area
+/// (lumen-style).
+fn gutter_bg_colors(change_type: ChangeType, theme: &Theme) -> (Color, Color) {
+    match change_type {
+        ChangeType::Equal => (Color::Reset, Color::Reset),
+        ChangeType::Delete => (theme.diff_remove_gutter_bg, Color::Reset),
+        ChangeType::Insert => (Color::Reset, theme.diff_add_gutter_bg),
+        ChangeType::Modified => (theme.diff_remove_gutter_bg, theme.diff_add_gutter_bg),
+    }
+}
+
+/// Foreground color for the gutter line number on the (left, right) side.
+fn gutter_fg_colors(change_type: ChangeType, theme: &Theme) -> (Color, Color) {
+    match change_type {
+        ChangeType::Equal => (theme.diff_gutter, theme.diff_gutter),
+        ChangeType::Delete => (theme.diff_remove_gutter_fg, theme.diff_gutter),
+        ChangeType::Insert => (theme.diff_gutter, theme.diff_add_gutter_fg),
+        ChangeType::Modified => (theme.diff_remove_gutter_fg, theme.diff_add_gutter_fg),
     }
 }
 
