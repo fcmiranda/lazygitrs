@@ -47,8 +47,9 @@ const STATUS_PANEL_HEIGHT: u16 = 3;
 
 /// Portrait mode threshold: narrow terminal with enough vertical space.
 /// Matches the original lazygit: width <= 84 && height > 45.
+/// Available in both Normal and Half modes (Full mode stays full-screen).
 fn should_use_portrait(width: u16, height: u16, screen_mode: ScreenMode) -> bool {
-    screen_mode == ScreenMode::Normal && width <= 84 && height > 45
+    screen_mode != ScreenMode::Full && width <= 84 && height > 45
 }
 
 /// Extended layout that can optionally carve out a commit-details panel:
@@ -112,11 +113,21 @@ pub fn compute_layout_with_details(
 
     if portrait {
         // Portrait mode: side panels stacked vertically on top, main panel below.
-        // The side section gets roughly half the height so both sections are usable.
-        let side_height = (main_area.height as f64 * side_ratio).round() as u16;
+        // Half mode uses a 50/50 vertical split (matching its 50/50 landscape split);
+        // Normal mode uses the configured ratio capped at half height.
+        let effective_ratio = match screen_mode {
+            ScreenMode::Half => 0.5,
+            _ => side_ratio,
+        };
+        let max_side_height = if screen_mode == ScreenMode::Half {
+            main_area.height.saturating_sub(5) // leave at least 5 rows for main
+        } else {
+            main_area.height / 2
+        };
+        let side_height = (main_area.height as f64 * effective_ratio).round() as u16;
         let side_height = side_height
             .max(panel_count as u16 * 2)
-            .min(main_area.height / 2);
+            .min(max_side_height);
 
         let vertical = Layout::default()
             .direction(Direction::Vertical)

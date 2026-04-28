@@ -197,3 +197,5 @@
   - Another useful command is
 
 - [x] Flat file view. When I 'add' something, it reorders them in the list which is weird.
+
+- [x] When we do shift-,shift+, we have Full View, Default View (as in not doing shift- or shift+), and Half View. When there's enough vertical space and the width is too small... Default View currently has a 'vertical' layout. Half View does not have a 'vertical' layout yet, so I want a vertical layout for half view.
