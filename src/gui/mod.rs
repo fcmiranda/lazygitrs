@@ -26,7 +26,7 @@ use crate::config::keybindings::parse_key;
 use crate::git::{GitCommands, ModelPart, MODEL_PART_COUNT};
 use crate::model::Model;
 use crate::model::file_tree::{build_file_tree, CommitFileTreeNode, FileTreeNode};
-use crate::pager::side_by_side::{DiffPanelLayout, DiffViewState, TextSelection};
+use crate::pager::side_by_side::{DiffPanel, DiffPanelLayout, DiffViewState, TextSelection};
 
 use self::context::{ContextId, ContextManager, SideWindow};
 use self::layout::LayoutState;
@@ -1881,6 +1881,18 @@ impl Gui {
 
         let keybindings = &self.config.user_config.keybinding;
 
+        // e / o on the diff panel (no active selection) mirror the Files tab:
+        // open the working-tree file in the editor (at the first changed hunk)
+        // or in the default program.
+        if matches_key(key, &keybindings.universal.edit) {
+            self.open_diff_file_in_editor();
+            return Ok(());
+        }
+        if matches_key(key, &keybindings.universal.open_file) {
+            self.open_diff_file_in_default_program();
+            return Ok(());
+        }
+
         // Screen mode cycling works even when diff is focused
         if matches_key(key, &keybindings.universal.next_screen_mode) {
             self.next_screen_mode();
@@ -2017,6 +2029,53 @@ impl Gui {
             _ => {}
         }
         Ok(())
+    }
+
+    fn open_diff_file_in_editor(&mut self) {
+        let rel_path = self.diff_view.filename.clone();
+        if rel_path.is_empty() {
+            return;
+        }
+        let abs_path_buf = self.git.repo_path().join(&rel_path);
+        if !abs_path_buf.exists() {
+            return;
+        }
+        let abs_path = abs_path_buf.to_string_lossy().to_string();
+        let os = &self.config.user_config.os;
+
+        let first_hunk_line = self.diff_view.hunk_starts.first().and_then(|&idx| {
+            self.diff_view
+                .file_line_number(idx, DiffPanel::New)
+                .or_else(|| self.diff_view.file_line_number(idx, DiffPanel::Old))
+        });
+
+        if let Some(line) = first_hunk_line {
+            let tpl = if !os.edit_at_line.is_empty() { &os.edit_at_line } else { &os.edit };
+            if !tpl.is_empty() {
+                let _ = crate::config::user_config::OsConfig::run_template_at_line(tpl, &abs_path, line, 1);
+                return;
+            }
+        }
+
+        if !os.edit.is_empty() {
+            let _ = crate::config::user_config::OsConfig::run_template(&os.edit, &abs_path);
+        } else {
+            let _ = crate::os::platform::Platform::open_file(&abs_path);
+        }
+    }
+
+    fn open_diff_file_in_default_program(&mut self) {
+        let rel_path = self.diff_view.filename.clone();
+        if rel_path.is_empty() {
+            return;
+        }
+        let abs_path_buf = self.git.repo_path().join(&rel_path);
+        if !abs_path_buf.exists() {
+            return;
+        }
+        let abs_path = abs_path_buf.to_string_lossy().to_string();
+        let open_template = &self.config.user_config.os.open;
+        let _ = crate::config::user_config::OsConfig::run_template(open_template, &abs_path);
     }
 
     fn handle_paste(&mut self, data: String) {
@@ -3315,6 +3374,7 @@ impl Gui {
                 HelpEntry { key: "/".into(), description: "Search in diff".into() },
                 HelpEntry { key: "n/N".into(), description: "Next / previous search match".into() },
                 HelpEntry { key: "e".into(), description: "Edit file at line".into() },
+                HelpEntry { key: "o".into(), description: "Open file in default program".into() },
                 HelpEntry { key: "y".into(), description: "Copy selected text".into() },
                 HelpEntry { key: "q".into(), description: "Quit".into() },
                 HelpEntry { key: "+/_".into(), description: "Enlarge / shrink panel".into() },
