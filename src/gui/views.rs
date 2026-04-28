@@ -2261,30 +2261,52 @@ pub fn render_popup(frame: &mut Frame, popup: &PopupState, area: Rect, spinner_f
                     let key_display = format!("  {:>width$}", key_or_title, width = key_col_width);
                     let desc_display = format!("  {}", desc);
 
-                    let key_style = if is_selected {
+                    let key_base_style = if is_selected {
                         Style::default()
                             .fg(theme.accent_secondary)
                             .add_modifier(Modifier::BOLD)
-                    } else if has_search && key_or_title.to_lowercase().contains(&search_lower) {
-                        Style::default().fg(theme.accent_secondary)
                     } else {
                         Style::default().fg(theme.accent)
                     };
 
-                    let desc_style = if is_selected {
+                    let desc_base_style = if is_selected {
                         Style::default()
                             .fg(theme.text_strong)
                             .add_modifier(Modifier::BOLD)
-                    } else if has_search && desc.to_lowercase().contains(&search_lower) {
-                        Style::default().fg(theme.text_strong)
                     } else {
                         Style::default().fg(theme.text)
                     };
 
-                    let line = Line::from(vec![
-                        Span::styled(key_display, key_style),
-                        Span::styled(desc_display, desc_style),
-                    ]);
+                    let highlight_style = Style::default()
+                        .fg(theme.accent_secondary)
+                        .add_modifier(Modifier::BOLD);
+
+                    let build_spans = |text: &str, base: Style| -> Vec<Span<'static>> {
+                        if !has_search {
+                            return vec![Span::styled(text.to_string(), base)];
+                        }
+                        let lower = text.to_lowercase();
+                        if let Some(pos) = lower.find(&search_lower) {
+                            let before = &text[..pos];
+                            let matched = &text[pos..pos + search_lower.len()];
+                            let after = &text[pos + search_lower.len()..];
+                            let mut s = Vec::new();
+                            if !before.is_empty() {
+                                s.push(Span::styled(before.to_string(), base));
+                            }
+                            s.push(Span::styled(matched.to_string(), highlight_style));
+                            if !after.is_empty() {
+                                s.push(Span::styled(after.to_string(), base));
+                            }
+                            s
+                        } else {
+                            vec![Span::styled(text.to_string(), base)]
+                        }
+                    };
+
+                    let mut spans = build_spans(&key_display, key_base_style);
+                    spans.extend(build_spans(&desc_display, desc_base_style));
+                    let line = Line::from(spans);
 
                     if is_selected {
                         list_items

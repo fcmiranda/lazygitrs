@@ -202,3 +202,6 @@
 - [x] The vertical layout has a minimum height it seems.
 
 - [x] When '1 Status' is focused, since its height does not expand, it shows a lot of empty space under it. So when '1 Status' is focused, let's just expand the most important other tab (Files, Branches, Commits, or Stash)
+
+- [x] cmdk dialog stuff (The 'Checkout branch', 'Interactive rebase current branch onto', 'Color theme' dialogs vs the `?` Keybindings dialog)... I found a point to make consistent...
+  - The search highlight works for the first former.. But the latter (Keybindings dialog), it doesn't have search highlight. Meaning I type 'Vie', and I should see 'Vie' also highlighted in the search items for whatever matches. Similar to the others.
