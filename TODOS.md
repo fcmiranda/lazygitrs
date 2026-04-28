@@ -182,6 +182,7 @@
         I also noticed for crashes like this (error not relevant ).. It shows the crash message right? But I cant actually stop the program anymore and just looks like whenever I move my mouse that: 35;1;18M35;1;18M35;2;18M35 (basically prints a bunch of those characters in the terminal making it unusable, that I have to close it)
 
 - [x] Imitate Zed's 'diff' when it comes to listing it in anon-filetree format. it looks like (Image1) while currently it looks like lazygit's.
+  - [x] I recently made a change in flat file view... 8c5c779c408cf0ff86e3a070733d442e7ce61f40 It affects '2 Files' tab. But I realized, I didn't make it affect the other 'Files' contexts i.e. 'Commit Files'. Or when I'm doing diff_mode's Commit Files'.
 
 - [x] In '4 Commits' pressing `y` works, but inside of '3 Branches > (pressed enter, now in Commits)' pressing 'y' does not work. Can you check why and maybe if you can fix something about it? Also other parts where 'commits' are involved where `y` and `o` are useful in those contexts?
 

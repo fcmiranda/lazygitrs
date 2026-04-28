@@ -168,11 +168,24 @@ fn render_commit_files(
             .iter()
             .map(|file| {
                 let (status_style, status_icon) = commit_file_status_display(file, theme);
-                let line = Line::from(vec![
+                let dim_style = Style::default().fg(theme.text_dimmed);
+                let name_style = Style::default().fg(theme.text_strong);
+
+                let path = file.name.as_str();
+                let (dir, name) = match path.rfind('/') {
+                    Some(idx) => (&path[..=idx], &path[idx + 1..]),
+                    None => ("", path),
+                };
+
+                let mut spans = vec![
                     Span::styled(format!(" {} ", status_icon), status_style),
-                    Span::styled(file.name.clone(), Style::default().fg(theme.text_strong)),
-                ]);
-                ListItem::new(line)
+                    Span::styled(name.to_string(), name_style),
+                ];
+                if !dir.is_empty() {
+                    spans.push(Span::styled(format!(" {}", dir), dim_style));
+                }
+
+                ListItem::new(Line::from(spans))
             })
             .collect()
     };
@@ -231,18 +244,13 @@ fn render_tree_node<'a>(
         let is_collapsed = state.collapsed_dirs.contains(&node.path);
         let icon = if is_collapsed { "▶ " } else { "▼ " };
         let is_root = node.path == ".";
+        let dir_style = Style::default().fg(theme.text_dimmed);
         let line = if is_root {
-            Line::from(Span::styled(
-                format!("  {} /", icon.trim_end()),
-                Style::default().fg(theme.text_strong),
-            ))
+            Line::from(Span::styled(format!("  {} /", icon.trim_end()), dir_style))
         } else {
             Line::from(vec![
-                Span::styled(
-                    format!("  {}{}", indent, icon),
-                    Style::default().fg(theme.text_strong),
-                ),
-                Span::styled(node.name.clone(), Style::default().fg(theme.text_strong)),
+                Span::styled(format!("  {}{}", indent, icon), dir_style),
+                Span::styled(node.name.clone(), dir_style),
             ])
         };
         ListItem::new(line)
