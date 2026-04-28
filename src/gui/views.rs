@@ -148,7 +148,7 @@ pub fn render(
 
             match ctx_id {
                 ContextId::Status => {
-                    render_status_main(frame, fl.main_panel, model, config, theme);
+                    render_status_main(frame, fl.main_panel, model, config, theme, block);
                 }
                 ContextId::Files => {
                     if show_file_tree {
@@ -576,7 +576,11 @@ pub fn render(
     // Render main panel
     if ctx_mgr.active() == ContextId::Status {
         // Status view: show logo + copyright in the main content area
-        render_status_main(frame, fl.main_panel, model, config, theme);
+        let status_block = Block::default()
+            .title(" Status ")
+            .borders(Borders::ALL)
+            .border_style(theme.active_border);
+        render_status_main(frame, fl.main_panel, model, config, theme, status_block);
     } else if !diff_view.is_empty() {
         side_by_side::render_diff(frame, fl.main_panel, diff_view, theme, diff_focused, diff_loading_show);
         side_by_side::render_diff_search_highlights(frame, fl.main_panel, diff_view, theme);
@@ -1022,17 +1026,14 @@ fn render_status_sidebar<'a>(model: &Model, _config: &AppConfig, inner_width: us
 }
 
 /// Full status view for the main content area: logo + copyright + repo info
-fn render_status_main(
+fn render_status_main<'a>(
     frame: &mut Frame,
     rect: Rect,
     model: &Model,
     _config: &AppConfig,
     theme: &crate::config::Theme,
+    block: Block<'a>,
 ) {
-    let block = Block::default()
-        .title(" Status ")
-        .borders(Borders::ALL)
-        .border_style(theme.active_border);
 
     let branch_name = model
         .branches
