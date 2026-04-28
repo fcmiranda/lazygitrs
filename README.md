@@ -40,6 +40,8 @@ lazygitrs
       generateCommand: "claude -p 'Generate a conventional commit message for this diff.'"
       # Using opencode
       generateCommand: "opencode run 'Generate a conventional commit message for this diff.'"
+      # Using codex
+      generateCommand: "codex exec --ephemeral 'Generate a conventional commit message for this diff.'"
       # Using modelcli
       generateCommand: 'DIFF=$(git diff --cached) && modelcli "Generate a conventional commit message for this diff. Always provide a bulletpoint body. $DIFF"'
   ```
