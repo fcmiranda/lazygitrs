@@ -6,6 +6,7 @@ use crate::config::keybindings::parse_key;
 use crate::gui::popup::{CommitInputFocus, MenuItem, PopupState, make_textarea, make_commit_summary_textarea, make_commit_body_textarea};
 use crate::gui::Gui;
 use crate::os::platform::Platform;
+use crate::pager::side_by_side::DiffPanel;
 
 pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) -> Result<()> {
     // Enter: toggle directory collapse in tree view, or focus diff for files
@@ -363,9 +364,29 @@ fn open_in_editor(gui: &mut Gui) -> Result<()> {
         drop(model);
 
         let abs_path = gui.git.repo_path().join(&rel_path).to_string_lossy().to_string();
-        let edit_template = &gui.config.user_config.os.edit;
-        if !edit_template.is_empty() {
-            crate::config::user_config::OsConfig::run_template(edit_template, &abs_path)?;
+        let os = &gui.config.user_config.os;
+
+        // Jump to first changed hunk if the diff for this file is loaded.
+        let first_hunk_line = if gui.diff_view.filename == rel_path {
+            gui.diff_view.hunk_starts.first().and_then(|&idx| {
+                gui.diff_view
+                    .file_line_number(idx, DiffPanel::New)
+                    .or_else(|| gui.diff_view.file_line_number(idx, DiffPanel::Old))
+            })
+        } else {
+            None
+        };
+
+        if let Some(line) = first_hunk_line {
+            let tpl = if !os.edit_at_line.is_empty() { &os.edit_at_line } else { &os.edit };
+            if !tpl.is_empty() {
+                crate::config::user_config::OsConfig::run_template_at_line(tpl, &abs_path, line, 1)?;
+                return Ok(());
+            }
+        }
+
+        if !os.edit.is_empty() {
+            crate::config::user_config::OsConfig::run_template(&os.edit, &abs_path)?;
         } else {
             // Fallback: use $EDITOR or platform open
             Platform::open_file(&abs_path)?;
