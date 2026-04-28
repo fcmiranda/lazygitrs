@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.18] - 2026-04-28
+
+### Bug Fixes
+
+- Always show refs and tags in commit details.
+- 'Status' header in fullview to '1 Status'.
+- Add search highlighting to keybindings dialog.
+- Expand Files tab when Status is focused to fill empty space.
+- Reduce minimum height threshold for portrait layout.
+- Preserve file list order when staging files.
+
+### Chores
+
+- Added MIT license.
+
+### Features
+
+- Apply Zed-style file display to all commit file contexts.
+- Show full commit messages in full-view details panel.
+- Open editor at focused hunk when navigating diffs with {}.
+- Add e/o key handlers to diff panel for opening files.
+- Open editor at first changed hunk when pressing 'e' on file.
+- Enable vertical layout for half view mode.
+
 ## [0.0.17] - 2026-04-27
 
 ### Bug Fixes
