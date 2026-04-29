@@ -216,4 +216,4 @@
 
 - [ ] Make 'Graph View' a bit more compact, like lazygit/zed. I like the right-padding that the graph adds so it pushes the table to the right. Except that currently, if there's A LOT of branches. It becomes a problematic problem. So now, let's just make it a scrollable piece of kind of column with a max width. Might be not worth doing because Zed's terminal doesn't have horizontal mouse scroll.
 
-- [ ] Add a ✦ symbol as a button somewhere inside the 'Commit Message' dialog. This will be the special clickable button that will represent the 'Generate commit message' shortcut. Make it 'hoverable' with the mouse, show a tooltip when I hover on it 'c-g Generate w/ AI'.
+- [x] Add a ✦ symbol as a button somewhere inside the 'Commit Message' dialog. This will be the special clickable button that will represent the 'Generate commit message' shortcut. Make it 'hoverable' with the mouse, show a tooltip when I hover on it 'c-g Generate w/ AI'.
