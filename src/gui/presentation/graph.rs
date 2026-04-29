@@ -3,7 +3,6 @@
 /// Uses ◯ (hollow circle) for the HEAD node and ⬤ (solid circle) for others,
 /// ╭─╮ for merge connectors, ╰─╯ for converging lines.
 /// Each column is 2 chars wide for readability.
-
 use ratatui::style::{Color, Style};
 use ratatui::text::Span;
 
@@ -77,7 +76,11 @@ pub fn compute_graph(commits: &[(String, Vec<String>)]) -> Vec<GraphRow> {
 
         // 3. Assign parents.
         let first_parent = parents.first();
-        let merge_parents = if parents.len() > 1 { &parents[1..] } else { &[] };
+        let merge_parents = if parents.len() > 1 {
+            &parents[1..]
+        } else {
+            &[]
+        };
 
         // First parent continues in the commit's lane.
         if let Some(fp) = first_parent {
@@ -181,7 +184,12 @@ pub fn compute_graph(commits: &[(String, Vec<String>)]) -> Vec<GraphRow> {
 /// to match lazygit's spacing.
 ///
 /// `is_head` — when true the node uses a hollow circle (◯); otherwise a solid one (⬤).
-pub fn render_graph_spans(row: &GraphRow, max_width: usize, is_head: bool, theme: &Theme) -> Vec<Span<'static>> {
+pub fn render_graph_spans(
+    row: &GraphRow,
+    max_width: usize,
+    is_head: bool,
+    theme: &Theme,
+) -> Vec<Span<'static>> {
     let mut spans = Vec::new();
 
     for (i, cell) in row.cells.iter().enumerate() {

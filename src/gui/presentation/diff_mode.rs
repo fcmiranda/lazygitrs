@@ -6,8 +6,8 @@ use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragra
 
 use crate::config::Theme;
 use crate::gui::modes::diff_mode::{DiffModeFocus, DiffModeState, RefKind};
-use crate::model::{CommitFile, FileChangeStatus};
 use crate::model::file_tree::CommitFileTreeNode;
+use crate::model::{CommitFile, FileChangeStatus};
 use crate::pager::side_by_side::{self, DiffViewState};
 
 /// Max items visible in the dropdown at once.
@@ -49,7 +49,15 @@ pub fn render(
     render_commit_files(frame, sidebar[2], state, theme);
 
     // Right panel: diff exploration
-    render_diff_panel(frame, content[1], state, diff_view, theme, diff_loading, diff_loading_show);
+    render_diff_panel(
+        frame,
+        content[1],
+        state,
+        diff_view,
+        theme,
+        diff_loading,
+        diff_loading_show,
+    );
 
     // Text selection highlight overlay and tooltip (must be before popups/dropdowns)
     crate::gui::views::render_selection_overlay(frame, diff_view, content[1], theme);
@@ -74,14 +82,20 @@ fn render_selector(
         DiffModeFocus::SelectorA => (
             true,
             state.focus == DiffModeFocus::SelectorA,
-            matches!(state.editing, Some(crate::gui::modes::diff_mode::DiffModeSelector::A)),
+            matches!(
+                state.editing,
+                Some(crate::gui::modes::diff_mode::DiffModeSelector::A)
+            ),
             &state.ref_a_display,
             " 1 A ",
         ),
         DiffModeFocus::SelectorB => (
             false,
             state.focus == DiffModeFocus::SelectorB,
-            matches!(state.editing, Some(crate::gui::modes::diff_mode::DiffModeSelector::B)),
+            matches!(
+                state.editing,
+                Some(crate::gui::modes::diff_mode::DiffModeSelector::B)
+            ),
             &state.ref_b_display,
             " 2 B ",
         ),
@@ -121,12 +135,7 @@ fn render_selector(
     }
 }
 
-fn render_commit_files(
-    frame: &mut Frame,
-    area: Rect,
-    state: &mut DiffModeState,
-    theme: &Theme,
-) {
+fn render_commit_files(frame: &mut Frame, area: Rect, state: &mut DiffModeState, theme: &Theme) {
     let focused = state.focus == DiffModeFocus::CommitFiles;
     let border = if focused {
         theme.active_border
@@ -134,7 +143,11 @@ fn render_commit_files(
         Style::default().fg(theme.text_dimmed)
     };
     let tree_indicator = if state.show_tree { " (tree)" } else { "" };
-    let title = format!(" 3 Commit Files ({}{}) ", state.diff_files.len(), tree_indicator);
+    let title = format!(
+        " 3 Commit Files ({}{}) ",
+        state.diff_files.len(),
+        tree_indicator
+    );
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
@@ -205,7 +218,11 @@ fn render_commit_files(
     // Smart scroll: ensure selected is visible, only adjust when needed.
     // Skip when viewport was manually scrolled (mouse scroll) to avoid snapping back.
     if !state.viewport_manually_scrolled {
-        crate::gui::scroll::ensure_visible(state.diff_files_selected, &mut state.diff_files_scroll, visible_height);
+        crate::gui::scroll::ensure_visible(
+            state.diff_files_selected,
+            &mut state.diff_files_scroll,
+            visible_height,
+        );
     }
     let max_offset = items.len().saturating_sub(visible_height);
     if state.diff_files_scroll > max_offset {
@@ -283,7 +300,7 @@ fn render_diff_panel(
     let focused = state.focus == DiffModeFocus::DiffExploration;
 
     if !diff_view.is_empty() {
-        side_by_side::render_diff(frame, area, diff_view, theme, focused, diff_loading);
+        side_by_side::render_diff(frame, area, diff_view, theme, focused, diff_loading, false);
         side_by_side::render_diff_search_highlights(frame, area, diff_view, theme);
         side_by_side::render_diff_search_bar(frame, area, diff_view, theme);
     } else {
@@ -295,6 +312,8 @@ fn render_diff_panel(
         let block = Block::default()
             .title(" 4 Diff ")
             .borders(Borders::ALL)
+            .borders(theme.panel_borders)
+            .border_type(theme.panel_border_type)
             .border_style(border);
         let msg = if diff_loading_show {
             " Loading diff..."
@@ -303,11 +322,8 @@ fn render_diff_panel(
         } else {
             ""
         };
-        let widget = Paragraph::new(Span::styled(
-            msg,
-            Style::default().fg(theme.text_dimmed),
-        ))
-        .block(block);
+        let widget =
+            Paragraph::new(Span::styled(msg, Style::default().fg(theme.text_dimmed))).block(block);
         frame.render_widget(widget, area);
     }
 }
@@ -333,15 +349,22 @@ fn render_status_bar(frame: &mut Frame, area: Rect, state: &DiffModeState, theme
             let ta_width = area.width.saturating_sub(prefix_width + suffix_width);
 
             let prefix_rect = Rect::new(area.x, area.y, prefix_width, 1);
-            let prefix = Paragraph::new(Span::styled(" /", Style::default().fg(theme.accent_secondary)));
+            let prefix = Paragraph::new(Span::styled(
+                " /",
+                Style::default().fg(theme.accent_secondary),
+            ));
             frame.render_widget(prefix, prefix_rect);
 
             let ta_rect = Rect::new(area.x + prefix_width, area.y, ta_width, 1);
             frame.render_widget(&*ta, ta_rect);
 
             if !match_info.is_empty() {
-                let suffix_rect = Rect::new(area.x + prefix_width + ta_width, area.y, suffix_width, 1);
-                let suffix = Paragraph::new(Span::styled(match_info, Style::default().fg(theme.accent_secondary)));
+                let suffix_rect =
+                    Rect::new(area.x + prefix_width + ta_width, area.y, suffix_width, 1);
+                let suffix = Paragraph::new(Span::styled(
+                    match_info,
+                    Style::default().fg(theme.accent_secondary),
+                ));
                 frame.render_widget(suffix, suffix_rect);
             }
             return;
@@ -366,11 +389,7 @@ fn render_status_bar(frame: &mut Frame, area: Rect, state: &DiffModeState, theme
     }
 
     let hints = if state.editing.is_some() {
-        vec![
-            ("Enter", "select"),
-            ("Esc", "cancel"),
-            ("↑↓", "navigate"),
-        ]
+        vec![("Enter", "select"), ("Esc", "cancel"), ("↑↓", "navigate")]
     } else {
         vec![
             ("q", "exit"),
@@ -382,9 +401,7 @@ fn render_status_bar(frame: &mut Frame, area: Rect, state: &DiffModeState, theme
         ]
     };
 
-    let key_style = Style::default()
-        .fg(theme.text)
-        .add_modifier(Modifier::BOLD);
+    let key_style = Style::default().fg(theme.text).add_modifier(Modifier::BOLD);
     let desc_style = Style::default().fg(theme.text_dimmed);
     let spans: Vec<Span> = hints
         .iter()
@@ -407,7 +424,10 @@ fn render_dropdown(
     theme: &Theme,
 ) {
     // Position dropdown below the relevant selector
-    let anchor = if matches!(state.editing, Some(crate::gui::modes::diff_mode::DiffModeSelector::A)) {
+    let anchor = if matches!(
+        state.editing,
+        Some(crate::gui::modes::diff_mode::DiffModeSelector::A)
+    ) {
         sidebar[0]
     } else {
         sidebar[1]
@@ -452,12 +472,17 @@ fn render_dropdown(
                     Span::styled("[remote] ", Style::default().fg(theme.ref_remote))
                 }
                 RefKind::Tag => Span::styled("[tag] ", Style::default().fg(theme.ref_tag)),
-                RefKind::Commit => Span::styled("[commit] ", Style::default().fg(theme.reflog_hash)),
+                RefKind::Commit => {
+                    Span::styled("[commit] ", Style::default().fg(theme.reflog_hash))
+                }
             };
             let line = Line::from(vec![
                 Span::raw(" "),
                 kind_label,
-                Span::styled(candidate.display.clone(), Style::default().fg(theme.text_strong)),
+                Span::styled(
+                    candidate.display.clone(),
+                    Style::default().fg(theme.text_strong),
+                ),
             ]);
             ListItem::new(line)
         })

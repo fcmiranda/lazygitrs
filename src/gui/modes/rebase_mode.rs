@@ -90,12 +90,7 @@ impl RebaseModeState {
     /// Enter interactive rebase mode (Planning phase).
     /// `commits` should be in newest-first order (as displayed in the commits panel).
     /// The base commit is the "onto" target (not included in the todo list).
-    pub fn enter(
-        &mut self,
-        branch_name: String,
-        base_commit: &Commit,
-        commits: &[Commit],
-    ) {
+    pub fn enter(&mut self, branch_name: String, base_commit: &Commit, commits: &[Commit]) {
         self.active = true;
         self.phase = RebasePhase::Planning;
         self.branch_name = branch_name;
@@ -165,7 +160,9 @@ impl RebaseModeState {
         entries.reverse();
 
         // Select the current (paused) entry
-        let current_idx = entries.iter().position(|e| e.status == EntryStatus::Current);
+        let current_idx = entries
+            .iter()
+            .position(|e| e.status == EntryStatus::Current);
         self.selected = current_idx.unwrap_or(0);
 
         self.entries = entries;

@@ -212,16 +212,17 @@ impl DiffModeState {
         let Some(selector) = self.editing else { return };
 
         let query = self.query_text();
-        let (ref_value, display) = if let Some(candidate) = self.search_results.get(self.search_selected) {
-            (candidate.ref_value.clone(), candidate.display.clone())
-        } else if !query.is_empty() {
-            // Allow raw input like HEAD~1, commit hashes, etc.
-            (query.clone(), query)
-        } else {
-            self.editing = None;
-            self.textarea = None;
-            return;
-        };
+        let (ref_value, display) =
+            if let Some(candidate) = self.search_results.get(self.search_selected) {
+                (candidate.ref_value.clone(), candidate.display.clone())
+            } else if !query.is_empty() {
+                // Allow raw input like HEAD~1, commit hashes, etc.
+                (query.clone(), query)
+            } else {
+                self.editing = None;
+                self.textarea = None;
+                return;
+            };
 
         match selector {
             DiffModeSelector::A => {
@@ -302,7 +303,11 @@ impl DiffModeState {
 
         // Commits
         for commit in commits.iter().take(200) {
-            let hash_short = if commit.hash.len() >= 7 { &commit.hash[..7] } else { &commit.hash };
+            let hash_short = if commit.hash.len() >= 7 {
+                &commit.hash[..7]
+            } else {
+                &commit.hash
+            };
             let display = format!("{} {}", hash_short, commit.name);
             self.search_results.push(RefCandidate {
                 display,
@@ -315,11 +320,14 @@ impl DiffModeState {
         // can always select exactly what they typed (e.g. HEAD~1, HEAD^2).
         let q = self.query_text();
         if !q.is_empty() {
-            self.search_results.insert(0, RefCandidate {
-                display: q.clone(),
-                ref_value: q.clone(),
-                kind: RefKind::RawRef,
-            });
+            self.search_results.insert(
+                0,
+                RefCandidate {
+                    display: q.clone(),
+                    ref_value: q.clone(),
+                    kind: RefKind::RawRef,
+                },
+            );
 
             // Jump cursor to best match among the real candidates (skip the raw ref at 0)
             let q_lower = q.to_lowercase();

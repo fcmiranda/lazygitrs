@@ -44,7 +44,11 @@ impl SideWindow {
     pub fn tabs(&self) -> &[ContextId] {
         match self {
             Self::Status => &[ContextId::Status],
-            Self::Files => &[ContextId::Files, ContextId::Worktrees, ContextId::Submodules],
+            Self::Files => &[
+                ContextId::Files,
+                ContextId::Worktrees,
+                ContextId::Submodules,
+            ],
             Self::Branches => &[ContextId::Branches, ContextId::Remotes, ContextId::Tags],
             Self::Commits => &[ContextId::Commits, ContextId::Reflog],
             Self::Stash => &[ContextId::Stash],
@@ -94,7 +98,12 @@ impl SideWindow {
         match ctx {
             ContextId::Status => SideWindow::Status,
             ContextId::Files | ContextId::Worktrees | ContextId::Submodules => SideWindow::Files,
-            ContextId::Branches | ContextId::Remotes | ContextId::Tags | ContextId::BranchCommits | ContextId::BranchCommitFiles | ContextId::RemoteBranches => SideWindow::Branches,
+            ContextId::Branches
+            | ContextId::Remotes
+            | ContextId::Tags
+            | ContextId::BranchCommits
+            | ContextId::BranchCommitFiles
+            | ContextId::RemoteBranches => SideWindow::Branches,
             ContextId::Commits | ContextId::Reflog | ContextId::CommitFiles => SideWindow::Commits,
             ContextId::Stash | ContextId::StashFiles => SideWindow::Stash,
             ContextId::Staging => SideWindow::Files,
@@ -343,7 +352,9 @@ impl ContextManager {
             ContextId::Tags => model.tags.len(),
             ContextId::Worktrees => model.worktrees.len(),
             ContextId::Submodules => model.submodules.len(),
-            ContextId::CommitFiles | ContextId::StashFiles | ContextId::BranchCommitFiles => self.commit_files_list_len_override.unwrap_or(model.commit_files.len()),
+            ContextId::CommitFiles | ContextId::StashFiles | ContextId::BranchCommitFiles => self
+                .commit_files_list_len_override
+                .unwrap_or(model.commit_files.len()),
             ContextId::BranchCommits => model.sub_commits.len(),
             ContextId::RemoteBranches => model.sub_remote_branches.len(),
             _ => 0,

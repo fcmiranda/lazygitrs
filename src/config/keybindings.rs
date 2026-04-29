@@ -1,5 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
@@ -10,6 +11,8 @@ pub struct KeybindingConfig {
     pub branches: BranchesKeybinding,
     pub commits: CommitsKeybinding,
     pub stash: StashKeybinding,
+    #[serde(default)]
+    pub overrides: HashMap<String, String>,
     #[serde(rename = "commitMessage")]
     pub commit_message: CommitMessageKeybinding,
 }
@@ -23,9 +26,87 @@ impl Default for KeybindingConfig {
             branches: BranchesKeybinding::default(),
             commits: CommitsKeybinding::default(),
             stash: StashKeybinding::default(),
+            overrides: HashMap::new(),
             commit_message: CommitMessageKeybinding::default(),
         }
     }
+}
+
+impl KeybindingConfig {
+    pub fn apply_overrides(&mut self) -> Vec<String> {
+        if self.overrides.is_empty() {
+            return Vec::new();
+        }
+
+        let mut patched = match serde_yaml::to_value(&*self) {
+            Ok(v) => v,
+            Err(_) => return self.overrides.keys().cloned().collect(),
+        };
+        let mut unknown = Vec::new();
+
+        for (raw_path, key) in self.overrides.clone() {
+            let normalized = raw_path.trim();
+            if normalized.is_empty() {
+                continue;
+            }
+            if !set_override_value(&mut patched, normalized, key) {
+                unknown.push(raw_path);
+            }
+        }
+
+        if let Ok(mut parsed) = serde_yaml::from_value::<KeybindingConfig>(patched) {
+            parsed.overrides = self.overrides.clone();
+            *self = parsed;
+        }
+
+        unknown
+    }
+}
+
+fn set_override_value(root: &mut serde_yaml::Value, raw_path: &str, value: String) -> bool {
+    let mut path = raw_path;
+    if let Some(stripped) = path.strip_prefix("keybinding.") {
+        path = stripped;
+    }
+    if let Some(stripped) = path.strip_prefix("keybinding/") {
+        path = stripped;
+    }
+    let segments: Vec<&str> = path.split(['.', '/']).filter(|s| !s.is_empty()).collect();
+    if segments.is_empty() {
+        return false;
+    }
+
+    if segments[0] == "overrides" {
+        return false;
+    }
+
+    let mut current = root;
+    for segment in &segments[..segments.len().saturating_sub(1)] {
+        let Some(map) = current.as_mapping_mut() else {
+            return false;
+        };
+        let key = serde_yaml::Value::String((*segment).to_string());
+        let Some(next) = map.get_mut(&key) else {
+            return false;
+        };
+        current = next;
+    }
+
+    let Some(last) = segments.last() else {
+        return false;
+    };
+    let Some(map) = current.as_mapping_mut() else {
+        return false;
+    };
+    let last_key = serde_yaml::Value::String((*last).to_string());
+    let Some(slot) = map.get_mut(&last_key) else {
+        return false;
+    };
+    if !matches!(slot, serde_yaml::Value::String(_)) {
+        return false;
+    }
+    *slot = serde_yaml::Value::String(value);
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -110,6 +191,10 @@ pub struct UniversalKeybinding {
     pub prev_screen_mode: String,
     #[serde(rename = "createPatchOptionsMenu")]
     pub create_patch_options_menu: String,
+    #[serde(rename = "prevRevertBlock")]
+    pub prev_revert_block: String,
+    #[serde(rename = "nextRevertBlock")]
+    pub next_revert_block: String,
 }
 
 impl Default for UniversalKeybinding {
@@ -157,6 +242,8 @@ impl Default for UniversalKeybinding {
             next_screen_mode: "+".into(),
             prev_screen_mode: "_".into(),
             create_patch_options_menu: "<c-p>".into(),
+            prev_revert_block: "<c-k>".into(),
+            next_revert_block: "<c-j>".into(),
         }
     }
 }
@@ -387,10 +474,7 @@ pub fn parse_key(s: &str) -> Option<KeyEvent> {
         // Ctrl modifier
         if let Some(key) = inner.strip_prefix("c-") {
             let ch = key.chars().next()?;
-            return Some(KeyEvent::new(
-                KeyCode::Char(ch),
-                KeyModifiers::CONTROL,
-            ));
+            return Some(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::CONTROL));
         }
 
         // Alt modifier

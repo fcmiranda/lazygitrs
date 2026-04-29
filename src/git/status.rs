@@ -17,14 +17,16 @@ pub struct RepoStatus {
 
 impl GitCommands {
     pub fn repo_status(&self) -> Result<RepoStatus> {
-        let branch = self.current_branch_name().unwrap_or_else(|_| "HEAD".to_string());
+        let branch = self
+            .current_branch_name()
+            .unwrap_or_else(|_| "HEAD".to_string());
 
         let (ahead, behind) = self.ahead_behind().unwrap_or((0, 0));
 
         let git_dir = self.repo_path().join(".git");
 
-        let is_rebasing = git_dir.join("rebase-merge").exists()
-            || git_dir.join("rebase-apply").exists();
+        let is_rebasing =
+            git_dir.join("rebase-merge").exists() || git_dir.join("rebase-apply").exists();
 
         // Read the "onto" hash when rebasing
         let rebase_onto_hash = if is_rebasing {

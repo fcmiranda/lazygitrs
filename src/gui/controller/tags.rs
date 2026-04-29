@@ -2,8 +2,8 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::config::KeybindingConfig;
-use crate::gui::popup::{MenuItem, PopupState, make_textarea};
 use crate::gui::Gui;
+use crate::gui::popup::{MenuItem, PopupState, make_textarea};
 
 pub fn handle_key(gui: &mut Gui, key: KeyEvent, _keybindings: &KeybindingConfig) -> Result<()> {
     // Enter: view tag commits
@@ -51,7 +51,8 @@ fn enter_tag_commits(gui: &mut Gui) -> Result<()> {
         gui.sub_commits_parent_context = crate::gui::context::ContextId::Tags;
 
         // Switch to BranchCommits context (reused for tag commits)
-        gui.context_mgr.set_active(crate::gui::context::ContextId::BranchCommits);
+        gui.context_mgr
+            .set_active(crate::gui::context::ContextId::BranchCommits);
         gui.context_mgr.set_selection(0);
         gui.needs_diff_refresh = true;
     }
@@ -69,7 +70,8 @@ fn create_tag(gui: &mut Gui) -> Result<()> {
             }
             Ok(())
         }),
-        is_commit: false, confirm_focused: false,
+        is_commit: false,
+        confirm_focused: false,
     };
     Ok(())
 }

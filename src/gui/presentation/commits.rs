@@ -54,7 +54,9 @@ fn render_commits<'a>(
             // Hash — color by push status, overridden to cyan+bold if cherry-picked
             let is_cherry_picked = cherry_picked.iter().any(|h| *h == commit.hash);
             let hash_style = if is_cherry_picked {
-                Style::default().fg(theme.accent).add_modifier(Modifier::BOLD)
+                Style::default()
+                    .fg(theme.accent)
+                    .add_modifier(Modifier::BOLD)
             } else {
                 match commit.status {
                     CommitStatus::Unpushed => theme.commit_hash,
@@ -91,7 +93,9 @@ fn render_commits<'a>(
             for tag in &commit.tags {
                 spans.push(Span::styled(
                     format!("[{}] ", tag),
-                    Style::default().fg(theme.ref_tag).add_modifier(Modifier::BOLD),
+                    Style::default()
+                        .fg(theme.ref_tag)
+                        .add_modifier(Modifier::BOLD),
                 ));
             }
 

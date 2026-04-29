@@ -2,8 +2,8 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::config::KeybindingConfig;
-use crate::gui::context::ContextId;
 use crate::gui::Gui;
+use crate::gui::context::ContextId;
 
 pub fn handle_key(gui: &mut Gui, key: KeyEvent, _keybindings: &KeybindingConfig) -> Result<()> {
     // Escape: go back to parent context (Branches or Tags)
@@ -87,8 +87,7 @@ fn enter_branch_commit_files(gui: &mut Gui) -> Result<()> {
                 &model.commit_files,
                 &gui.commit_files_collapsed_dirs,
             );
-            gui.context_mgr.commit_files_list_len_override =
-                Some(gui.commit_file_tree_nodes.len());
+            gui.context_mgr.commit_files_list_len_override = Some(gui.commit_file_tree_nodes.len());
         } else {
             gui.commit_file_tree_nodes.clear();
             gui.context_mgr.commit_files_list_len_override = None;

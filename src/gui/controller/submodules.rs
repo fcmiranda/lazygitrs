@@ -2,8 +2,8 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::config::KeybindingConfig;
-use crate::gui::popup::{PopupState, make_textarea};
 use crate::gui::Gui;
+use crate::gui::popup::{PopupState, make_textarea};
 
 pub fn handle_key(gui: &mut Gui, key: KeyEvent, _keybindings: &KeybindingConfig) -> Result<()> {
     // Space: update selected submodule
@@ -81,7 +81,8 @@ fn add_submodule(gui: &mut Gui) -> Result<()> {
             }
             Ok(())
         }),
-        is_commit: false, confirm_focused: false,
+        is_commit: false,
+        confirm_focused: false,
     };
     Ok(())
 }
@@ -114,7 +115,12 @@ fn enter_submodule(gui: &mut Gui) -> Result<()> {
         let name = sub.name.clone();
         drop(model);
 
-        let abs_path = gui.git.repo_path().join(&path).to_string_lossy().to_string();
+        let abs_path = gui
+            .git
+            .repo_path()
+            .join(&path)
+            .to_string_lossy()
+            .to_string();
 
         gui.popup = PopupState::Confirm {
             title: "Enter submodule".to_string(),

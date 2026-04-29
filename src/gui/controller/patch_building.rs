@@ -1,8 +1,7 @@
 use anyhow::Result;
 
-
-use crate::gui::popup::{MenuItem, MessageKind, PopupState};
 use crate::gui::Gui;
+use crate::gui::popup::{MenuItem, MessageKind, PopupState};
 
 /// Enter patch building mode from the commits panel.
 pub fn enter_patch_building(gui: &mut Gui) -> Result<()> {
@@ -13,7 +12,9 @@ pub fn enter_patch_building(gui: &mut Gui) -> Result<()> {
         drop(model);
 
         // Load the files changed in this commit
-        let result = gui.git.git_cmd()
+        let result = gui
+            .git
+            .git_cmd()
             .args(&["diff-tree", "--no-commit-id", "--name-only", "-r", &hash])
             .run()?;
 
@@ -106,7 +107,9 @@ pub fn toggle_file_in_patch(gui: &mut Gui) -> Result<()> {
     }
 
     let commit = gui.patch_building.source_commit.clone();
-    let result = gui.git.git_cmd()
+    let result = gui
+        .git
+        .git_cmd()
         .args(&["diff-tree", "--no-commit-id", "--name-only", "-r", &commit])
         .run()?;
 

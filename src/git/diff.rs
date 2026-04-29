@@ -71,10 +71,7 @@ impl GitCommands {
     /// including untracked files (counted as all additions).
     /// Uses `git diff HEAD` to get the combined staged+unstaged delta from HEAD.
     pub fn diff_shortstat(&self) -> Result<(usize, usize)> {
-        let result = self
-            .git()
-            .args(&["diff", "HEAD", "--shortstat"])
-            .run()?;
+        let result = self.git().args(&["diff", "HEAD", "--shortstat"]).run()?;
 
         fn parse_stat(s: &str) -> (usize, usize) {
             let mut added = 0usize;
@@ -205,7 +202,11 @@ impl GitCommands {
     }
 
     /// Get the list of files changed between two refs (for diff/compare mode).
-    pub fn diff_refs_files(&self, ref_a: &str, ref_b: &str) -> Result<Vec<crate::model::CommitFile>> {
+    pub fn diff_refs_files(
+        &self,
+        ref_a: &str,
+        ref_b: &str,
+    ) -> Result<Vec<crate::model::CommitFile>> {
         let result = self
             .git()
             .args(&["diff", "--name-status", ref_a, ref_b])
@@ -247,10 +248,7 @@ impl GitCommands {
 
     /// Get the staged content of a file.
     pub fn file_content_staged(&self, path: &str) -> Result<String> {
-        let result = self
-            .git()
-            .args(&["show", &format!(":{}", path)])
-            .run()?;
+        let result = self.git().args(&["show", &format!(":{}", path)]).run()?;
         if result.success {
             Ok(result.stdout)
         } else {

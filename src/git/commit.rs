@@ -1,7 +1,10 @@
 use anyhow::Result;
 
 use super::GitCommands;
-use crate::model::{Commit, CommitStatus, commit::{CommitStat, Divergence}};
+use crate::model::{
+    Commit, CommitStatus,
+    commit::{CommitStat, Divergence},
+};
 
 impl GitCommands {
     /// Load commits from all branches (--all) so the graph shows the full topology.
@@ -15,7 +18,11 @@ impl GitCommands {
     }
 
     /// Load commits reachable from any of the given branches.
-    pub fn load_commits_for_branches(&self, branches: &[String], limit: usize) -> Result<Vec<Commit>> {
+    pub fn load_commits_for_branches(
+        &self,
+        branches: &[String],
+        limit: usize,
+    ) -> Result<Vec<Commit>> {
         let format = "%H|%s|%an|%ae|%at|%P|%D";
         let mut cmd = self.git();
         cmd = cmd.arg("log");
@@ -259,9 +266,7 @@ impl GitCommands {
     }
 
     pub fn revert_commit(&self, hash: &str) -> Result<()> {
-        self.git()
-            .args(&["revert", hash])
-            .run_expecting_success()?;
+        self.git().args(&["revert", hash]).run_expecting_success()?;
         Ok(())
     }
 
@@ -334,7 +339,9 @@ fn parse_shortstat(output: &str) -> CommitStat {
     for segment in line.split(',') {
         let segment = segment.trim();
         let num_str: String = segment.chars().take_while(|c| c.is_ascii_digit()).collect();
-        let Ok(n) = num_str.parse::<usize>() else { continue };
+        let Ok(n) = num_str.parse::<usize>() else {
+            continue;
+        };
         if segment.contains("file") {
             stat.files_changed = n;
         } else if segment.contains("insertion") {
