@@ -2,305 +2,340 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.19] - 2026-04-29
+
+### Bug Fixes
+
+- Enter InProgress view immediately on startup when rebase is detected. by @Blankeos
+- Batch entry hydration into single git log invocation. by @Blankeos
+- Improve scroll and viewport visibility handling. by @Blankeos
+- Add reverse toggle panel keybinding for Shift+Tab by @fcmiranda
+
+### Chores
+
+- Added contribution attribs w/ gitcliff. by @Blankeos
+
+### Documentation
+
+- Clarify paths and add legacy state migration. by @Blankeos
+- Added codex command. by @Blankeos
+
+### Features
+
+- Allow creating empty commits when no files present. by @Blankeos
+- Highlight key bindings in confirmation dialog. by @Blankeos
+- Add interactive ✦ AI-generate button to commit message dialog. by @Blankeos
+- Ai commit shortcut (#11) by @fcmiranda in [#11](https://github.com/Blankeos/lazygitrs/pull/11)
+- Load from ~/.config/lazygitrs with lazygit fallback (#6) by @fcmiranda in [#6](https://github.com/Blankeos/lazygitrs/pull/6)
+- Add gutter color styling to diff display. resolves #10 by @Blankeos
+
+
+### New Contributors
+
+- @fcmiranda made their first contribution in [#11](https://github.com/Blankeos/lazygitrs/pull/11)
 ## [0.0.18] - 2026-04-28
 
 ### Bug Fixes
 
-- Always show refs and tags in commit details.
-- 'Status' header in fullview to '1 Status'.
-- Add search highlighting to keybindings dialog.
-- Expand Files tab when Status is focused to fill empty space.
-- Reduce minimum height threshold for portrait layout.
-- Preserve file list order when staging files.
+- Always show refs and tags in commit details. by @Blankeos
+- 'Status' header in fullview to '1 Status'. by @Blankeos
+- Add search highlighting to keybindings dialog. by @Blankeos
+- Expand Files tab when Status is focused to fill empty space. by @Blankeos
+- Reduce minimum height threshold for portrait layout. by @Blankeos
+- Preserve file list order when staging files. by @Blankeos
 
 ### Chores
 
-- Added MIT license.
+- Added MIT license. by @Blankeos
 
 ### Features
 
-- Apply Zed-style file display to all commit file contexts.
-- Show full commit messages in full-view details panel.
-- Open editor at focused hunk when navigating diffs with {}.
-- Add e/o key handlers to diff panel for opening files.
-- Open editor at first changed hunk when pressing 'e' on file.
-- Enable vertical layout for half view mode.
+- Apply Zed-style file display to all commit file contexts. by @Blankeos
+- Show full commit messages in full-view details panel. by @Blankeos
+- Open editor at focused hunk when navigating diffs with {}. by @Blankeos
+- Add e/o key handlers to diff panel for opening files. by @Blankeos
+- Open editor at first changed hunk when pressing 'e' on file. by @Blankeos
+- Enable vertical layout for half view mode. by @Blankeos
 
 ## [0.0.17] - 2026-04-27
 
 ### Bug Fixes
 
-- Enable clipboard paste in cmdk dialogs.
-- Make push/pull shortcuts work globally, including in diff panel
+- Enable clipboard paste in cmdk dialogs. by @Blankeos
+- Make push/pull shortcuts work globally, including in diff panel by @Blankeos
 
 ### Features
 
-- Add quick action to checkout previous branch.
-- Persist commit editor text on Esc and add Clear option.
-- Add copy and open shortcuts to branch commits and reflog.
-- Display files in Zed-style format with filename prominent.
+- Add quick action to checkout previous branch. by @Blankeos
+- Persist commit editor text on Esc and add Clear option. by @Blankeos
+- Add copy and open shortcuts to branch commits and reflog. by @Blankeos
+- Display files in Zed-style format with filename prominent. by @Blankeos
 
 ## [0.0.16] - 2026-04-27
 
 ### Bug Fixes
 
-- Handle shift+enter to insert newlines in body.
-- Textarea wrapping and terminal state on resize/panic.
+- Handle shift+enter to insert newlines in body. by @Blankeos
+- Textarea wrapping and terminal state on resize/panic. by @Blankeos
 
 ### Features
 
-- Add visual-line aware keyboard shortcuts for soft-wrapped text.
-- Add repo URL and contributors to status view.
-- Implement soft-wrapping for commit body input.
-- Enable instant text pasting in inputs.
-- Add branch name copy option in branches view.
+- Add visual-line aware keyboard shortcuts for soft-wrapped text. by @Blankeos
+- Add repo URL and contributors to status view. by @Blankeos
+- Implement soft-wrapping for commit body input. by @Blankeos
+- Enable instant text pasting in inputs. by @Blankeos
+- Add branch name copy option in branches view. by @Blankeos
 
 ## [0.0.15] - 2026-04-22
 
 ### Bug Fixes
 
-- Made the commit panel visibility by (.) save to state.
+- Made the commit panel visibility by (.) save to state. by @Blankeos
 
 ## [0.0.14] - 2026-04-22
 
 ### Bug Fixes
 
-- Decode porcelain-quoted paths from git status.
+- Decode porcelain-quoted paths from git status. by @Blankeos
 
 ### Chores
 
-- Allow-dirty for custom release.yml
-- Added git cliff for changelogs.
+- Allow-dirty for custom release.yml by @Blankeos
+- Added git cliff for changelogs. by @Blankeos
 
 ### Documentation
 
-- Updated readme.
+- Updated readme. by @Blankeos
 
 ### Features
 
-- Add configurable refresher with periodic background auto-fetch.
-- Working commit details panel with toggle.
+- Add configurable refresher with periodic background auto-fetch. by @Blankeos
+- Working commit details panel with toggle. by @Blankeos
 
 ## [0.0.13] - 2026-04-09
 
 ### Features
 
-- Add loading state indicators for async menu item actions.
-- Enable drill-down navigation and display current branch.
+- Add loading state indicators for async menu item actions. by @Blankeos
+- Enable drill-down navigation and display current branch. by @Blankeos
 
 ## [0.0.12] - 2026-04-03
 
 ### Bug Fixes
 
-- Enable mouse scroll for list views in split screen mode.
+- Enable mouse scroll for list views in split screen mode. by @Blankeos
 
 ### Documentation
 
-- Added demo pics.
+- Added demo pics. by @Blankeos
 
 ### Features
 
-- Preserve manual viewport scrolling when selection changes.
-- Better sub-view click behavior.
-- Diff_mode async mode performance improvements.
+- Preserve manual viewport scrolling when selection changes. by @Blankeos
+- Better sub-view click behavior. by @Blankeos
+- Diff_mode async mode performance improvements. by @Blankeos
 
 ### Refactor
 
-- Extract scroll logic and improve viewport scrolling.
+- Extract scroll logic and improve viewport scrolling. by @Blankeos
 
 ## [0.0.11] - 2026-04-01
 
 ### Bug Fixes
 
-- Ensure minimum padding in status sidebar when changes are displayed.
+- Ensure minimum padding in status sidebar when changes are displayed. by @Blankeos
 
 ### Documentation
 
-- Finished todo notes.
+- Finished todo notes. by @Blankeos
 
 ### Features
 
-- Add click support for popups and refactor scroll offset management.
+- Add click support for popups and refactor scroll offset management. by @Blankeos
 
 ## [0.0.10] - 2026-04-01
 
 ### Bug Fixes
 
-- Adjust color theme picker dimensions for better layout.
+- Adjust color theme picker dimensions for better layout. by @Blankeos
 
 ### Chores
 
-- Install script for linux.
-- Better tag and release.
-- Cargo lock.
+- Install script for linux. by @Blankeos
+- Better tag and release. by @Blankeos
+- Cargo lock. by @Blankeos
 
 ### Documentation
 
-- Updated todos.
-- Sample todos change.
-- Themes!
+- Updated todos. by @Blankeos
+- Sample todos change. by @Blankeos
+- Themes! by @Blankeos
 
 ### Features
 
-- Batch file staging and improve untracked file diffs.
-- Better indentation + allow discarding all changes in a directory from tree view.
-- HUGE PERF IMPROVEMENT  parse diffs on background threads with loading indicator.
-- Add version in status.
-- Add XDG_STATE_HOME support for state directory separation.
-- Add 30+ built-in themes and JSON-based custom theme support.
-- Add 13 built-in color themes with theme picker.
-- Add mouse support for combobox and prioritize current branch.
-- Remove redundant root node with single child.
-- Compress single-child directory chains into combined paths.
+- Batch file staging and improve untracked file diffs. by @Blankeos
+- Better indentation + allow discarding all changes in a directory from tree view. by @Blankeos
+- HUGE PERF IMPROVEMENT  parse diffs on background threads with loading indicator. by @Blankeos
+- Add version in status. by @Blankeos
+- Add XDG_STATE_HOME support for state directory separation. by @Blankeos
+- Add 30+ built-in themes and JSON-based custom theme support. by @Blankeos
+- Add 13 built-in color themes with theme picker. by @Blankeos
+- Add mouse support for combobox and prioritize current branch. by @Blankeos
+- Remove redundant root node with single child. by @Blankeos
+- Compress single-child directory chains into combined paths. by @Blankeos
 
 ### Refactor
 
-- Add state_dir and use it for state files.
-- Consolidate list picker logic with shared ListPickerCore.
+- Add state_dir and use it for state files. by @Blankeos
+- Consolidate list picker logic with shared ListPickerCore. by @Blankeos
 
 ## [0.0.9] - 2026-03-28
 
 ### Bug Fixes
 
-- Correct body textarea height calculation to account for padding.
+- Correct body textarea height calculation to account for padding. by @Blankeos
 
 ### Features
 
-- Add two-field commit message editor with summary and body.
-- Multi-commit cherry-picking with range selection
-- Audited help.
+- Add two-field commit message editor with summary and body. by @Blankeos
+- Multi-commit cherry-picking with range selection by @Blankeos
+- Audited help. by @Blankeos
 
 ## [0.0.8] - 2026-03-27
 
 ### Chores
 
-- Fix readme.
+- Fix readme. by @Blankeos
 
 ### Documentation
 
-- Readme fixes.
+- Readme fixes. by @Blankeos
 
 ### Features
 
-- Support editing in multi-file diffs.
-- Emit config commands in the command log.
-- Add column number support to edit-at-line.
+- Support editing in multi-file diffs. by @Blankeos
+- Emit config commands in the command log. by @Blankeos
+- Add column number support to edit-at-line. by @Blankeos
 
 ## [0.0.6] - 2026-03-26
 
 ### Bug Fixes
 
-- Tui-textarea for `?` help dialog.
-- Preserve scroll position during file reload
+- Tui-textarea for `?` help dialog. by @Blankeos
+- Preserve scroll position during file reload by @Blankeos
 
 ### Chores
 
-- Todos done.
-- Updated todos.
-- Todos and stuff.
+- Todos done. by @Blankeos
+- Updated todos. by @Blankeos
+- Todos and stuff. by @Blankeos
 
 ### Documentation
 
-- Sync readme.
-- More stuff in readme.
+- Sync readme. by @Blankeos
+- More stuff in readme. by @Blankeos
 
 ### Features
 
-- Better commit experience, better help aesthetics.
-- Working interactive rebase. (with some rough edges).
-- Add search functionality to diff view.
-- Ref options now work.
-- Add MessageKind enum and refactor message popups
-- Add remote operation indicator on head branch
-- Shift + scroll up/down to horizontally scroll.
-- Horizontal scroll w/ mouse on the diff viewer.
+- Better commit experience, better help aesthetics. by @Blankeos
+- Working interactive rebase. (with some rough edges). by @Blankeos
+- Add search functionality to diff view. by @Blankeos
+- Ref options now work. by @Blankeos
+- Add MessageKind enum and refactor message popups by @Blankeos
+- Add remote operation indicator on head branch by @Blankeos
+- Shift + scroll up/down to horizontally scroll. by @Blankeos
+- Horizontal scroll w/ mouse on the diff viewer. by @Blankeos
 
 ### Refactor
 
-- Cleaner-looking files.
+- Cleaner-looking files. by @Blankeos
 
 ## [0.0.5] - 2026-03-25
 
 ### Bug Fixes
 
-- Discard doesn't work.
+- Discard doesn't work. by @Blankeos
 
 ## [0.0.4] - 2026-03-25
 
 ### Bug Fixes
 
-- Delete diff count taking space.
-- Properly do strikethroughs.
+- Delete diff count taking space. by @Blankeos
+- Properly do strikethroughs. by @Blankeos
 
 ### Fi
 
-- Select highlights.
+- Select highlights. by @Blankeos
 
 ## [0.0.3] - 2026-03-25
 
 ### Documentation
 
-- Added working startup benchmarks w/ hyperfine.
+- Added working startup benchmarks w/ hyperfine. by @Blankeos
 
 ## [0.0.2] - 2026-03-25
 
 ### Chores
 
-- Just tag and release tweaks.
+- Just tag and release tweaks. by @Blankeos
 
 ### Documentation
 
-- Synced readme.
+- Synced readme. by @Blankeos
 
 ## [0.0.1] - 2026-03-25
 
 ### Bug Fixes
 
-- Popup space taking and colors.
-- Diff generation for merge commits and stashes
+- Popup space taking and colors. by @Blankeos
+- Diff generation for merge commits and stashes by @Blankeos
 
 ### Chores
 
-- License to mit.
-- Ready for release.
-- Added logo in -- --help
+- License to mit. by @Blankeos
+- Ready for release. by @Blankeos
+- Added logo in -- --help by @Blankeos
 
 ### Documentation
 
-- Add project TODO tracking file
-- Better docs!
-- Updated plan.
-- Readme stuff.
+- Add project TODO tracking file by @Blankeos
+- Better docs! by @Blankeos
+- Updated plan. by @Blankeos
+- Readme stuff. by @Blankeos
 
 ### Features
 
-- Add simple Message popup variant for informational alerts
-- Add clipboard and browser menu shortcuts to branches help
-- Added reflog.
-- Preserve side-by-side view mode across reloads
-- Add mouse text selection to diff view with copy support
-- Add interactive help popup with searchable keybindings
-- Add multi-file diff support with per-file syntax highlighting
-- Add branch commits view navigation
-- Add stash file viewing with Enter key
-- Add commit file viewer for browsing files changed in a commit
-- Distinguish HEAD commit with solid circle in graph
-- Phase 5 (graphy graph).
-- Graph and --all.
-- Add keyboard enhancement flags and improve key handling
-- Add search textarea, fix popup keybindings, and rename project
-- Add interactive diff navigation and polish README
-- Slash fills on side by side diffs.
-- Add file tree view with collapsible directories
-- Optimizations in commit list item scroll.
-- Some enhancements to make it look better.
-- Phase 3.
-- Phase 2.
-- Phase 1.
-- Initial plan and analysis.
+- Add simple Message popup variant for informational alerts by @Blankeos
+- Add clipboard and browser menu shortcuts to branches help by @Blankeos
+- Added reflog. by @Blankeos
+- Preserve side-by-side view mode across reloads by @Blankeos
+- Add mouse text selection to diff view with copy support by @Blankeos
+- Add interactive help popup with searchable keybindings by @Blankeos
+- Add multi-file diff support with per-file syntax highlighting by @Blankeos
+- Add branch commits view navigation by @Blankeos
+- Add stash file viewing with Enter key by @Blankeos
+- Add commit file viewer for browsing files changed in a commit by @Blankeos
+- Distinguish HEAD commit with solid circle in graph by @Blankeos
+- Phase 5 (graphy graph). by @Blankeos
+- Graph and --all. by @Blankeos
+- Add keyboard enhancement flags and improve key handling by @Blankeos
+- Add search textarea, fix popup keybindings, and rename project by @Blankeos
+- Add interactive diff navigation and polish README by @Blankeos
+- Slash fills on side by side diffs. by @Blankeos
+- Add file tree view with collapsible directories by @Blankeos
+- Optimizations in commit list item scroll. by @Blankeos
+- Some enhancements to make it look better. by @Blankeos
+- Phase 3. by @Blankeos
+- Phase 2. by @Blankeos
+- Phase 1. by @Blankeos
+- Initial plan and analysis. by @Blankeos
 
 ### Refactor
 
-- Copy to clipboard menu helperentries.
+- Copy to clipboard menu helperentries. by @Blankeos
 
+
+### New Contributors
+
+- @Blankeos made their first contribution
 
