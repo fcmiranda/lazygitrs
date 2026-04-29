@@ -163,8 +163,11 @@ fn handle_planning_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
 // ── InProgress phase ────────────────────────────────────────────────────
 
 fn handle_in_progress_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
-    // q or Esc: close the rebase view (doesn't abort — rebase stays in progress)
+    // q or Esc: close the rebase view (doesn't abort — rebase stays in progress).
+    // Mark the view as dismissed so the periodic auto-refresh does not re-open
+    // it. The rebase-options-menu key still re-opens it explicitly.
     if key.code == KeyCode::Char('q') || key.code == KeyCode::Esc {
+        gui.rebase_mode.in_progress_dismissed = true;
         gui.rebase_mode.exit();
         return Ok(());
     }

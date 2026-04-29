@@ -287,12 +287,9 @@ impl GitCommands {
 
         let onto_short = onto_hash[..7.min(onto_hash.len())].to_string();
 
-        // Read onto message
-        let onto_message = if !onto_hash.is_empty() {
-            self.commit_subject(&onto_hash).unwrap_or_default()
-        } else {
-            String::new()
-        };
+        // onto_message is left empty here; callers should invoke `hydrate_progress`
+        // to fill it together with todo entries in a single batched `git log` call.
+        let onto_message = String::new();
 
         // Parse "done" file — already-processed entries
         let done_entries = std::fs::read_to_string(rebase_dir.join("done"))
@@ -323,26 +320,35 @@ impl GitCommands {
         })
     }
 
-    /// Hydrate todo entries with author name, timestamp, and full subject
-    /// from `git log`. Entries whose hash can't be resolved are left as-is.
-    pub fn hydrate_todo_entries(&self, entries: &mut [TodoEntry]) {
-        if entries.is_empty() {
+    /// Hydrate every part of a `RebaseProgress` (done entries, todo entries,
+    /// and onto-commit subject) using a single batched `git log` invocation.
+    /// Each `git` subprocess spawn dominates the latency on entry to the
+    /// InProgress view, so we coalesce what would otherwise be three calls.
+    pub fn hydrate_progress(&self, progress: &mut RebaseProgress) {
+        let need_onto = progress.onto_message.is_empty() && !progress.onto_hash.is_empty();
+        if progress.done_entries.is_empty()
+            && progress.todo_entries.is_empty()
+            && !need_onto
+        {
             return;
         }
-        // Batch query: git log with all hashes
-        let hashes: Vec<&str> = entries.iter().map(|e| e.hash.as_str()).collect();
-        // Use --no-walk so we get exactly the commits we asked for
+
         let mut cmd = self.git();
         cmd = cmd.arg("log").arg("--no-walk").arg("--format=%H|%s|%an|%at");
-        for h in &hashes {
-            cmd = cmd.arg(*h);
+        for e in &progress.done_entries {
+            cmd = cmd.arg(&e.hash);
+        }
+        for e in &progress.todo_entries {
+            cmd = cmd.arg(&e.hash);
+        }
+        if need_onto {
+            cmd = cmd.arg(&progress.onto_hash);
         }
         let result = match cmd.run() {
             Ok(r) if r.success => r,
             _ => return,
         };
 
-        // Build a lookup map: full_hash -> (subject, author, timestamp)
         let mut info: std::collections::HashMap<String, (String, String, i64)> =
             std::collections::HashMap::new();
         for line in result.stdout.lines() {
@@ -356,15 +362,24 @@ impl GitCommands {
             }
         }
 
-        for entry in entries.iter_mut() {
+        let apply = |entry: &mut TodoEntry, info: &std::collections::HashMap<String, (String, String, i64)>| {
             if let Some((subject, author, ts)) = info.get(&entry.hash) {
-                // Prefer the full subject from git log over the abbreviated one
-                // in the todo file (todo file may truncate long messages).
                 if !subject.is_empty() {
                     entry.message = subject.clone();
                 }
                 entry.author_name = author.clone();
                 entry.unix_timestamp = *ts;
+            }
+        };
+        for e in progress.done_entries.iter_mut() {
+            apply(e, &info);
+        }
+        for e in progress.todo_entries.iter_mut() {
+            apply(e, &info);
+        }
+        if need_onto {
+            if let Some((subject, _, _)) = info.get(&progress.onto_hash) {
+                progress.onto_message = subject.clone();
             }
         }
     }

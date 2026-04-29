@@ -1654,8 +1654,8 @@ impl Gui {
             if is_rebasing {
                 if !self.rebase_mode.active {
                     if let Some(mut progress) = self.git.parse_rebase_progress() {
-                        self.git.hydrate_todo_entries(&mut progress.done_entries);
-                        self.git.hydrate_todo_entries(&mut progress.todo_entries);
+                        self.git.hydrate_progress(&mut progress);
+                        self.rebase_mode.in_progress_dismissed = false;
                         self.rebase_mode.enter_in_progress(&progress);
                     }
                 }
@@ -4965,12 +4965,12 @@ impl Gui {
         drop(model);
 
         // Auto-enter rebase InProgress mode when a rebase is detected on disk
-        // and we're not already in rebase mode.
-        if is_rebasing && !self.rebase_mode.active {
+        // and we're not already in rebase mode. Skip if the user dismissed the
+        // view with `q` — they can re-open it explicitly via the rebase
+        // options menu key.
+        if is_rebasing && !self.rebase_mode.active && !self.rebase_mode.in_progress_dismissed {
             if let Some(mut progress) = self.git.parse_rebase_progress() {
-                // Hydrate entries with author/timestamp from git log
-                self.git.hydrate_todo_entries(&mut progress.done_entries);
-                self.git.hydrate_todo_entries(&mut progress.todo_entries);
+                self.git.hydrate_progress(&mut progress);
                 self.rebase_mode.enter_in_progress(&progress);
             }
         }
@@ -4992,6 +4992,11 @@ impl Gui {
                     kind: crate::gui::popup::MessageKind::Info,
                 };
             }
+        }
+        // Clear the dismissal flag once no rebase is in progress, so the next
+        // rebase (or new conflict) can auto-open the InProgress view again.
+        if !is_rebasing && self.rebase_mode.in_progress_dismissed {
+            self.rebase_mode.in_progress_dismissed = false;
         }
 
         Ok(())

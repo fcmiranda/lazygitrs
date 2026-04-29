@@ -60,6 +60,12 @@ pub struct RebaseModeState {
     // Progress counters for InProgress phase
     pub done_count: usize,
     pub total_count: usize,
+    /// Set when the user dismisses the InProgress view with `q`/Esc. While
+    /// true, the periodic auto-refresh will not re-open the view; the user can
+    /// still re-open it explicitly via the rebase-options-menu key. Cleared
+    /// when the rebase finishes (or is aborted) so the next conflict pops it
+    /// open again.
+    pub in_progress_dismissed: bool,
 }
 
 impl RebaseModeState {
@@ -77,6 +83,7 @@ impl RebaseModeState {
             visible_height: 0,
             done_count: 0,
             total_count: 0,
+            in_progress_dismissed: false,
         }
     }
 
