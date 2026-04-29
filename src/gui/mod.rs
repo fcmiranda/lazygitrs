@@ -415,6 +415,7 @@ impl Gui {
             // Drain any model parts that have arrived from the background load.
             if let Some(rx) = &self.initial_load_rx {
                 let mut got_files = false;
+                let mut got_rebase_in_progress = false;
                 while let Ok(part) = rx.try_recv() {
                     let mut model = self.model.lock().unwrap();
                     match part {
@@ -439,11 +440,25 @@ impl Gui {
                             model.is_cherry_picking = is_cherry_picking;
                             model.is_bisecting = is_bisecting;
                             model.rebase_onto_hash = rebase_onto_hash;
+                            if is_rebasing { got_rebase_in_progress = true; }
                         }
                         ModelPart::RepoUrl(url) => model.repo_url = url,
                         ModelPart::Contributors(c) => model.contributors = c,
                     }
                     self.initial_load_received += 1;
+                }
+                // Enter the InProgress rebase view as soon as we know a rebase
+                // is on disk — don't wait for a future `refresh()` tick (focus
+                // event / auto-refresh interval), which is what made the view
+                // pop in ~0.8s after the default screen appeared on startup.
+                if got_rebase_in_progress
+                    && !self.rebase_mode.active
+                    && !self.rebase_mode.in_progress_dismissed
+                {
+                    if let Some(mut progress) = self.git.parse_rebase_progress() {
+                        self.git.hydrate_progress(&mut progress);
+                        self.rebase_mode.enter_in_progress(&progress);
+                    }
                 }
                 // Rebuild file tree if files arrived this frame.
                 if got_files && self.show_file_tree {
