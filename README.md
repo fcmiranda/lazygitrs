@@ -36,7 +36,7 @@ lazygitrs
   git:
     commit:
       # Using claude
-      generateCommand: "claude -p 'Generate a conventional commit message for this diff.' --no-session-persistence "
+      generateCommand: "claude -p 'Generate a conventional commit message for this diff.' --no-session-persistence"
       # Using opencode
       generateCommand: "opencode run 'Generate a conventional commit message for this diff.'"
       # Using codex
