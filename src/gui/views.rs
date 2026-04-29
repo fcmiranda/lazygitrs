@@ -1712,7 +1712,7 @@ pub fn render_popup(frame: &mut Frame, popup: &PopupState, area: Rect, spinner_f
                     }
                 })
                 .collect();
-            let confirm_height = (wrapped.len() as u16) + 5; // border*2 + blank line + blank line + [y]es/[n]o
+            let confirm_height = (wrapped.len() as u16) + 5; // border*2 + blank line + blank line + y yes / n no
             let cy = (area.height.saturating_sub(confirm_height)) / 2;
             let popup_rect = Rect::new(x, cy, popup_width, confirm_height);
             frame.render_widget(Clear, popup_rect);
@@ -1727,10 +1727,14 @@ pub fn render_popup(frame: &mut Frame, popup: &PopupState, area: Rect, spinner_f
                 text.push(Line::from(format!(" {}", line)));
             }
             text.push(Line::from(""));
-            text.push(Line::from(Span::styled(
-                " [y]es / [n]o",
-                Style::default().fg(theme.accent_secondary),
-            )));
+            let key_style = Style::default().fg(theme.accent_secondary);
+            let desc_style = Style::default().fg(theme.text_dimmed);
+            text.push(Line::from(vec![
+                Span::styled(" y", key_style),
+                Span::styled(": yes  ", desc_style),
+                Span::styled("n", key_style),
+                Span::styled(": no", desc_style),
+            ]));
 
             let widget = Paragraph::new(text).block(block);
             frame.render_widget(widget, popup_rect);
