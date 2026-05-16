@@ -48,6 +48,10 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) 
         return paste_commits(gui);
     }
 
+    if matches_key(key, &keybindings.commits.reset_cherry_pick) {
+        return reset_cherry_pick(gui);
+    }
+
     if matches_key(key, &keybindings.commits.squash_above_commits) {
         return squash_above_commits_menu(gui);
     }
@@ -275,6 +279,16 @@ fn cherry_pick_copy(gui: &mut Gui) -> Result<()> {
             if added == 1 { "" } else { "s" },
             n,
         ),
+        kind: crate::gui::popup::MessageKind::Info,
+    };
+    Ok(())
+}
+
+fn reset_cherry_pick(gui: &mut Gui) -> Result<()> {
+    gui.cherry_pick_clipboard.clear();
+    gui.popup = PopupState::Message {
+        title: "Cherry-pick".to_string(),
+        message: "Cherry-pick clipboard cleared.".to_string(),
         kind: crate::gui::popup::MessageKind::Info,
     };
     Ok(())
