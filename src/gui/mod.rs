@@ -3540,7 +3540,7 @@ impl Gui {
                 HelpEntry { key: "n/N".into(), description: "Next / previous search match".into() },
                 HelpEntry { key: kb.universal.stage_block.clone(), description: "Stage selected block (Files)".into() },
                 HelpEntry { key: kb.universal.revert_block.clone(), description: "Revert selected block (Files)".into() },
-                HelpEntry { key: "click ".into(), description: "Select block marker, then use a/r".into() },
+                HelpEntry { key: "click │".into(), description: "Select block marker, then use a/r".into() },
                 HelpEntry {
                     key: "u".into(),
                     description: if self.diff_view.hunk_action_undo_stack.is_empty() {

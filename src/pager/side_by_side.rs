@@ -253,7 +253,7 @@ pub struct HunkMarkerStyle {
 impl HunkMarkerStyle {
     pub fn from_config(config: &HunkMarkerConfig) -> Self {
         let icon = if config.icon.is_empty() {
-            "".to_string()
+            "│".to_string()
         } else {
             config.icon.clone()
         };
@@ -1076,6 +1076,7 @@ pub fn render_diff(
     } else {
         theme.inactive_border
     };
+    let default_marker_color = border_style.fg.unwrap_or(theme.separator);
 
     if state.is_empty() {
         let msg = if diff_loading {
@@ -1468,15 +1469,15 @@ pub fn render_diff(
                         let fg = if marker_is_hovered {
                             marker_cfg.hover_color.unwrap_or(theme.accent_secondary)
                         } else if is_selected {
-                            marker_cfg.selected_color.unwrap_or(theme.accent)
+                            marker_cfg.selected_color.unwrap_or(default_marker_color)
                         } else {
-                            marker_cfg.color.unwrap_or(theme.separator)
+                            marker_cfg.color.unwrap_or(default_marker_color)
                         };
                         let mut style = Style::default().fg(fg);
                         if marker_cfg.bold {
                             style = style.add_modifier(Modifier::BOLD);
                         }
-                        let chars = if is_selected { "󱐌" } else { marker_cfg.icon.as_str() };
+                        let chars = if is_selected { "" } else { marker_cfg.icon.as_str() };
                         (chars, style)
                     } else {
                         ("│", divider_style)
@@ -1579,15 +1580,15 @@ pub fn render_diff(
                     let fg = if marker_is_hovered {
                         marker_cfg.hover_color.unwrap_or(theme.accent_secondary)
                     } else if is_selected {
-                        marker_cfg.selected_color.unwrap_or(theme.accent)
+                        marker_cfg.selected_color.unwrap_or(default_marker_color)
                     } else {
-                        marker_cfg.color.unwrap_or(theme.separator)
+                        marker_cfg.color.unwrap_or(default_marker_color)
                     };
                     let mut style = Style::default().fg(fg);
                     if marker_cfg.bold {
                         style = style.add_modifier(Modifier::BOLD);
                     }
-                    let chars = if is_selected { "󱐌" } else { marker_cfg.icon.as_str() };
+                    let chars = if is_selected { "" } else { marker_cfg.icon.as_str() };
                     (chars, style)
                 } else {
                     ("│", divider_style)

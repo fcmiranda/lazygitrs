@@ -129,8 +129,8 @@ pub struct HunkMarkerConfig {
 impl Default for HunkMarkerConfig {
     fn default() -> Self {
         Self {
-            icon: "".to_string(),
-            bold: None,
+            icon: "│".to_string(),
+            bold: Some(true),
             color: None,
             selected_color: None,
             hover_color: None,
