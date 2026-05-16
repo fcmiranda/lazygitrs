@@ -2005,20 +2005,6 @@ impl Gui {
             return Ok(());
         }
 
-        if matches_key(key, &keybindings.universal.next_revert_block) {
-            if self.context_mgr.active() == ContextId::Files && self.diff_view.hunk_mode {
-                self.diff_view.select_next_hunk();
-                self.center_selected_hunk();
-            }
-            return Ok(());
-        }
-        if matches_key(key, &keybindings.universal.prev_revert_block) {
-            if self.context_mgr.active() == ContextId::Files && self.diff_view.hunk_mode {
-                self.diff_view.select_prev_hunk();
-                self.center_selected_hunk();
-            }
-            return Ok(());
-        }
         if matches_key(key, &keybindings.universal.stage_block) {
             if self.context_mgr.active() == ContextId::Files {
                 let hunk_idx = self.diff_view.selected_hunk.or(self.diff_view.hovered_hunk);
