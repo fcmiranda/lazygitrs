@@ -5,7 +5,7 @@ use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Paragraph};
 
-use crate::config::Theme;
+use crate::config::{RevertHunkMarkerConfig, Theme, parse_optional_color};
 
 use super::highlight::FileHighlighter;
 use super::{ChangeType, DiffLine, InlineSegment};
@@ -224,6 +224,32 @@ pub struct RevertUndoEntry {
     pub pre_revert_bytes: Vec<u8>,
 }
 
+#[derive(Clone, Debug)]
+pub struct RevertHunkMarkerStyle {
+    pub icon: String,
+    pub bold: bool,
+    pub color: Option<Color>,
+    pub selected_color: Option<Color>,
+    pub hover_color: Option<Color>,
+}
+
+impl RevertHunkMarkerStyle {
+    pub fn from_config(config: &RevertHunkMarkerConfig) -> Self {
+        let icon = if config.icon.is_empty() {
+            "󰧛".to_string()
+        } else {
+            config.icon.clone()
+        };
+        Self {
+            icon,
+            bold: config.bold.unwrap_or(true),
+            color: parse_optional_color(config.color.as_deref()),
+            selected_color: parse_optional_color(config.selected_color.as_deref()),
+            hover_color: parse_optional_color(config.hover_color.as_deref()),
+        }
+    }
+}
+
 /// Maximum entries kept in the revert-hunk undo stack.
 pub const REVERT_UNDO_STACK_CAP: usize = 20;
 
@@ -274,6 +300,8 @@ pub struct DiffViewState {
     /// `n/m` denominator in the bottom-right footnote; resets to 0 once the
     /// stack drains so a fresh streak starts at `1/1`.
     pub revert_undo_high_water: usize,
+    pub preferred_revert_hunk_line: Option<usize>,
+    pub center_selected_revert_hunk_on_refresh: bool,
 }
 
 impl Default for DiffViewState {
@@ -302,6 +330,8 @@ impl Default for DiffViewState {
             hovered_revert_hunk: None,
             revert_undo_stack: Vec::new(),
             revert_undo_high_water: 0,
+            preferred_revert_hunk_line: None,
+            center_selected_revert_hunk_on_refresh: false,
         }
     }
 }
@@ -314,14 +344,15 @@ impl DiffViewState {
         }
     }
 
-    /// Reset to a fresh state while keeping user preferences (`wrap`) that
-    /// should survive file/commit navigation. Without this, every reassignment
-    /// of `diff_view = DiffViewState::new()` would clobber the wrap setting
-    /// loaded from `state.yml`.
+    /// Reset diff content but preserve user-controlled preferences (wrap mode,
+    /// side-view selection). Used when navigating to a new file so that the
+    /// user's layout choices survive across selections.
     pub fn reset_keep_prefs(&mut self) {
         let wrap = self.wrap;
+        let side_view = self.side_view.clone();
         *self = Self::new();
         self.wrap = wrap;
+        self.side_view = side_view;
     }
 
     /// Get the actual file line number for a DiffLine, applying hunk offsets.
@@ -592,10 +623,19 @@ impl DiffViewState {
         self.sections = parsed.sections;
         self.file_exists_on_disk = parsed.file_exists_on_disk;
         self.selected_revert_hunk = if same_file {
-            prev_selected_revert_hunk.filter(|&i| i < self.hunk_starts.len())
+            if let Some(anchor_line) = self.preferred_revert_hunk_line {
+                self.hunk_starts
+                    .iter()
+                    .enumerate()
+                    .min_by_key(|(_, line_idx)| (**line_idx).abs_diff(anchor_line))
+                    .map(|(idx, _)| idx)
+            } else {
+                prev_selected_revert_hunk.filter(|&i| i < self.hunk_starts.len())
+            }
         } else {
             None
         };
+        self.preferred_revert_hunk_line = None;
         self.hovered_revert_hunk = if same_file {
             prev_hovered_revert_hunk.filter(|&i| i < self.hunk_starts.len())
         } else {
@@ -807,6 +847,7 @@ impl DiffViewState {
     pub fn next_hunk(&mut self) {
         if let Some(next) = self.hunk_starts.iter().find(|&&h| h > self.scroll_offset) {
             self.scroll_offset = *next;
+            self.selected_revert_hunk = self.hunk_index_for_start_line(*next);
         }
     }
 
@@ -818,6 +859,7 @@ impl DiffViewState {
             .find(|&&h| h < self.scroll_offset)
         {
             self.scroll_offset = *prev;
+            self.selected_revert_hunk = self.hunk_index_for_start_line(*prev);
         }
     }
 
@@ -825,45 +867,18 @@ impl DiffViewState {
         self.lines.is_empty()
     }
 
-    /// Map a terminal row within the diff panel inner area to `(line_idx, chunk_idx)`.
-    /// `chunk_idx` is the wrapped-chunk position within the line (0 = first visual
-    /// row). Always 0 when wrapping is off.
-    pub fn line_chunk_at_row(
-        &self,
-        row: u16,
-        layout: &DiffPanelLayout,
-    ) -> Option<(usize, usize)> {
+    /// Map a terminal row within the diff panel inner area to the visible diff line index.
+    /// This is exact when wrapping is disabled.
+    pub fn line_index_at_row(&self, row: u16, layout: &DiffPanelLayout) -> Option<usize> {
         if row < layout.inner_y || row >= layout.inner_end_y {
             return None;
         }
-        let target_off = (row - layout.inner_y) as usize;
-
-        if !self.wrap {
-            let idx = self.scroll_offset + target_off;
-            return if idx < self.lines.len() {
-                Some((idx, 0))
-            } else {
-                None
-            };
+        let idx = self.scroll_offset + (row - layout.inner_y) as usize;
+        if idx < self.lines.len() {
+            Some(idx)
+        } else {
+            None
         }
-
-        let panel_width = layout
-            .old_content_end_x
-            .saturating_sub(layout.old_content_x) as usize;
-        let right_content_width = layout
-            .new_content_end_x
-            .saturating_sub(layout.new_content_x) as usize;
-
-        let mut acc = 0usize;
-        for (offset, diff_line) in self.lines[self.scroll_offset..].iter().enumerate() {
-            let line_idx = self.scroll_offset + offset;
-            let num_rows = line_visual_height(diff_line, panel_width, right_content_width);
-            if target_off < acc + num_rows {
-                return Some((line_idx, target_off - acc));
-            }
-            acc += num_rows;
-        }
-        None
     }
 
     /// Return true when the given line index is the first line of a diff hunk.
@@ -922,6 +937,43 @@ impl DiffViewState {
         Some((old_range, new_range))
     }
 
+    /// Return the inclusive visual line range for a revertable hunk in the diff buffer.
+    pub fn visual_block_line_span(&self, block_idx: usize) -> Option<(usize, usize)> {
+        let start = *self.hunk_starts.get(block_idx)?;
+        let mut end = start;
+        while end < self.lines.len() && !matches!(self.lines[end].change_type, ChangeType::Equal) {
+            end += 1;
+        }
+        Some((start, end.saturating_sub(1)))
+    }
+
+    /// Return the line index where the sticky revert marker should render for this hunk,
+    /// or `None` when no part of the hunk is visible in the current viewport.
+    pub fn sticky_revert_marker_line(
+        &self,
+        block_idx: usize,
+        visible_height: usize,
+    ) -> Option<usize> {
+        if visible_height == 0 {
+            return None;
+        }
+        let (start, end) = self.visual_block_line_span(block_idx)?;
+        let view_start = self.scroll_offset;
+        let view_end = self
+            .scroll_offset
+            .saturating_add(visible_height)
+            .saturating_sub(1);
+        if end < view_start || start > view_end {
+            return None;
+        }
+
+        let visible_start = start.max(view_start);
+        let visible_end = end.min(view_end);
+        let block_mid = start + (end.saturating_sub(start) / 2);
+
+        Some(block_mid.clamp(visible_start, visible_end))
+    }
+
     /// Find the `@@` hunk that owns the DiffLine at `line_idx` and return
     /// its (old, new) content→file line-number offsets. Returns (0, 0) when
     /// no hunk metadata is available (e.g. the `load(...)` raw-content path,
@@ -938,45 +990,44 @@ impl DiffViewState {
         offsets
     }
 
-    /// Jump to the next hunk and select it as the revert target. Always
-    /// scrolls to the hunk's start line — same motion as `next_hunk` —
-    /// even if it's already in the viewport. Wraps to the first hunk
-    /// after the last.
-    pub fn cycle_next_revert_hunk(&mut self) {
+    /// Cycle to the next revertable hunk marker.
+    pub fn select_next_revert_hunk(&mut self) {
         if self.hunk_starts.is_empty() {
             self.selected_revert_hunk = None;
             return;
         }
         let next = match self.selected_revert_hunk {
             Some(i) => (i + 1) % self.hunk_starts.len(),
-            None => self
-                .hunk_starts
-                .iter()
-                .position(|&h| h > self.scroll_offset)
-                .unwrap_or(0),
+            None => 0,
         };
         self.selected_revert_hunk = Some(next);
-        self.scroll_offset = self.hunk_starts[next];
     }
 
-    /// Jump to the previous hunk and select it as the revert target.
-    /// Wraps to the last hunk before the first.
-    pub fn cycle_prev_revert_hunk(&mut self) {
+    /// Cycle to the previous revertable hunk marker.
+    pub fn select_prev_revert_hunk(&mut self) {
         if self.hunk_starts.is_empty() {
             self.selected_revert_hunk = None;
             return;
         }
         let prev = match self.selected_revert_hunk {
-            Some(0) => self.hunk_starts.len() - 1,
-            Some(i) => i - 1,
-            None => self
-                .hunk_starts
-                .iter()
-                .rposition(|&h| h < self.scroll_offset)
-                .unwrap_or(self.hunk_starts.len() - 1),
+            Some(0) | None => self.hunk_starts.len() - 1,
+            Some(i) => i.saturating_sub(1),
         };
         self.selected_revert_hunk = Some(prev);
-        self.scroll_offset = self.hunk_starts[prev];
+    }
+
+    /// Return the sticky revert-marker hunk rendered at `line_idx` for the current viewport.
+    pub fn sticky_revert_hunk_at_line(
+        &self,
+        line_idx: usize,
+        visible_height: usize,
+    ) -> Option<usize> {
+        if self.wrap {
+            return None;
+        }
+        self.hunk_starts.iter().enumerate().find_map(|(idx, _)| {
+            (self.sticky_revert_marker_line(idx, visible_height) == Some(line_idx)).then_some(idx)
+        })
     }
 
     /// Get the highlighters for a given section index.
@@ -997,6 +1048,7 @@ pub fn render_diff(
     area: Rect,
     state: &DiffViewState,
     theme: &Theme,
+    marker_cfg: &RevertHunkMarkerStyle,
     focused: bool,
     diff_loading: bool,
     show_revert_markers: bool,
@@ -1382,14 +1434,12 @@ pub fn render_diff(
                     }
 
                     // Divider or revert marker (first visual row of a hunk only).
-                    let show_marker = show_revert_markers
-                        && chunk_idx == 0
-                        && state.is_hunk_start_line(line_idx);
-                    let marker_hunk_idx = if show_marker {
-                        state.hunk_index_for_start_line(line_idx)
+                    let marker_hunk_idx = if show_revert_markers && !state.wrap && chunk_idx == 0 {
+                        state.sticky_revert_hunk_at_line(line_idx, visible_height)
                     } else {
                         None
                     };
+                    let show_marker = marker_hunk_idx.is_some();
                     let marker_is_hovered = show_marker
                         && marker_hunk_idx.is_some()
                         && marker_hunk_idx == state.hovered_revert_hunk;
@@ -1398,13 +1448,17 @@ pub fn render_diff(
                         // Hover wins over selection so the hover state is always
                         // visible — even on a hunk that's currently selected.
                         let fg = if marker_is_hovered {
-                            theme.accent_secondary
+                            marker_cfg.hover_color.unwrap_or(theme.accent_secondary)
                         } else if is_selected {
-                            theme.accent
+                            marker_cfg.selected_color.unwrap_or(theme.accent)
                         } else {
-                            theme.separator
+                            marker_cfg.color.unwrap_or(theme.separator)
                         };
-                        ("󰧛", Style::default().fg(fg).add_modifier(Modifier::BOLD))
+                        let mut style = Style::default().fg(fg);
+                        if marker_cfg.bold {
+                            style = style.add_modifier(Modifier::BOLD);
+                        }
+                        (marker_cfg.icon.as_str(), style)
                     } else {
                         ("│", divider_style)
                     };
@@ -1492,26 +1546,29 @@ pub fn render_diff(
                 );
 
                 // Divider or revert marker.
-                let show_marker =
-                    show_revert_markers && !state.wrap && state.is_hunk_start_line(line_idx);
-                let marker_hunk_idx = if show_marker {
-                    state.hunk_index_for_start_line(line_idx)
+                let marker_hunk_idx = if show_revert_markers && !state.wrap {
+                    state.sticky_revert_hunk_at_line(line_idx, visible_height)
                 } else {
                     None
                 };
+                let show_marker = marker_hunk_idx.is_some();
                 let marker_is_hovered = show_marker
                     && marker_hunk_idx.is_some()
                     && marker_hunk_idx == state.hovered_revert_hunk;
                 let (divider_char, marker_style) = if show_marker {
                     let is_selected = marker_hunk_idx == state.selected_revert_hunk;
                     let fg = if marker_is_hovered {
-                        theme.accent_secondary
+                        marker_cfg.hover_color.unwrap_or(theme.accent_secondary)
                     } else if is_selected {
-                        theme.accent
+                        marker_cfg.selected_color.unwrap_or(theme.accent)
                     } else {
-                        theme.separator
+                        marker_cfg.color.unwrap_or(theme.separator)
                     };
-                    ("󰧛", Style::default().fg(fg).add_modifier(Modifier::BOLD))
+                    let mut style = Style::default().fg(fg);
+                    if marker_cfg.bold {
+                        style = style.add_modifier(Modifier::BOLD);
+                    }
+                    (marker_cfg.icon.as_str(), style)
                 } else {
                     ("│", divider_style)
                 };
@@ -1725,74 +1782,6 @@ fn unicode_display_width(ch: char) -> usize {
 
 /// Split a list of styled spans into visual rows of at most `width` display columns each.
 /// Used by wrap mode to soft-wrap long diff lines.
-/// Count how many visual rows a single line of `text` would occupy when wrapped
-/// at `width` display columns. Mirrors the row count produced by `wrap_spans`,
-/// without building styled spans.
-fn wrap_row_count(text: &str, width: usize) -> usize {
-    if width == 0 {
-        return 1;
-    }
-    let widths: Vec<usize> = text
-        .chars()
-        .filter_map(|ch| {
-            let w = unicode_display_width(ch);
-            if w > 0 { Some(w) } else { None }
-        })
-        .collect();
-    if widths.is_empty() {
-        return 1;
-    }
-    let mut rows = 0usize;
-    let mut i = 0usize;
-    while i < widths.len() {
-        let mut col_w = 0usize;
-        let mut end = i;
-        while end < widths.len() {
-            let w = widths[end];
-            if col_w + w > width {
-                break;
-            }
-            col_w += w;
-            end += 1;
-        }
-        if end == i {
-            end = i + 1;
-        }
-        i = end;
-        rows += 1;
-    }
-    rows
-}
-
-/// Visual height (in panel rows) of a diff line, matching the renderer's
-/// `num_rows` calculation in side-by-side wrap mode.
-fn line_visual_height(diff_line: &DiffLine, panel_width: usize, right_content_width: usize) -> usize {
-    if diff_line.file_header.is_some() {
-        return 1;
-    }
-    let is_insert = diff_line.change_type == ChangeType::Insert;
-    let is_delete = diff_line.change_type == ChangeType::Delete;
-    let left_rows = if is_insert {
-        0
-    } else {
-        diff_line
-            .old_line
-            .as_ref()
-            .map(|(_, t)| wrap_row_count(t, panel_width))
-            .unwrap_or(1)
-    };
-    let right_rows = if is_delete {
-        0
-    } else {
-        diff_line
-            .new_line
-            .as_ref()
-            .map(|(_, t)| wrap_row_count(t, right_content_width))
-            .unwrap_or(1)
-    };
-    left_rows.max(right_rows).max(1)
-}
-
 fn wrap_spans<'a>(spans: &[Span<'a>], width: usize) -> Vec<Vec<Span<'a>>> {
     if width == 0 {
         return vec![vec![]];
