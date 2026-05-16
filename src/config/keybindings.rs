@@ -118,6 +118,10 @@ pub struct UniversalKeybinding {
     pub revert_block: String,
     #[serde(rename = "undoRevertBlock")]
     pub undo_revert_block: String,
+    #[serde(rename = "enterHunkMode")]
+    pub enter_hunk_mode: String,
+    #[serde(rename = "stageBlock")]
+    pub stage_block: String,
 }
 
 impl Default for UniversalKeybinding {
@@ -167,8 +171,10 @@ impl Default for UniversalKeybinding {
             create_patch_options_menu: "<c-p>".into(),
             prev_revert_block: "{".into(),
             next_revert_block: "}".into(),
-            revert_block: "<enter>".into(),
+            revert_block: "r".into(),
             undo_revert_block: "u".into(),
+            enter_hunk_mode: "H".into(),
+            stage_block: "a".into(),
         }
     }
 }
