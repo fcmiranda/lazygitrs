@@ -529,6 +529,14 @@ pub enum PopupState {
         /// The theme index before opening the picker (for cancel/revert).
         original_theme_index: usize,
     },
+    /// Custom commentary review dialog for a specific hunk
+    HunkCommentary {
+        title: String,
+        textarea: TextArea<'static>,
+        file_path: String,
+        hunk_diff: String,
+        on_confirm: Box<dyn FnOnce(&mut Gui, &str, &str, &str) -> Result<()>>,
+    },
 }
 
 pub type ChecklistAction = Box<dyn FnOnce(&mut Gui, Vec<String>) -> Result<()>>;

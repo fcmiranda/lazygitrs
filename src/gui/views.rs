@@ -2583,6 +2583,53 @@ pub fn render_popup(
                 }
             }
         }
+        PopupState::HunkCommentary {
+            title, textarea, ..
+        } => {
+            let ta_height = 16u16.min(area.height);
+            if ta_height >= 3 && popup_width >= 3 {
+                let ta_y = (area.height.saturating_sub(ta_height)) / 2;
+                let ta_rect = Rect::new(x, ta_y, popup_width, ta_height);
+                frame.render_widget(Clear, ta_rect);
+
+                let main_title = ratatui::widgets::block::Title::from(format!(" {} ", title))
+                    .alignment(ratatui::layout::Alignment::Left);
+                let close_title = ratatui::widgets::block::Title::from(" (x) ")
+                    .alignment(ratatui::layout::Alignment::Right);
+
+                let outer = Block::default()
+                    .title(main_title)
+                    .title(close_title)
+                    .borders(Borders::ALL)
+                    .border_style(Style::default().fg(theme.popup_border));
+                frame.render_widget(outer, ta_rect);
+
+                let inner = ta_rect.inner(ratatui::layout::Margin {
+                    horizontal: 1,
+                    vertical: 1,
+                });
+
+                if inner.height > 2 {
+                    let ta_area = Rect::new(inner.x, inner.y, inner.width, inner.height - 1);
+                    frame.render_widget(textarea, ta_area);
+
+                    let hint_area = Rect::new(inner.x, inner.y + inner.height - 1, inner.width, 1);
+                    let key_style = Style::default()
+                        .fg(theme.text)
+                        .add_modifier(ratatui::style::Modifier::BOLD);
+                    let desc_style = Style::default().fg(theme.text_dimmed);
+                    let hint_line = Line::from(vec![
+                        Span::styled(" ctrl+s ", key_style),
+                        Span::styled("save  ", desc_style),
+                        Span::styled("esc ", key_style),
+                        Span::styled("cancel", desc_style),
+                    ]);
+                    frame.render_widget(Paragraph::new(hint_line), hint_area);
+                } else {
+                    frame.render_widget(textarea, inner);
+                }
+            }
+        }
         PopupState::CommitInput {
             summary_textarea,
             body_textarea,

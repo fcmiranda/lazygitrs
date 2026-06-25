@@ -20,8 +20,20 @@ pub struct DiffLine {
     pub new_segments: Option<Vec<InlineSegment>>,
     /// If set, this line is a file header separator (multi-file diffs).
     pub file_header: Option<String>,
+    /// Inline notes attached to this diff line (one entry per saved note).
+    pub comment_notes: Vec<CommentNote>,
     /// Index of the file section this line belongs to (for multi-file highlighting).
     pub section_index: usize,
+}
+
+#[derive(Debug, Clone)]
+pub struct CommentNote {
+    /// Unique id matching the `.lines.json` entry.
+    pub id: String,
+    /// Note text (may contain multiple lines).
+    pub text: String,
+    /// true = old side, false = new side.
+    pub is_old: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

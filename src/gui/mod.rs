@@ -907,6 +907,7 @@ impl Gui {
                     self.diff_view.load(&filename, &old, &new);
                     self.diff_view.file_exists_on_disk =
                         self.git.repo_path().join(&filename).exists();
+                    self.diff_view.load_notes(self.git.repo_path());
                 }
                 DiffPayload::UnifiedDiff {
                     filename,
@@ -916,14 +917,116 @@ impl Gui {
                         .load_from_diff_output(&filename, &diff_output);
                     self.diff_view.file_exists_on_disk =
                         self.git.repo_path().join(&filename).exists();
+                    self.diff_view.load_notes(self.git.repo_path());
                 }
                 DiffPayload::Parsed(parsed) => {
                     self.diff_view.apply_parsed(parsed);
+                    self.diff_view.load_notes(self.git.repo_path());
                 }
                 DiffPayload::Empty => {
                     self.diff_view.reset_keep_prefs();
                 }
             }
+
+            self.inject_hunk_comments();
+        }
+    }
+
+    fn inject_hunk_comments(&mut self) {
+        if self.diff_view.lines.is_empty() {
+            return;
+        }
+        let target_path = self.git.repo_path().join(".hunks.json");
+        if !target_path.exists() {
+            return;
+        }
+        let content = match std::fs::read_to_string(&target_path) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let comments: Vec<serde_json::Value> = serde_json::from_str(&content).unwrap_or_default();
+        if comments.is_empty() {
+            return;
+        }
+
+        let mut insertions = Vec::new();
+
+        for i in 0..self.diff_view.hunk_starts.len() {
+            let start = self.diff_view.hunk_starts[i];
+            let end = if i + 1 < self.diff_view.hunk_starts.len() {
+                self.diff_view.hunk_starts[i + 1]
+            } else {
+                self.diff_view.lines.len()
+            };
+
+            let mut hunk_text = String::new();
+            for line in &self.diff_view.lines[start..end] {
+                if let Some((_, ref old)) = line.old_line {
+                    if let Some((_, ref new)) = line.new_line {
+                        if old == new {
+                            hunk_text.push_str("  ");
+                            hunk_text.push_str(old);
+                            hunk_text.push('\n');
+                            continue;
+                        }
+                    }
+                }
+                if let Some((_, ref old)) = line.old_line {
+                    hunk_text.push_str("- ");
+                    hunk_text.push_str(old);
+                    hunk_text.push('\n');
+                } else if let Some((_, ref new)) = line.new_line {
+                    hunk_text.push_str("+ ");
+                    hunk_text.push_str(new);
+                    hunk_text.push('\n');
+                }
+            }
+
+            let file_path = self.diff_view.file_at_line(start).to_string();
+
+            let hunk_comments: Vec<_> = comments
+                .iter()
+                .filter(|c| {
+                    c["file"].as_str() == Some(&file_path) && c["hunk"].as_str() == Some(&hunk_text)
+                })
+                .collect();
+
+            for comment in hunk_comments {
+                if let Some(note) = comment["comment"].as_str() {
+                    let is_old = comment["panel"].as_str() == Some("Old");
+                    insertions.push((
+                        start,
+                        is_old,
+                        note.to_string(),
+                        self.diff_view.lines[start].section_index,
+                    ));
+                }
+            }
+        }
+
+        if !insertions.is_empty() {
+            insertions.sort_by_key(|k| k.0);
+            for (idx, is_old, note, section_index) in insertions.into_iter().rev() {
+                self.diff_view.lines.insert(
+                    idx,
+                    crate::pager::DiffLine {
+                        old_line: None,
+                        new_line: None,
+                        change_type: crate::pager::ChangeType::Equal,
+                        old_segments: None,
+                        new_segments: None,
+                        file_header: None,
+                        comment_notes: vec![crate::pager::CommentNote {
+                            id: String::new(),
+                            text: note,
+                            is_old,
+                        }],
+                        section_index,
+                    },
+                );
+            }
+            self.diff_view.hunk_starts =
+                crate::pager::diff_algo::find_hunk_starts(&self.diff_view.lines);
         }
     }
 
@@ -1446,6 +1549,7 @@ impl Gui {
             // Clear stale diff when selection changes
             if selection_changed {
                 self.diff_view.reset_keep_prefs();
+                self.diff_view.load_notes(self.git.repo_path());
             }
 
             self.diff_loading = true;
@@ -1472,6 +1576,7 @@ impl Gui {
         // Clear stale diff when selection changes so user sees "Loading..." instead of old content
         if selection_changed {
             self.diff_view.reset_keep_prefs();
+            self.diff_view.load_notes(self.git.repo_path());
         }
 
         let model = self.model.lock().unwrap();
@@ -1627,14 +1732,17 @@ impl Gui {
                         } else {
                             drop(model);
                             self.diff_view.reset_keep_prefs();
+                            self.diff_view.load_notes(self.git.repo_path());
                         }
                     } else {
                         drop(model);
                         self.diff_view.reset_keep_prefs();
+                        self.diff_view.load_notes(self.git.repo_path());
                     }
                 } else {
                     drop(model);
                     self.diff_view.reset_keep_prefs();
+                    self.diff_view.load_notes(self.git.repo_path());
                 }
             }
             ContextId::Commits => {
@@ -1874,15 +1982,18 @@ impl Gui {
                         } else {
                             drop(model);
                             self.diff_view.reset_keep_prefs();
+                            self.diff_view.load_notes(self.git.repo_path());
                         }
                     } else {
                         drop(model);
                         self.diff_view.reset_keep_prefs();
+                        self.diff_view.load_notes(self.git.repo_path());
                     }
                 } else {
                     // No file selected — clear diff
                     drop(model);
                     self.diff_view.reset_keep_prefs();
+                    self.diff_view.load_notes(self.git.repo_path());
                 }
             }
             _ => {
@@ -1960,6 +2071,11 @@ impl Gui {
         if matches_key(key, &keybindings.universal.reset_side_panel) {
             self.layout.side_panel_ratio = self.config.user_config.gui.side_panel_width;
             return Ok(());
+        }
+
+        // Inline edit takes priority
+        if self.diff_view.inline_edit.is_some() {
+            return self.handle_inline_edit_key(key);
         }
 
         // When diff panel is focused, handle diff-specific keys
@@ -2247,6 +2363,87 @@ impl Gui {
         Ok(())
     }
 
+    fn handle_inline_edit_key(&mut self, key: crossterm::event::KeyEvent) -> Result<()> {
+        use crossterm::event::{KeyCode, KeyModifiers};
+        let keybindings = &self.config.user_config.keybinding;
+
+        if key.code == KeyCode::Esc {
+            self.diff_view.inline_edit = None;
+            self.diff_view.selected_note = None;
+            return Ok(());
+        }
+
+        let is_save = matches_key(key, &keybindings.universal.return_key)
+            || (key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL));
+
+        if is_save {
+            let edit = self.diff_view.inline_edit.as_ref().unwrap();
+            let comment = edit.textarea.lines().join("\n");
+            let file_path = self.diff_view.file_at_line(edit.line_idx).to_string();
+            let line_num = self
+                .diff_view
+                .file_line_number(edit.line_idx, edit.panel)
+                .unwrap_or(0);
+
+            let target_path = self.git.repo_path().join(".lines.json");
+            let mut existing: Vec<serde_json::Value> = if target_path.exists() {
+                let content =
+                    std::fs::read_to_string(&target_path).unwrap_or_else(|_| "[]".to_string());
+                serde_json::from_str(&content).unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+
+            let panel_str = match edit.panel {
+                crate::pager::side_by_side::DiffPanel::Old => "Old",
+                crate::pager::side_by_side::DiffPanel::New => "New",
+            };
+
+            // Editing existing note: update by id, or remove if emptied.
+            if !edit.editing_id.is_empty() {
+                if comment.trim().is_empty() {
+                    existing.retain(|c| c["id"].as_str() != Some(&edit.editing_id));
+                } else {
+                    if let Some(entry) = existing
+                        .iter_mut()
+                        .find(|c| c["id"].as_str() == Some(&edit.editing_id))
+                    {
+                        entry["comment"] = serde_json::Value::String(comment);
+                    }
+                }
+            } else if !comment.trim().is_empty() {
+                // New note: generate unique id.
+                let id = format!(
+                    "{}-{}-{}-{}",
+                    file_path,
+                    line_num,
+                    panel_str,
+                    std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .map(|d| d.as_nanos())
+                        .unwrap_or(0)
+                );
+                existing.push(serde_json::json!({
+                    "id": id,
+                    "file": file_path,
+                    "comment": comment,
+                    "line": line_num,
+                    "panel": panel_str,
+                }));
+            }
+
+            std::fs::write(target_path, serde_json::to_string_pretty(&existing)?)?;
+            self.diff_view.load_notes(self.git.repo_path());
+            self.diff_view.inline_edit = None;
+            return Ok(());
+        }
+
+        if let Some(ref mut edit) = self.diff_view.inline_edit {
+            edit.textarea.input(key);
+        }
+        Ok(())
+    }
+
     fn handle_context_key(&mut self, key: KeyEvent) -> Result<()> {
         let keybindings = self.config.user_config.keybinding.clone();
         let active = self.context_mgr.active();
@@ -2324,6 +2521,36 @@ impl Gui {
         // Diff search input mode takes priority
         if self.diff_view.search_active {
             return self.handle_diff_focused_search_key(key);
+        }
+
+        // Note actions take priority over text selection
+        if self.diff_view.selected_note.is_some() {
+            match key.code {
+                KeyCode::Char('e') => {
+                    if let Some(ref note_id) = self.diff_view.selected_note.clone() {
+                        for (i, dl) in self.diff_view.lines.iter().enumerate() {
+                            if let Some(note) = dl.comment_notes.iter().find(|n| &n.id == note_id) {
+                                let panel = if note.is_old {
+                                    crate::pager::side_by_side::DiffPanel::Old
+                                } else {
+                                    crate::pager::side_by_side::DiffPanel::New
+                                };
+                                self.open_inline_note_editor(i, panel, Some(note.id.clone()));
+                                break;
+                            }
+                        }
+                    }
+                    return Ok(());
+                }
+                KeyCode::Char('d') => {
+                    if let Some(ref note_id) = self.diff_view.selected_note.clone() {
+                        self.delete_note(note_id.clone());
+                        self.diff_view.selected_note = None;
+                    }
+                    return Ok(());
+                }
+                _ => {}
+            }
         }
 
         // Handle text selection keys first (y to copy, e to edit, Esc to dismiss)
@@ -2518,7 +2745,9 @@ impl Gui {
         match key.code {
             // Escape: clear revert-hunk selection first, then search, then unfocus diff
             KeyCode::Esc => {
-                if self.diff_view.selected_revert_hunk.is_some() {
+                if self.diff_view.selected_note.is_some() {
+                    self.diff_view.selected_note = None;
+                } else if self.diff_view.selected_revert_hunk.is_some() {
                     self.diff_view.selected_revert_hunk = None;
                 } else if !self.diff_view.search_query.is_empty() {
                     self.diff_view.clear_search();
@@ -2526,9 +2755,32 @@ impl Gui {
                     self.diff_focused = false;
                 }
             }
+            KeyCode::Char('c') => {
+                if !self.diff_view.lines.is_empty() {
+                    let line_idx = if let Some((idx, _)) = self.diff_view.hovered_line {
+                        idx
+                    } else {
+                        // First visible line in diff
+                        self.diff_view.scroll_offset
+                    };
+                    let panel = if let Some((_, p)) = self.diff_view.hovered_line {
+                        p
+                    } else {
+                        crate::pager::side_by_side::DiffPanel::New
+                    };
+                    self.open_inline_note_editor(line_idx, panel, None);
+                }
+            }
             // q quits the app (same as global behavior)
             KeyCode::Char('q') => {
                 self.should_quit = true;
+            }
+            // n/N: cycle to next/previous note
+            KeyCode::Char('n') => {
+                self.cycle_note(true);
+            }
+            KeyCode::Char('N') => {
+                self.cycle_note(false);
             }
             // j/k/up/down scroll line by line
             KeyCode::Char('j') | KeyCode::Down => {
@@ -3080,6 +3332,43 @@ impl Gui {
                         } else if popup_inner > 0 {
                             // Soft-wrap: visual only — newlines are stripped on submit so
                             // the original text (including spaces) round-trips exactly.
+                            soft_wrap_textarea(textarea, popup_inner);
+                        }
+                    }
+                }
+            }
+            PopupState::HunkCommentary { .. } => {
+                use crossterm::event::KeyModifiers;
+                if key.code == KeyCode::Char('s') && key.modifiers.contains(KeyModifiers::CONTROL) {
+                    let popup = std::mem::replace(&mut self.popup, PopupState::None);
+                    if let PopupState::HunkCommentary {
+                        textarea,
+                        file_path,
+                        hunk_diff,
+                        on_confirm,
+                        ..
+                    } = popup
+                    {
+                        let text = textarea.lines().join("\n");
+                        if let Err(e) = on_confirm(self, &text, &file_path, &hunk_diff) {
+                            self.popup = PopupState::Message {
+                                title: "Error".to_string(),
+                                message: format!("{}", e),
+                                kind: MessageKind::Error,
+                            };
+                        }
+                    }
+                } else if key.code == KeyCode::Esc {
+                    self.popup = PopupState::None;
+                } else {
+                    if let PopupState::HunkCommentary { textarea, .. } = &mut self.popup {
+                        textarea_input(textarea, key);
+                        let popup_width = (self.layout.width * 60 / 100)
+                            .min(60)
+                            .max(30)
+                            .min(self.layout.width);
+                        let popup_inner = popup_width.saturating_sub(4) as usize;
+                        if popup_inner > 0 {
                             soft_wrap_textarea(textarea, popup_inner);
                         }
                     }
@@ -5648,6 +5937,86 @@ impl Gui {
             }
         }
 
+        // Track line hover for inline notes `[+]` button
+        let new_line_hover = if rect_contains(main_panel, mouse.column, mouse.row) {
+            if let Some(panel) = pl.panel_at_x(mouse.column) {
+                if let Some((line_idx, _)) = self.diff_view.line_chunk_at_row(mouse.row, &pl) {
+                    // Check if this row is actually the [+] button row of the
+                    // previous line (after its notes). If so, keep hovering the
+                    // previous line so the [+] stays visible.
+                    if line_idx > 0 {
+                        let content_width =
+                            pl.new_content_end_x.saturating_sub(pl.new_content_x) as usize;
+                        let panel_width =
+                            pl.old_content_end_x.saturating_sub(pl.old_content_x) as usize;
+                        let right_content_width =
+                            pl.new_content_end_x.saturating_sub(pl.new_content_x) as usize;
+                        let prev_idx = line_idx - 1;
+                        if let Some(prev_dl) = self.diff_view.lines.get(prev_idx) {
+                            if prev_dl.file_header.is_none() && !prev_dl.comment_notes.is_empty() {
+                                // Compute prev line's code_y
+                                let mut acc = 0usize;
+                                for (offset, dl) in self.diff_view.lines
+                                    [self.diff_view.scroll_offset..=prev_idx]
+                                    .iter()
+                                    .enumerate()
+                                {
+                                    let idx = self.diff_view.scroll_offset + offset;
+                                    if idx == prev_idx {
+                                        break;
+                                    }
+                                    if self.diff_view.view_layout
+                                        == crate::pager::side_by_side::DiffViewLayout::Unified
+                                        || self.diff_view.side_view
+                                            != crate::pager::side_by_side::DiffSideView::Both
+                                    {
+                                        acc +=
+                                            crate::pager::side_by_side::unified_line_visual_height(
+                                                dl,
+                                                content_width,
+                                                &self.diff_view,
+                                                idx,
+                                            );
+                                    } else {
+                                        acc += crate::pager::side_by_side::line_visual_height(
+                                            dl,
+                                            panel_width,
+                                            right_content_width,
+                                            &self.diff_view,
+                                            idx,
+                                        );
+                                    }
+                                }
+                                let plus_y = pl.inner_y
+                                    + acc as u16
+                                    + (prev_dl.comment_notes.len() * 5) as u16;
+                                if mouse.row == plus_y {
+                                    Some((prev_idx, panel))
+                                } else {
+                                    Some((line_idx, panel))
+                                }
+                            } else {
+                                Some((line_idx, panel))
+                            }
+                        } else {
+                            Some((line_idx, panel))
+                        }
+                    } else {
+                        Some((line_idx, panel))
+                    }
+                } else {
+                    None
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if self.diff_view.hovered_line != new_line_hover {
+            self.diff_view.hovered_line = new_line_hover;
+        }
+
         match mouse.kind {
             MouseEventKind::Down(MouseButton::Left) => {
                 let in_main = main_panel.x <= mouse.column
@@ -5661,6 +6030,138 @@ impl Gui {
                 let full_sidebar = self.screen_mode == ScreenMode::Full && !self.diff_focused;
 
                 if in_main && !self.diff_view.is_empty() && !full_sidebar {
+                    if let Some((line_idx, panel)) = self.diff_view.hovered_line {
+                        // Compute the [+] button Y position: code row + note_count * 5
+                        let content_width =
+                            pl.new_content_end_x.saturating_sub(pl.new_content_x) as usize;
+                        let panel_width =
+                            pl.old_content_end_x.saturating_sub(pl.old_content_x) as usize;
+                        let right_content_width =
+                            pl.new_content_end_x.saturating_sub(pl.new_content_x) as usize;
+                        let mut plus_acc = 0usize;
+                        for (offset, dl) in self.diff_view.lines
+                            [self.diff_view.scroll_offset..=line_idx]
+                            .iter()
+                            .enumerate()
+                        {
+                            let idx = self.diff_view.scroll_offset + offset;
+                            if idx == line_idx {
+                                break;
+                            }
+                            if self.diff_view.view_layout
+                                == crate::pager::side_by_side::DiffViewLayout::Unified
+                                || self.diff_view.side_view
+                                    != crate::pager::side_by_side::DiffSideView::Both
+                            {
+                                plus_acc += crate::pager::side_by_side::unified_line_visual_height(
+                                    dl,
+                                    content_width,
+                                    &self.diff_view,
+                                    idx,
+                                );
+                            } else {
+                                plus_acc += crate::pager::side_by_side::line_visual_height(
+                                    dl,
+                                    panel_width,
+                                    right_content_width,
+                                    &self.diff_view,
+                                    idx,
+                                );
+                            }
+                        }
+                        let note_count = self
+                            .diff_view
+                            .lines
+                            .get(line_idx)
+                            .map(|dl| dl.comment_notes.len())
+                            .unwrap_or(0);
+                        let plus_y = pl.inner_y + plus_acc as u16 + (note_count * 5) as u16;
+
+                        // Check if click was on `[+]` button
+                        let is_on_plus_x = match panel {
+                            crate::pager::side_by_side::DiffPanel::Old => {
+                                mouse.column >= pl.old_content_end_x.saturating_sub(3)
+                                    && mouse.column < pl.old_content_end_x
+                            }
+                            crate::pager::side_by_side::DiffPanel::New => {
+                                mouse.column >= pl.new_content_end_x.saturating_sub(3)
+                                    && mouse.column < pl.new_content_end_x
+                            }
+                        };
+                        if is_on_plus_x && mouse.row == plus_y {
+                            self.open_inline_note_editor(line_idx, panel, None);
+                            return;
+                        }
+
+                        // Check if click was on a saved note box
+                        if let Some(note_id) =
+                            self.note_id_at_click(line_idx, panel, mouse.row, &pl)
+                        {
+                            // Compute which row within the note block was clicked
+                            let mut acc = 0usize;
+                            for (offset, dl) in self.diff_view.lines
+                                [self.diff_view.scroll_offset..=line_idx]
+                                .iter()
+                                .enumerate()
+                            {
+                                let idx = self.diff_view.scroll_offset + offset;
+                                if idx == line_idx {
+                                    break;
+                                }
+                                if self.diff_view.view_layout
+                                    == crate::pager::side_by_side::DiffViewLayout::Unified
+                                    || self.diff_view.side_view
+                                        != crate::pager::side_by_side::DiffSideView::Both
+                                {
+                                    acc += crate::pager::side_by_side::unified_line_visual_height(
+                                        dl,
+                                        content_width,
+                                        &self.diff_view,
+                                        idx,
+                                    );
+                                } else {
+                                    acc += crate::pager::side_by_side::line_visual_height(
+                                        dl,
+                                        panel_width,
+                                        right_content_width,
+                                        &self.diff_view,
+                                        idx,
+                                    );
+                                }
+                            }
+                            let note_start_y = pl.inner_y + acc as u16;
+                            let click_off = mouse.row.saturating_sub(note_start_y);
+                            let block_row = click_off % 5;
+
+                            if block_row == 4 {
+                                // Bottom border — [d] del vs [e] edit by X position
+                                let panel_end_x = match panel {
+                                    crate::pager::side_by_side::DiffPanel::Old => {
+                                        pl.old_content_end_x
+                                    }
+                                    crate::pager::side_by_side::DiffPanel::New => {
+                                        pl.new_content_end_x
+                                    }
+                                };
+                                let del_start = panel_end_x.saturating_sub(9);
+                                let edit_start = panel_end_x.saturating_sub(19);
+
+                                if mouse.column >= del_start && mouse.column < panel_end_x {
+                                    self.delete_note(note_id);
+                                } else if mouse.column >= edit_start && mouse.column < del_start {
+                                    self.open_inline_note_editor(line_idx, panel, Some(note_id));
+                                } else {
+                                    self.diff_view.selected_note = Some(note_id);
+                                }
+                            } else {
+                                // Note body — just select, don't enter edit mode
+                                self.diff_view.selected_note = Some(note_id);
+                            }
+                            self.diff_focused = true;
+                            return;
+                        }
+                    }
+
                     if self.try_handle_revert_block_click(main_panel, pl, mouse.column, mouse.row) {
                         self.diff_focused = true;
                         return;
@@ -6182,6 +6683,25 @@ impl Gui {
     }
 
     fn handle_mouse_click(&mut self, col: u16, row: u16) {
+        if let PopupState::HunkCommentary { .. } = &self.popup {
+            let popup_width = (self.layout.width * 60 / 100)
+                .min(60)
+                .max(30)
+                .min(self.layout.width);
+            let ta_height = 16u16.min(self.layout.height);
+            if ta_height >= 3 && popup_width >= 3 {
+                let ta_y = (self.layout.height.saturating_sub(ta_height)) / 2;
+                let x = (self.layout.width.saturating_sub(popup_width)) / 2;
+                if row == ta_y
+                    && col >= x + popup_width.saturating_sub(5)
+                    && col <= x + popup_width.saturating_sub(1)
+                {
+                    self.popup = PopupState::None;
+                    return;
+                }
+            }
+        }
+
         let fl = self.compute_current_frame_layout();
 
         // Commit details panel is non-focusable; swallow clicks that land there
@@ -6383,6 +6903,220 @@ impl Gui {
             return None;
         }
         self.diff_view.hunk_index_for_start_line(line_idx)
+    }
+
+    /// If a click lands on a saved note box for the given line, return its id.
+    fn note_id_at_click(
+        &self,
+        line_idx: usize,
+        panel: crate::pager::side_by_side::DiffPanel,
+        row: u16,
+        pl: &crate::pager::side_by_side::DiffPanelLayout,
+    ) -> Option<String> {
+        use crate::pager::side_by_side::{DiffPanel, DiffSideView, DiffViewLayout};
+
+        let diff_line = self.diff_view.lines.get(line_idx)?;
+        if diff_line.comment_notes.is_empty() {
+            return None;
+        }
+
+        let panel_is_old = match panel {
+            DiffPanel::Old => true,
+            DiffPanel::New => false,
+        };
+
+        let content_width = pl.new_content_end_x.saturating_sub(pl.new_content_x) as usize;
+        let panel_width = pl.old_content_end_x.saturating_sub(pl.old_content_x) as usize;
+        let right_content_width = pl.new_content_end_x.saturating_sub(pl.new_content_x) as usize;
+
+        let mut acc = 0usize;
+        for (offset, dl) in self.diff_view.lines[self.diff_view.scroll_offset..=line_idx]
+            .iter()
+            .enumerate()
+        {
+            let idx = self.diff_view.scroll_offset + offset;
+            if idx == line_idx {
+                break;
+            }
+            if self.diff_view.view_layout == DiffViewLayout::Unified
+                || self.diff_view.side_view != DiffSideView::Both
+            {
+                acc += crate::pager::side_by_side::unified_line_visual_height(
+                    dl,
+                    content_width,
+                    &self.diff_view,
+                    idx,
+                );
+            } else {
+                acc += crate::pager::side_by_side::line_visual_height(
+                    dl,
+                    panel_width,
+                    right_content_width,
+                    &self.diff_view,
+                    idx,
+                );
+            }
+        }
+
+        let note_start_y = pl.inner_y + acc as u16;
+        let click_off = row.saturating_sub(note_start_y);
+
+        // Iterate ALL notes in render order; each takes 5 rows.
+        // Return the one whose block the click falls within AND matches the panel.
+        for (i, note) in diff_line.comment_notes.iter().enumerate() {
+            let block_start = (i * 5) as u16;
+            let block_end = block_start + 5;
+            if click_off >= block_start && click_off < block_end && note.is_old == panel_is_old {
+                return Some(note.id.clone());
+            }
+        }
+
+        None
+    }
+
+    fn delete_note(&mut self, note_id: String) {
+        let target_path = self.git.repo_path().join(".lines.json");
+        if !target_path.exists() {
+            return;
+        }
+        let content = match std::fs::read_to_string(&target_path) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+        let mut existing: Vec<serde_json::Value> =
+            serde_json::from_str(&content).unwrap_or_default();
+        existing.retain(|c| c["id"].as_str() != Some(&note_id));
+        let _ = std::fs::write(
+            target_path,
+            serde_json::to_string_pretty(&existing).unwrap_or_else(|_| "[]".to_string()),
+        );
+        self.diff_view.load_notes(self.git.repo_path());
+    }
+
+    fn cycle_note(&mut self, forward: bool) {
+        // Collect all notes in render order: (line_idx, note_id)
+        let mut all_notes: Vec<(usize, String)> = Vec::new();
+        for (i, dl) in self.diff_view.lines.iter().enumerate() {
+            for n in &dl.comment_notes {
+                all_notes.push((i, n.id.clone()));
+            }
+        }
+        if all_notes.is_empty() {
+            return;
+        }
+
+        let current = self.diff_view.selected_note.as_deref();
+        let next = if let Some(cur) = current {
+            let pos = all_notes.iter().position(|(_, id)| id == cur);
+            if forward {
+                pos.and_then(|p| {
+                    let np = (p + 1) % all_notes.len();
+                    all_notes.get(np).cloned()
+                })
+            } else {
+                pos.and_then(|p| {
+                    let np = if p == 0 { all_notes.len() - 1 } else { p - 1 };
+                    all_notes.get(np).cloned()
+                })
+            }
+        } else if forward {
+            Some(all_notes[0].clone())
+        } else {
+            Some(all_notes.last().cloned().unwrap())
+        };
+
+        if let Some((line_idx, note_id)) = next {
+            // Scroll to make the note visible.
+            let main_panel = self.compute_main_panel_rect();
+            let pl = DiffPanelLayout::compute(main_panel, &self.diff_view);
+            let content_width = pl.new_content_end_x.saturating_sub(pl.new_content_x) as usize;
+            let panel_width = pl.old_content_end_x.saturating_sub(pl.old_content_x) as usize;
+            let right_content_width =
+                pl.new_content_end_x.saturating_sub(pl.new_content_x) as usize;
+            let visible_height = pl.inner_end_y.saturating_sub(pl.inner_y) as usize;
+
+            let mut acc = 0usize;
+            for (offset, dl) in self.diff_view.lines[self.diff_view.scroll_offset..=line_idx]
+                .iter()
+                .enumerate()
+            {
+                let idx = self.diff_view.scroll_offset + offset;
+                if idx == line_idx {
+                    break;
+                }
+                if self.diff_view.view_layout == crate::pager::side_by_side::DiffViewLayout::Unified
+                    || self.diff_view.side_view != crate::pager::side_by_side::DiffSideView::Both
+                {
+                    acc += crate::pager::side_by_side::unified_line_visual_height(
+                        dl,
+                        content_width,
+                        &self.diff_view,
+                        idx,
+                    );
+                } else {
+                    acc += crate::pager::side_by_side::line_visual_height(
+                        dl,
+                        panel_width,
+                        right_content_width,
+                        &self.diff_view,
+                        idx,
+                    );
+                }
+            }
+
+            if acc >= visible_height {
+                // Note is below viewport — scroll up so it becomes visible.
+                self.diff_view.scroll_offset = line_idx.saturating_sub(visible_height / 3);
+            }
+
+            self.diff_view.selected_note = Some(note_id);
+            self.diff_focused = true;
+        }
+    }
+
+    fn open_inline_note_editor(
+        &mut self,
+        line_idx: usize,
+        panel: crate::pager::side_by_side::DiffPanel,
+        editing_id: Option<String>,
+    ) {
+        let file_path = self.diff_view.file_at_line(line_idx).to_string();
+        let line_num = self
+            .diff_view
+            .file_line_number(line_idx, panel)
+            .unwrap_or(0);
+
+        let title = format!("Draft Note - {} - {}", file_path, line_num);
+        let mut textarea = crate::gui::popup::make_textarea(&title);
+        textarea.set_cursor_line_style(ratatui::style::Style::default());
+
+        let editing_id = editing_id.unwrap_or_default();
+
+        // Load existing note text if editing.
+        if !editing_id.is_empty() {
+            let target_path = self.git.repo_path().join(".lines.json");
+            if target_path.exists() {
+                if let Ok(content) = std::fs::read_to_string(&target_path) {
+                    let existing: Vec<serde_json::Value> =
+                        serde_json::from_str(&content).unwrap_or_default();
+                    if let Some(note) = existing
+                        .iter()
+                        .find(|c| c["id"].as_str() == Some(&editing_id))
+                        .and_then(|c| c["comment"].as_str())
+                    {
+                        textarea.insert_str(note);
+                    }
+                }
+            }
+        }
+
+        self.diff_view.inline_edit = Some(crate::pager::side_by_side::InlineEdit {
+            line_idx,
+            panel,
+            textarea,
+            editing_id,
+        });
+        self.diff_focused = true;
     }
 
     fn try_handle_revert_block_click(
@@ -7096,6 +7830,7 @@ fn setup_terminal() -> Result<(Term, bool)> {
         crossterm::event::EnableMouseCapture,
         crossterm::event::EnableFocusChange,
         crossterm::event::EnableBracketedPaste,
+        crossterm::style::Print("\x1b[?1003h"), // Enable Any-event mouse tracking for Hover
         cursor::Hide
     )?;
     let keyboard_enhanced = crossterm::terminal::supports_keyboard_enhancement().unwrap_or(false);
@@ -7120,27 +7855,19 @@ fn restore_terminal(terminal: &mut Term, keyboard_enhanced: bool) -> Result<()> 
     if keyboard_enhanced {
         execute!(
             terminal.backend_mut(),
-            crossterm::event::DisableMouseCapture,
-            crossterm::event::DisableFocusChange,
-            crossterm::event::PopKeyboardEnhancementFlags,
-            crossterm::event::DisableBracketedPaste,
-            cursor::Show,
-            LeaveAlternateScreen
-        )?;
-    } else {
-        execute!(
-            terminal.backend_mut(),
-            crossterm::event::DisableMouseCapture,
-            crossterm::event::DisableFocusChange,
-            crossterm::event::DisableBracketedPaste,
-            cursor::Show,
-            LeaveAlternateScreen
+            crossterm::event::PopKeyboardEnhancementFlags
         )?;
     }
-    terminal.backend_mut().flush()?;
+    execute!(
+        terminal.backend_mut(),
+        crossterm::style::Print("\x1b[?1003l"),
+        crossterm::event::DisableMouseCapture,
+        crossterm::event::DisableFocusChange,
+        crossterm::event::DisableBracketedPaste,
+        cursor::Show,
+        LeaveAlternateScreen
+    )?;
 
-    drain_pending_terminal_events(Duration::from_millis(25));
     terminal::disable_raw_mode()?;
-
     Ok(())
 }

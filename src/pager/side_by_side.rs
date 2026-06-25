@@ -292,6 +292,14 @@ pub struct RevertUndoEntry {
 /// Maximum entries kept in the revert-hunk undo stack.
 pub const REVERT_UNDO_STACK_CAP: usize = 20;
 
+pub struct InlineEdit {
+    pub line_idx: usize,
+    pub panel: DiffPanel,
+    pub textarea: tui_textarea::TextArea<'static>,
+    /// When editing an existing note, its id. Empty for new notes.
+    pub editing_id: String,
+}
+
 /// State for the diff view panel.
 pub struct DiffViewState {
     pub scroll_offset: usize,
@@ -341,6 +349,12 @@ pub struct DiffViewState {
     /// `n/m` denominator in the bottom-right footnote; resets to 0 once the
     /// stack drains so a fresh streak starts at `1/1`.
     pub revert_undo_high_water: usize,
+    /// Which line is currently hovered by the mouse (and on which panel).
+    pub hovered_line: Option<(usize, DiffPanel)>,
+    /// Id of the note currently selected via keyboard (for highlight).
+    pub selected_note: Option<String>,
+    /// Active inline note editor.
+    pub inline_edit: Option<InlineEdit>,
 }
 
 impl Default for DiffViewState {
@@ -370,6 +384,9 @@ impl Default for DiffViewState {
             hovered_revert_hunk: None,
             revert_undo_stack: Vec::new(),
             revert_undo_high_water: 0,
+            hovered_line: None,
+            selected_note: None,
+            inline_edit: None,
         }
     }
 }
@@ -427,6 +444,16 @@ impl DiffViewState {
     pub fn file_at_line(&self, line_idx: usize) -> &str {
         for i in (0..=line_idx).rev() {
             if let Some(ref header) = self.lines.get(i).and_then(|l| l.file_header.as_ref()) {
+                if header.starts_with("diff --git ") {
+                    let parts: Vec<&str> = header.split_whitespace().collect();
+                    if parts.len() >= 4 {
+                        let path2 = parts[3];
+                        if path2.len() > 2 && path2.as_bytes()[1] == b'/' {
+                            return &path2[2..];
+                        }
+                        return path2;
+                    }
+                }
                 return header;
             }
         }
@@ -615,6 +642,7 @@ impl DiffViewState {
                     old_segments: None,
                     new_segments: None,
                     file_header: Some(file_name.clone()),
+                    comment_notes: Vec::new(),
                     section_index: section_idx,
                 });
 
@@ -649,6 +677,101 @@ impl DiffViewState {
                 hunk_line_offsets,
                 sections,
                 file_exists_on_disk,
+            }
+        }
+    }
+
+    pub fn load_notes(&mut self, repo_path: &std::path::Path) {
+        let target_path = repo_path.join(".lines.json");
+        if !target_path.exists() {
+            for diff_line in self.lines.iter_mut() {
+                diff_line.comment_notes.clear();
+            }
+            return;
+        }
+        let content = match std::fs::read_to_string(&target_path) {
+            Ok(c) => c,
+            Err(_) => {
+                for diff_line in self.lines.iter_mut() {
+                    diff_line.comment_notes.clear();
+                }
+                return;
+            }
+        };
+        let existing: Vec<serde_json::Value> = serde_json::from_str(&content).unwrap_or_default();
+        if existing.is_empty() {
+            for diff_line in self.lines.iter_mut() {
+                diff_line.comment_notes.clear();
+            }
+            return;
+        }
+
+        let hunk_line_offsets = self.hunk_line_offsets.clone();
+        let mut current_file = self.filename.clone();
+        for (line_idx, diff_line) in self.lines.iter_mut().enumerate() {
+            if let Some(ref header) = diff_line.file_header {
+                current_file = header.clone();
+                // Diff might say "diff --git a/foo b/foo".
+                // Strip "diff --git a/" and " b/" if they exist.
+                if current_file.starts_with("diff --git ") {
+                    let parts: Vec<&str> = current_file.split_whitespace().collect();
+                    if parts.len() >= 4 {
+                        let path2 = parts[3];
+                        if path2.len() > 2 && path2.as_bytes()[1] == b'/' {
+                            current_file = path2[2..].to_string();
+                        } else {
+                            current_file = path2.to_string();
+                        }
+                    }
+                }
+            }
+
+            diff_line.comment_notes.clear();
+
+            let (old_off, new_off) = hunk_line_offsets
+                .iter()
+                .rev()
+                .find(|(start_idx, _, _)| *start_idx <= line_idx)
+                .map(|(_, o, n)| (*o, *n))
+                .unwrap_or((0, 0));
+
+            // Old side notes
+            if let Some((line_num, _)) = diff_line.old_line.as_ref() {
+                let file_line = *line_num + old_off;
+                for c in existing.iter() {
+                    if c["file"].as_str() == Some(&current_file)
+                        && c["line"].as_u64() == Some(file_line as u64)
+                        && c["panel"].as_str().unwrap_or("New") == "Old"
+                    {
+                        if let Some(note) = c["comment"].as_str() {
+                            let id = c["id"].as_str().unwrap_or("").to_string();
+                            diff_line.comment_notes.push(crate::pager::CommentNote {
+                                id,
+                                text: note.to_string(),
+                                is_old: true,
+                            });
+                        }
+                    }
+                }
+            }
+            // New side notes
+            if let Some((line_num, _)) = diff_line.new_line.as_ref() {
+                let file_line = *line_num + new_off;
+                for c in existing.iter() {
+                    if c["file"].as_str() == Some(&current_file)
+                        && c["line"].as_u64() == Some(file_line as u64)
+                        && c["panel"].as_str().unwrap_or("New") == "New"
+                    {
+                        if let Some(note) = c["comment"].as_str() {
+                            let id = c["id"].as_str().unwrap_or("").to_string();
+                            diff_line.comment_notes.push(crate::pager::CommentNote {
+                                id,
+                                text: note.to_string(),
+                                is_old: false,
+                            });
+                        }
+                    }
+                }
             }
         }
     }
@@ -806,6 +929,7 @@ impl DiffViewState {
                     old_segments: None,
                     new_segments: None,
                     file_header: Some(file_name.clone()),
+                    comment_notes: Vec::new(),
                     section_index: section_idx,
                 });
 
@@ -903,49 +1027,41 @@ impl DiffViewState {
             return None;
         }
         let target_off = (row - layout.inner_y) as usize;
+        let content_width = layout
+            .new_content_end_x
+            .saturating_sub(layout.new_content_x) as usize;
 
-        if self.view_layout == DiffViewLayout::Unified {
-            let content_width = layout
-                .new_content_end_x
-                .saturating_sub(layout.new_content_x) as usize;
+        if self.view_layout == DiffViewLayout::Unified || self.side_view != DiffSideView::Both {
             let mut acc = 0usize;
             for (offset, diff_line) in self.lines[self.scroll_offset..].iter().enumerate() {
                 let line_idx = self.scroll_offset + offset;
-                let num_rows = unified_line_visual_height(diff_line, content_width, self);
+                let num_rows = unified_line_visual_height(diff_line, content_width, self, line_idx);
                 if target_off < acc + num_rows {
                     return Some((line_idx, target_off - acc));
                 }
                 acc += num_rows;
             }
-            return None;
-        }
-
-        if !self.wrap {
-            let idx = self.scroll_offset + target_off;
-            return if idx < self.lines.len() {
-                Some((idx, 0))
-            } else {
-                None
-            };
-        }
-
-        let panel_width = layout
-            .old_content_end_x
-            .saturating_sub(layout.old_content_x) as usize;
-        let right_content_width = layout
-            .new_content_end_x
-            .saturating_sub(layout.new_content_x) as usize;
-
-        let mut acc = 0usize;
-        for (offset, diff_line) in self.lines[self.scroll_offset..].iter().enumerate() {
-            let line_idx = self.scroll_offset + offset;
-            let num_rows = line_visual_height(diff_line, panel_width, right_content_width);
-            if target_off < acc + num_rows {
-                return Some((line_idx, target_off - acc));
+            None
+        } else {
+            let panel_width = layout
+                .old_content_end_x
+                .saturating_sub(layout.old_content_x) as usize;
+            let right_content_width = layout
+                .new_content_end_x
+                .saturating_sub(layout.new_content_x)
+                as usize;
+            let mut acc = 0usize;
+            for (offset, diff_line) in self.lines[self.scroll_offset..].iter().enumerate() {
+                let line_idx = self.scroll_offset + offset;
+                let num_rows =
+                    line_visual_height(diff_line, panel_width, right_content_width, self, line_idx);
+                if target_off < acc + num_rows {
+                    return Some((line_idx, target_off - acc));
+                }
+                acc += num_rows;
             }
-            acc += num_rows;
+            None
         }
-        None
     }
 
     /// Map a terminal row to a diff line and the side whose content is rendered
@@ -1238,10 +1354,7 @@ pub fn render_diff(
             visible_height,
             show_revert_markers,
         );
-        return;
-    }
-
-    if single_side.is_some() || is_new_file {
+    } else if single_side.is_some() || is_new_file {
         // Single-panel mode: new file, old-only, or new-only
         let show_panel = single_side.unwrap_or(DiffPanel::New); // new-file defaults to New
         let content_width = inner.width.saturating_sub(gutter_width);
@@ -1260,6 +1373,22 @@ pub fn render_diff(
                 row += 1;
                 continue;
             }
+
+            render_diff_annotations(
+                buf,
+                state,
+                diff_line,
+                line_idx,
+                inner,
+                &mut row,
+                visible_height,
+                content_width, // panel_width
+                gutter_width,
+                0,             // divider_width
+                inner.x,       // div_x
+                content_width, // right_content_width — full width in single-panel mode
+                theme,
+            );
 
             let default_hl = FileHighlighter::default();
             let (old_highlighter, new_highlighter) = state
@@ -1418,6 +1547,22 @@ pub fn render_diff(
                 row += 1;
                 continue;
             }
+
+            render_diff_annotations(
+                buf,
+                state,
+                diff_line,
+                line_idx,
+                inner,
+                &mut row,
+                visible_height,
+                panel_width,
+                gutter_width,
+                divider_width,
+                div_x,
+                right_content_width,
+                theme,
+            );
 
             let default_hl = FileHighlighter::default();
             let (old_highlighter, new_highlighter) = state
@@ -1734,6 +1879,8 @@ pub fn render_diff(
             );
         }
     }
+
+    render_hover_plus_button(buf, area, state, theme);
 }
 
 fn render_unified_diff_body(
@@ -1765,6 +1912,22 @@ fn render_unified_diff_body(
             row += 1;
             continue;
         }
+
+        render_diff_annotations(
+            buf,
+            state,
+            diff_line,
+            line_idx,
+            inner,
+            &mut row,
+            visible_height,
+            content_width,
+            GUTTER_WIDTH * 2,
+            0,
+            inner.x,
+            0,
+            theme,
+        );
 
         let default_hl = FileHighlighter::default();
         let (old_highlighter, new_highlighter) = state
@@ -2117,6 +2280,282 @@ fn render_file_header(buf: &mut Buffer, x: u16, y: u16, width: u16, filename: &s
     buf_write_str(buf, x, y, &full_line, header_style, width);
 }
 
+fn render_hover_plus_button(buf: &mut Buffer, area: Rect, state: &DiffViewState, theme: &Theme) {
+    let (line_idx, panel) = match state.hovered_line {
+        Some(h) => h,
+        None => return,
+    };
+
+    let diff_line = match state.lines.get(line_idx) {
+        Some(dl) if dl.file_header.is_none() => dl,
+        _ => return,
+    };
+
+    if let Some(ref edit) = state.inline_edit {
+        if edit.line_idx == line_idx {
+            return;
+        }
+    }
+
+    let pl = DiffPanelLayout::compute(area, state);
+    let unified_content_width = pl.new_content_end_x.saturating_sub(pl.new_content_x) as usize;
+    let panel_width = pl.old_content_end_x.saturating_sub(pl.old_content_x) as usize;
+    let right_content_width = pl.new_content_end_x.saturating_sub(pl.new_content_x) as usize;
+    let visible_height = pl.inner_end_y.saturating_sub(pl.inner_y) as usize;
+
+    if line_idx < state.scroll_offset {
+        return;
+    }
+
+    // Compute Y of the code line (first row of this diff line).
+    let code_y = if pl.is_unified || state.side_view != DiffSideView::Both {
+        let mut acc = 0usize;
+        for (offset, dl) in state.lines[state.scroll_offset..=line_idx]
+            .iter()
+            .enumerate()
+        {
+            let idx = state.scroll_offset + offset;
+            if idx == line_idx {
+                break;
+            }
+            if acc >= visible_height {
+                return;
+            }
+            acc += unified_line_visual_height(dl, unified_content_width, state, idx);
+        }
+        pl.inner_y + acc as u16
+    } else {
+        let mut acc = 0usize;
+        for (offset, dl) in state.lines[state.scroll_offset..=line_idx]
+            .iter()
+            .enumerate()
+        {
+            let idx = state.scroll_offset + offset;
+            if idx == line_idx {
+                break;
+            }
+            if acc >= visible_height {
+                return;
+            }
+            acc += line_visual_height(dl, panel_width, right_content_width, state, idx);
+        }
+        pl.inner_y + acc as u16
+    };
+
+    // [+] is an individual element. When there are notes, it sits on its own
+    // row after the last note. When there are no notes, it sits on the code row.
+    let note_count = diff_line.comment_notes.len();
+    let y = code_y + (note_count * 5) as u16;
+
+    if y >= pl.inner_end_y {
+        return;
+    }
+
+    let content_end_x = match panel {
+        DiffPanel::Old => pl.old_content_end_x,
+        DiffPanel::New => pl.new_content_end_x,
+    };
+    let x = content_end_x.saturating_sub(3);
+
+    let style = Style::default()
+        .fg(theme.accent)
+        .add_modifier(Modifier::BOLD);
+    buf_write_str(buf, x, y, "[+]", style, 3);
+}
+
+fn render_diff_annotations(
+    buf: &mut Buffer,
+    state: &DiffViewState,
+    diff_line: &DiffLine,
+    line_idx: usize,
+    inner: Rect,
+    row: &mut usize,
+    visible_height: usize,
+    panel_width: u16,
+    gutter_width: u16,
+    divider_width: u16,
+    div_x: u16,
+    right_content_width: u16,
+    theme: &Theme,
+) {
+    let edit_active = state
+        .inline_edit
+        .as_ref()
+        .map(|e| e.line_idx == line_idx)
+        .unwrap_or(false);
+
+    // Render saved notes and the editor interleaved in order.
+    // When editing an existing note, the editor replaces it in-place.
+    for note in &diff_line.comment_notes {
+        let is_being_edited = edit_active
+            && state
+                .inline_edit
+                .as_ref()
+                .map(|e| e.editing_id == note.id)
+                .unwrap_or(false);
+
+        if is_being_edited {
+            if let Some(ref edit) = state.inline_edit {
+                if *row + 5 <= visible_height {
+                    let y = inner.y + *row as u16;
+                    let file_path = state.file_at_line(line_idx);
+                    let line_num = state.file_line_number(line_idx, edit.panel).unwrap_or(0);
+                    let edit_area = if edit.panel == DiffPanel::Old {
+                        Rect::new(inner.x, y, panel_width + gutter_width, 5)
+                    } else {
+                        Rect::new(
+                            div_x + divider_width,
+                            y,
+                            right_content_width + gutter_width,
+                            5,
+                        )
+                    };
+                    let title = format!(" Edit Note - {} - {} ", file_path, line_num);
+                    let bottom_spans = vec![
+                        ratatui::text::Span::styled(
+                            " Ctrl+S ",
+                            Style::default()
+                                .fg(theme.accent)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        ratatui::text::Span::styled(
+                            " save ",
+                            Style::default().fg(theme.text_dimmed),
+                        ),
+                        ratatui::text::Span::styled(
+                            " Esc ",
+                            Style::default()
+                                .fg(theme.accent)
+                                .add_modifier(Modifier::BOLD),
+                        ),
+                        ratatui::text::Span::styled(
+                            " close ",
+                            Style::default().fg(theme.text_dimmed),
+                        ),
+                    ];
+                    let block = ratatui::widgets::Block::default()
+                        .borders(ratatui::widgets::Borders::ALL)
+                        .border_style(Style::default().fg(theme.accent))
+                        .title(title)
+                        .title_bottom(
+                            ratatui::text::Line::from(bottom_spans)
+                                .alignment(ratatui::layout::Alignment::Right),
+                        );
+                    let mut ta = edit.textarea.clone();
+                    ta.set_block(block);
+                    ratatui::widgets::Widget::render(&ta, edit_area, buf);
+                }
+                *row += 5;
+            }
+            continue;
+        }
+
+        if *row + 5 <= visible_height {
+            let y = inner.y + *row as u16;
+            let (area_x, area_w) = if note.is_old {
+                (inner.x, panel_width + gutter_width)
+            } else {
+                (div_x + divider_width, right_content_width + gutter_width)
+            };
+            let is_selected = state.selected_note.as_deref() == Some(&note.id);
+            let border_fg = if is_selected {
+                theme.accent_secondary
+            } else {
+                theme.text_dimmed
+            };
+            let border_mod = if is_selected {
+                Modifier::BOLD
+            } else {
+                Modifier::empty()
+            };
+            let block = ratatui::widgets::Block::default()
+                .borders(ratatui::widgets::Borders::ALL)
+                .border_style(Style::default().fg(border_fg).add_modifier(border_mod))
+                .title(" 📝 Note ")
+                .title_bottom(
+                    ratatui::text::Line::from(vec![
+                        ratatui::text::Span::styled(
+                            " [e] edit ",
+                            Style::default().fg(theme.text_dimmed),
+                        ),
+                        ratatui::text::Span::styled(
+                            " [d] del ",
+                            Style::default().fg(theme.text_dimmed),
+                        ),
+                    ])
+                    .alignment(ratatui::layout::Alignment::Right),
+                );
+            let text_fg = theme.accent_secondary;
+            let widget = ratatui::widgets::Paragraph::new(note.text.as_str())
+                .style(Style::default().fg(text_fg).add_modifier(Modifier::BOLD));
+            ratatui::widgets::Widget::render(
+                widget.block(block),
+                Rect::new(area_x, y, area_w, 5),
+                buf,
+            );
+        }
+        *row += 5;
+    }
+
+    // Render the inline editor for NEW notes (after all saved notes).
+    if let Some(ref edit) = state.inline_edit {
+        if edit.line_idx == line_idx && edit.editing_id.is_empty() {
+            if *row + 5 <= visible_height {
+                let y = inner.y + *row as u16;
+                let file_path = state.file_at_line(line_idx);
+                let line_num = state.file_line_number(line_idx, edit.panel).unwrap_or(0);
+
+                let edit_area = if edit.panel == DiffPanel::Old {
+                    Rect::new(inner.x, y, panel_width + gutter_width, 5)
+                } else {
+                    Rect::new(
+                        div_x + divider_width,
+                        y,
+                        right_content_width + gutter_width,
+                        5,
+                    )
+                };
+
+                let title = format!(" Draft Note - {} - {} ", file_path, line_num);
+                let block = ratatui::widgets::Block::default()
+                    .borders(ratatui::widgets::Borders::ALL)
+                    .border_style(Style::default().fg(theme.accent))
+                    .title(title)
+                    .title_bottom(
+                        ratatui::text::Line::from(vec![
+                            ratatui::text::Span::styled(
+                                " Ctrl+S ",
+                                Style::default()
+                                    .fg(theme.accent)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            ratatui::text::Span::styled(
+                                " save ",
+                                Style::default().fg(theme.text_dimmed),
+                            ),
+                            ratatui::text::Span::styled(
+                                " Esc ",
+                                Style::default()
+                                    .fg(theme.accent)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                            ratatui::text::Span::styled(
+                                " close ",
+                                Style::default().fg(theme.text_dimmed),
+                            ),
+                        ])
+                        .alignment(ratatui::layout::Alignment::Right),
+                    );
+
+                let mut ta = edit.textarea.clone();
+                ta.set_block(block);
+                ratatui::widgets::Widget::render(&ta, edit_area, buf);
+            }
+            *row += 5;
+        }
+    }
+}
+
 /// Write a string directly to the buffer at (x, y) with the given style, clamped to max_width.
 #[inline]
 fn buf_write_str(buf: &mut Buffer, x: u16, y: u16, text: &str, style: Style, max_width: u16) {
@@ -2234,13 +2673,43 @@ fn wrap_row_count(text: &str, width: usize) -> usize {
 
 /// Visual height (in panel rows) of a diff line, matching the renderer's
 /// `num_rows` calculation in side-by-side wrap mode.
-fn line_visual_height(
+pub fn line_visual_height(
     diff_line: &DiffLine,
     panel_width: usize,
     right_content_width: usize,
+    state: &DiffViewState,
+    line_idx: usize,
 ) -> usize {
     if diff_line.file_header.is_some() {
         return 1;
+    }
+    let mut extra_rows = 0;
+    let edit_active = state
+        .inline_edit
+        .as_ref()
+        .map(|e| e.line_idx == line_idx)
+        .unwrap_or(false);
+    // Count saved notes (excluding the one being edited in-place).
+    let saved_note_count = if edit_active {
+        let editing_id = state
+            .inline_edit
+            .as_ref()
+            .map(|e| e.editing_id.as_str())
+            .unwrap_or("");
+        diff_line
+            .comment_notes
+            .iter()
+            .filter(|n| n.id != editing_id)
+            .count()
+    } else {
+        diff_line.comment_notes.len()
+    };
+    extra_rows += saved_note_count * 5;
+    if edit_active {
+        extra_rows += 5;
+    }
+    if !state.wrap {
+        return 1 + extra_rows;
     }
     let is_insert = diff_line.change_type == ChangeType::Insert;
     let is_delete = diff_line.change_type == ChangeType::Delete;
@@ -2262,19 +2731,44 @@ fn line_visual_height(
             .map(|(_, t)| wrap_row_count(t, right_content_width))
             .unwrap_or(1)
     };
-    left_rows.max(right_rows).max(1)
+    left_rows.max(right_rows).max(1) + extra_rows
 }
 
-fn unified_line_visual_height(
+pub fn unified_line_visual_height(
     diff_line: &DiffLine,
     content_width: usize,
     state: &DiffViewState,
+    line_idx: usize,
 ) -> usize {
     if diff_line.file_header.is_some() {
         return 1;
     }
+    let mut extra_rows = 0;
+    let edit_active = state
+        .inline_edit
+        .as_ref()
+        .map(|e| e.line_idx == line_idx)
+        .unwrap_or(false);
+    let saved_note_count = if edit_active {
+        let editing_id = state
+            .inline_edit
+            .as_ref()
+            .map(|e| e.editing_id.as_str())
+            .unwrap_or("");
+        diff_line
+            .comment_notes
+            .iter()
+            .filter(|n| n.id != editing_id)
+            .count()
+    } else {
+        diff_line.comment_notes.len()
+    };
+    extra_rows += saved_note_count * 5;
+    if edit_active {
+        extra_rows += 5;
+    }
 
-    match diff_line.change_type {
+    let code_rows = match diff_line.change_type {
         ChangeType::Equal => unified_line_row_count(&diff_line.new_line, content_width, state),
         ChangeType::Delete => {
             if state.side_view == DiffSideView::NewOnly {
@@ -2303,7 +2797,8 @@ fn unified_line_visual_height(
             };
             old_rows + new_rows
         }
-    }
+    };
+    code_rows + extra_rows
 }
 
 fn unified_line_row_count(
@@ -2719,13 +3214,18 @@ fn parse_multi_file_diff(diff: &str) -> Vec<(String, String)> {
 /// Extract the filename from a "diff --git a/path b/path" header line.
 fn extract_filename_from_diff_header(line: &str) -> String {
     // Format: "diff --git a/some/path b/some/path"
-    // We want "some/path" (the b/ side, which is the new name)
-    if let Some(b_part) = line.split(" b/").last() {
-        b_part.to_string()
-    } else {
-        // Fallback: strip "diff --git " prefix
-        line.trim_start_matches("diff --git ").to_string()
+    // or "diff --git i/some/path w/some/path"
+    let parts: Vec<&str> = line.split_whitespace().collect();
+    if parts.len() >= 4 {
+        let path2 = parts[3];
+        if path2.len() > 2 && path2.as_bytes()[1] == b'/' {
+            return path2[2..].to_string();
+        }
+        return path2.to_string();
     }
+
+    // Fallback: strip "diff --git " prefix
+    line.trim_start_matches("diff --git ").to_string()
 }
 
 /// Parse a unified diff into old/new content for side-by-side display.
@@ -2806,6 +3306,7 @@ fn rename_only_lines(old_path: &str, new_path: &str, tab_width: usize) -> Vec<Di
         old_segments: None,
         new_segments: None,
         file_header: None,
+        comment_notes: Vec::new(),
         section_index: 0,
     }]
 }
