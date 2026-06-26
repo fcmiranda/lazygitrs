@@ -36,7 +36,8 @@ We successfully implemented and stabilized the inline note editor. Here are the 
 - **Enriched `.lines.json` Format**: Notes now include `source` (user/agent), `author`, `createdAt`, `status` (new/sent/addressed), `tags`, `confidence`, and `rationale`. The file uses a wrapped format with a `revision` counter for change detection.
 - **ACP Endpoints**: `GET /session-api/notes` returns all notes; `GET /session-api/notes/{file}` filters by file; `POST /session-api` with `action: "list"` is an alias for GET.
 - **AI Skill**: A skill file at `skills/lazygitrs-review/SKILL.md` teaches AI CLIs (opencode, codex, gemini) how to interact with the ACP server.
-- **Config**: `aiNotes` block in `config.yml` with `enabled`, `sessionId`, and `notifyCommand` fields (using `{{session_id}}` and `{{prompt}}` placeholders).
+- **Config**: `aiNotes` block in `config.yml` with `enabled` (removed static `sessionId` and `notifyCommand` in favor of dynamic session routing).
+- **Dynamic Routing & Universal Integration**: The architecture fully supports seamless real-time "inline" workflows via Server-Sent Events (SSE), background daemon spawning (`notifyCommand`), or direct HTTP push (`serverUrl`), ensuring it's completely agnostic to the AI tool chosen.
 - **Visual Status Indicators**: Note borders show source (`📝 Note` vs `🤖 AI Note`), status dots (`●` new, `◆` sent, `✓` addressed), and `[S] send` action button for unsent user notes.
 
 ## Current State

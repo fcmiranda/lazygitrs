@@ -114,13 +114,30 @@ pub fn spawn_server(
                 .route("/session-api/events", get(handle_sse_events))
                 .with_state(state);
 
-            match TcpListener::bind("127.0.0.1:47657").await {
-                Ok(listener) => {
-                    let _ = axum::serve(listener, app).await;
+            // Retry binding in case the previous process hasn't released
+            // the port yet (TIME_WAIT or slow shutdown).
+            let mut bound: Option<TcpListener> = None;
+            for attempt in 0..10u32 {
+                match TcpListener::bind("127.0.0.1:47657").await {
+                    Ok(listener) => {
+                        bound = Some(listener);
+                        break;
+                    }
+                    Err(e) if attempt < 9 => {
+                        eprintln!(
+                            "lazygitrs: ACP port 47657 busy (attempt {}), retrying in 500ms: {}",
+                            attempt + 1,
+                            e
+                        );
+                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                    }
+                    Err(e) => {
+                        eprintln!("lazygitrs: Failed to bind ACP server after retries: {}", e);
+                    }
                 }
-                Err(e) => {
-                    eprintln!("lazygitrs: Failed to bind ACP server: {}", e);
-                }
+            }
+            if let Some(listener) = bound {
+                let _ = axum::serve(listener, app).await;
             }
         });
     });
