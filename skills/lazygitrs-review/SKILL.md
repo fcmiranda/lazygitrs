@@ -171,6 +171,7 @@ curl -s -X POST http://127.0.0.1:47657/session-api \
 ### Navigate to a Note or Line
 
 Forces the TUI to focus on a specific file, scroll to the requested line, and highlight any note intersecting that line.
+By default, this collapses all other files. To preserve the unified view of all diffs, set `"combinedView": true`.
 
 ```bash
 curl -s -X POST http://127.0.0.1:47657/session-api \
@@ -179,7 +180,8 @@ curl -s -X POST http://127.0.0.1:47657/session-api \
     "action": "navigate",
     "filePath": "src/main.rs",
     "side": "new",
-    "line": 10
+    "line": 10,
+    "combinedView": true
   }'
 ```
 

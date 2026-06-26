@@ -985,11 +985,24 @@ impl Gui {
                 }
                 crate::acp::AcpEvent::Navigate(nav) => {
                     // NOTE: Implemented the navigation endpoint (inspired by hunk).
-                    if let Some(idx) = self
-                        .file_tree_nodes
-                        .iter()
-                        .position(|n| !n.is_dir && n.path == nav.file_path)
-                    {
+                    let mut found_idx = None;
+
+                    if nav.combined_view == Some(true) {
+                        found_idx = Some(0);
+                    } else if self.show_file_tree {
+                        found_idx = self
+                            .file_tree_nodes
+                            .iter()
+                            .position(|n| !n.is_dir && n.path == nav.file_path);
+                    } else {
+                        let model = self.model.lock().unwrap();
+                        if let Some(idx) = model.files.iter().position(|f| f.name == nav.file_path)
+                        {
+                            found_idx = Some(idx + 1);
+                        }
+                    }
+
+                    if let Some(idx) = found_idx {
                         self.context_mgr
                             .set_selected(crate::gui::context::ContextId::Files, idx);
                         self.needs_diff_refresh = true;
@@ -997,8 +1010,8 @@ impl Gui {
                         self.pending_navigation = Some(nav.clone());
                     }
                     self.command_log.lock().unwrap().push(format!(
-                        "Navigating to {} (hunk: {:?}, line: {:?})",
-                        nav.file_path, nav.hunk_number, nav.line
+                        "Navigating to {} (hunk: {:?}, line: {:?}, combined: {:?})",
+                        nav.file_path, nav.hunk_number, nav.line, nav.combined_view
                     ));
                 }
             }
@@ -1114,9 +1127,17 @@ impl Gui {
                     // Note: `self.diff_view.load_notes` populated `self.diff_view.lines` with notes if they exist.
                     // Let's find the matching note ID or just scroll to the line.
                     // Scroll so the line is somewhat centered.
+                    let mut current_file = None;
                     let content_offset = self.diff_view.lines.iter().position(|l| {
-                        l.new_line.as_ref().map(|(n, _)| *n) == Some(line)
-                            || l.old_line.as_ref().map(|(n, _)| *n) == Some(line)
+                        if let Some(header) = &l.file_header {
+                            current_file = Some(header.clone());
+                        }
+                        let file_matches =
+                            current_file.as_ref().map_or(true, |f| f == &nav.file_path);
+
+                        file_matches
+                            && (l.new_line.as_ref().map(|(n, _)| *n) == Some(line)
+                                || l.old_line.as_ref().map(|(n, _)| *n) == Some(line))
                     });
 
                     if let Some(offset) = content_offset {

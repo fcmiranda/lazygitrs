@@ -88,6 +88,8 @@ pub struct NavigateContext {
     pub line: Option<usize>,
     #[serde(rename = "commentDirection")]
     pub comment_direction: Option<String>,
+    #[serde(rename = "combinedView")]
+    pub combined_view: Option<bool>,
 }
 
 /// Spawn the ACP HTTP server. Returns the SSE broadcast sender so the GUI
