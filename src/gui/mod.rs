@@ -167,6 +167,7 @@ pub struct Gui {
     pub needs_refresh: bool,
     pub needs_files_refresh: bool,
     pub needs_diff_refresh: bool,
+    pub pending_navigation: Option<crate::acp::NavigateContext>,
     pub search_query: String,
     /// Whether search input mode is active (typing into search bar).
     pub search_active: bool,
@@ -463,6 +464,7 @@ impl Gui {
             needs_refresh: false,
             needs_files_refresh: false,
             needs_diff_refresh: true,
+            pending_navigation: None,
             search_query: String::new(),
             search_active: false,
             search_matches: Vec::new(),
@@ -953,6 +955,7 @@ impl Gui {
                             .set_selected(crate::gui::context::ContextId::Files, idx);
                         self.needs_diff_refresh = true;
                         self.diff_focused = true;
+                        self.pending_navigation = Some(nav.clone());
                     }
                     self.command_log.lock().unwrap().push(format!(
                         "Navigating to {} (hunk: {:?}, line: {:?})",
@@ -1065,6 +1068,33 @@ impl Gui {
             }
 
             self.inject_hunk_comments();
+
+            // Handle pending navigation after diff is loaded
+            if let Some(nav) = self.pending_navigation.take() {
+                if let Some(line) = nav.line {
+                    // Note: `self.diff_view.load_notes` populated `self.diff_view.lines` with notes if they exist.
+                    // Let's find the matching note ID or just scroll to the line.
+                    // Scroll so the line is somewhat centered.
+                    let content_offset = self.diff_view.lines.iter().position(|l| {
+                        l.new_line.as_ref().map(|(n, _)| *n) == Some(line) || l.old_line.as_ref().map(|(n, _)| *n) == Some(line)
+                    });
+
+                    if let Some(offset) = content_offset {
+                        self.diff_view.scroll_offset = offset.saturating_sub(10);
+                    }
+
+                    // To select the note, we look for a note intersecting this line.
+                    // We can just search the loaded `lines_file.notes` in `notes_store`.
+                    let lines_file = crate::pager::notes_store::load(self.git.repo_path());
+                    if let Some(note) = lines_file
+                        .notes
+                        .iter()
+                        .find(|n| n.file == nav.file_path && n.line == line)
+                    {
+                        self.diff_view.selected_note = Some(note.id.clone());
+                    }
+                }
+            }
         }
     }
 

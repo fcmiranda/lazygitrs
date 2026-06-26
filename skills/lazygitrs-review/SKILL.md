@@ -168,6 +168,21 @@ curl -s -X POST http://127.0.0.1:47657/session-api \
   --data '{"action":"list"}'
 ```
 
+### Navigate to a Note or Line
+
+Forces the TUI to focus on a specific file, scroll to the requested line, and highlight any note intersecting that line.
+
+```bash
+curl -s -X POST http://127.0.0.1:47657/session-api \
+  -H 'content-type: application/json' \
+  --data '{
+    "action": "navigate",
+    "filePath": "src/main.rs",
+    "side": "new",
+    "line": 10
+  }'
+```
+
 ### Push review annotations
 
 ```bash

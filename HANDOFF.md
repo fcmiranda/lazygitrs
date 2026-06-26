@@ -45,6 +45,7 @@ The feature is fully functional.
 - You can hover over a line, open the text editor, type a note, save it, and it will persist above the line (marked with `📝 Note:`). 
 - If you edit a line that already has a note and clear the text box, it will remove the note from `.lines.json`.
 - External AI agents can now send HTTP POST requests to `127.0.0.1:47657/session-api` to push notes directly into the diff view in real-time.
+- **Tested & Verified:** The integration with Antigravity and the `lazygitrs-review` skill was successfully tested in real-time.
 
 ## Notes for GLM 5.2
 - The core logic for this feature lives heavily inside `src/pager/side_by_side.rs` (where the rendering and note loading happens) and `src/gui/mod.rs` (where keyboard/mouse events and the save logic are handled in `handle_inline_edit_key`).
