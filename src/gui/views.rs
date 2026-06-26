@@ -2592,14 +2592,14 @@ pub fn render_popup(
                 let ta_rect = Rect::new(x, ta_y, popup_width, ta_height);
                 frame.render_widget(Clear, ta_rect);
 
-                let main_title = ratatui::widgets::block::Title::from(format!(" {} ", title))
+                let main_title = ratatui::text::Line::from(format!(" {} ", title))
                     .alignment(ratatui::layout::Alignment::Left);
-                let close_title = ratatui::widgets::block::Title::from(" (x) ")
-                    .alignment(ratatui::layout::Alignment::Right);
+                let close_title =
+                    ratatui::text::Line::from(" (x) ").alignment(ratatui::layout::Alignment::Right);
 
                 let outer = Block::default()
-                    .title(main_title)
-                    .title(close_title)
+                    .title_top(main_title)
+                    .title_top(close_title)
                     .borders(Borders::ALL)
                     .border_style(Style::default().fg(theme.popup_border));
                 frame.render_widget(outer, ta_rect);

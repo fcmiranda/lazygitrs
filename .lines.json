@@ -1,8 +1,8 @@
 {
   "version": 1,
-  "revision": 70,
+  "revision": 85,
   "session": {
-    "sessionId": "a19b97c1-a4e8-449e-bb69-4c292fada2a8",
+    "sessionId": "c8b93470-7b99-455f-8d39-20febb5549df",
     "cli": "antigravity",
     "notifyCommand": "agy --conversation {{session_id}} --print {{prompt}}"
   },

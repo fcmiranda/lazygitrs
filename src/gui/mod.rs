@@ -8,7 +8,7 @@ pub mod scroll;
 pub mod views;
 
 use std::collections::{HashMap, HashSet};
-use std::io::{self, Stdout, Write};
+use std::io::{self, Stdout};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant};
@@ -941,6 +941,23 @@ impl Gui {
             match event {
                 crate::acp::AcpEvent::ApplyNotes(ctx) => {
                     self.apply_acp_notes(ctx);
+                }
+                crate::acp::AcpEvent::Navigate(nav) => {
+                    // NOTE: Implemented the navigation endpoint (inspired by hunk).
+                    if let Some(idx) = self
+                        .file_tree_nodes
+                        .iter()
+                        .position(|n| !n.is_dir && n.path == nav.file_path)
+                    {
+                        self.context_mgr
+                            .set_selected(crate::gui::context::ContextId::Files, idx);
+                        self.needs_diff_refresh = true;
+                        self.diff_focused = true;
+                    }
+                    self.command_log.lock().unwrap().push(format!(
+                        "Navigating to {} (hunk: {:?}, line: {:?})",
+                        nav.file_path, nav.hunk_number, nav.line
+                    ));
                 }
             }
         }
@@ -3229,7 +3246,7 @@ impl Gui {
             }
             PopupState::Menu {
                 items,
-                selected,
+                selected: _selected,
                 loading_index,
                 ..
             } => {
@@ -3791,7 +3808,7 @@ impl Gui {
             }
             PopupState::Checklist {
                 items,
-                selected,
+                selected: _selected,
                 search,
                 ..
             } => {

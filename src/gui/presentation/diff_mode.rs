@@ -78,7 +78,7 @@ fn render_selector(
     which: DiffModeFocus,
     theme: &Theme,
 ) {
-    let (is_a, focused, editing, display, number_label) = match which {
+    let (_is_a, focused, editing, display, number_label) = match which {
         DiffModeFocus::SelectorA => (
             true,
             state.focus == DiffModeFocus::SelectorA,

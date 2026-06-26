@@ -75,6 +75,19 @@ struct AppState {
 
 pub enum AcpEvent {
     ApplyNotes(AgentContext),
+    Navigate(NavigateContext),
+}
+
+#[derive(Deserialize, Debug, Clone)]
+pub struct NavigateContext {
+    #[serde(rename = "filePath")]
+    pub file_path: String,
+    #[serde(rename = "hunkNumber")]
+    pub hunk_number: Option<usize>,
+    pub side: Option<String>,
+    pub line: Option<usize>,
+    #[serde(rename = "commentDirection")]
+    pub comment_direction: Option<String>,
 }
 
 /// Spawn the ACP HTTP server. Returns the SSE broadcast sender so the GUI
@@ -333,7 +346,6 @@ async fn handle_acp_post(
                 crate::pager::notes_store::save(&state.repo_path, lines_file);
                 return Json(serde_json::json!({"status": "ok"}));
             }
-            // Return notes (optionally filtered by file).
             "list" | "comment-list" => {
                 let lines_file = crate::pager::notes_store::load(&state.repo_path);
                 let mut notes = lines_file.notes;
@@ -345,6 +357,21 @@ async fn handle_acp_post(
                     "revision": lines_file.revision,
                     "notes": notes,
                 }));
+            }
+            "navigate" => {
+                let Ok(nav) = serde_json::from_value::<NavigateContext>(payload.clone()) else {
+                    return Json(serde_json::json!({"error": "invalid navigate payload"}));
+                };
+                if nav.comment_direction.is_none()
+                    && nav.hunk_number.is_none()
+                    && (nav.side.is_none() || nav.line.is_none())
+                {
+                    return Json(
+                        serde_json::json!({"error": "navigate requires either hunkNumber or both side and line."}),
+                    );
+                }
+                let _ = state.tx.send(AcpEvent::Navigate(nav));
+                return Json(serde_json::json!({"status": "ok"}));
             }
             _ => {}
         }
