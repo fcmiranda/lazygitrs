@@ -29,8 +29,16 @@ struct Cli {
     git_dir: Option<PathBuf>,
 
     /// Enable debug logging
-    #[arg(short, long)]
+    #[arg(long)]
     debug: bool,
+
+    /// Open directly in expanded diff view
+    #[arg(short = 'd', long)]
+    diff: bool,
+
+    /// Specific file to focus in diff view (implies --diff)
+    #[arg(short = 'f', long)]
+    file: Option<String>,
 }
 
 /// Restore the terminal on panic so the user isn't left in raw mode + mouse
@@ -69,7 +77,9 @@ fn main() {
         .or(cli.work_tree)
         .unwrap_or_else(|| std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")));
 
-    match app::App::new(repo_path, cli.debug) {
+    let start_in_diff = cli.diff || cli.file.is_some();
+
+    match app::App::new(repo_path, cli.debug, start_in_diff, cli.file) {
         Ok(app) => {
             if let Err(e) = app.run() {
                 eprintln!("Error: {:#}", e);

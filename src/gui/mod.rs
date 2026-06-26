@@ -168,6 +168,8 @@ pub struct Gui {
     pub needs_files_refresh: bool,
     pub needs_diff_refresh: bool,
     pub pending_navigation: Option<crate::acp::NavigateContext>,
+    pub start_in_diff: bool,
+    pub start_file_filter: Option<String>,
     pub search_query: String,
     /// Whether search input mode is active (typing into search bar).
     pub search_active: bool,
@@ -371,7 +373,12 @@ impl Gui {
         };
     }
 
-    pub fn new(config: AppConfig, git: GitCommands) -> Result<Self> {
+    pub fn new(
+        config: AppConfig,
+        git: GitCommands,
+        start_in_diff: bool,
+        filter_file: Option<String>,
+    ) -> Result<Self> {
         let (diff_tx, diff_rx) = mpsc::channel();
         let (ai_commit_tx, ai_commit_rx) = mpsc::channel();
         let (commit_page_tx, commit_page_rx) = mpsc::channel();
@@ -465,6 +472,8 @@ impl Gui {
             needs_files_refresh: false,
             needs_diff_refresh: true,
             pending_navigation: None,
+            start_in_diff,
+            start_file_filter: filter_file,
             search_query: String::new(),
             search_active: false,
             search_matches: Vec::new(),
@@ -623,10 +632,40 @@ impl Gui {
                     self.sync_rebase_progress_view();
                 }
                 // Rebuild file tree if files arrived this frame.
-                if got_files && self.show_file_tree {
-                    let model = self.model.lock().unwrap();
-                    self.file_tree_nodes = build_file_tree(&model.files, &self.collapsed_dirs);
-                    self.context_mgr.files_list_len_override = Some(self.file_tree_nodes.len());
+                if got_files {
+                    if self.show_file_tree {
+                        let model = self.model.lock().unwrap();
+                        self.file_tree_nodes = build_file_tree(&model.files, &self.collapsed_dirs);
+                        self.context_mgr.files_list_len_override = Some(self.file_tree_nodes.len());
+                    }
+                    if self.start_in_diff {
+                        self.start_in_diff = false;
+                        self.diff_focused = true;
+                        self.screen_mode = ScreenMode::Full;
+
+                        if let Some(ref target_file) = self.start_file_filter {
+                            let model = self.model.lock().unwrap();
+                            if self.show_file_tree {
+                                if let Some(idx) = self
+                                    .file_tree_nodes
+                                    .iter()
+                                    .position(|n| !n.is_dir && n.path == *target_file)
+                                {
+                                    self.context_mgr
+                                        .set_selected(crate::gui::context::ContextId::Files, idx);
+                                }
+                            } else {
+                                if let Some(idx) =
+                                    model.files.iter().position(|f| f.name == *target_file)
+                                {
+                                    self.context_mgr.set_selected(
+                                        crate::gui::context::ContextId::Files,
+                                        idx + 1,
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
                 // Trigger a diff load once any data arrives.
                 if self.initial_load_received > 0 {
@@ -1076,7 +1115,8 @@ impl Gui {
                     // Let's find the matching note ID or just scroll to the line.
                     // Scroll so the line is somewhat centered.
                     let content_offset = self.diff_view.lines.iter().position(|l| {
-                        l.new_line.as_ref().map(|(n, _)| *n) == Some(line) || l.old_line.as_ref().map(|(n, _)| *n) == Some(line)
+                        l.new_line.as_ref().map(|(n, _)| *n) == Some(line)
+                            || l.old_line.as_ref().map(|(n, _)| *n) == Some(line)
                     });
 
                     if let Some(offset) = content_offset {
