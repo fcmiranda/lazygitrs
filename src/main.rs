@@ -1,3 +1,4 @@
+pub mod acp;
 mod app;
 mod config;
 mod git;

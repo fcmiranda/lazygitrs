@@ -28,12 +28,29 @@ We successfully implemented and stabilized the inline note editor. Here are the 
 - **Saving:** Users can save the currently open draft note by pressing `Enter` or `Ctrl+S`.
 - **Canceling:** Users can dismiss the draft note by pressing `Esc`.
 
+### 5. Agent Context Protocol (ACP) Integration
+- **HTTP Server**: Added `axum` and `tokio` dependencies to spawn a background HTTP server listening on `127.0.0.1:47657`.
+- **Session API**: Implemented a `POST /session-api` endpoint in `src/acp.rs` that accepts `AgentContext` JSON payloads (matching `hunk`'s schema).
+- **Real-time Updates**: The ACP server communicates with the main GUI loop via an `mpsc` channel (`acp_rx`). When an `AgentContext` payload is received, it translates the annotations into `.lines.json` format, persists them, and triggers a real-time UI reload via `self.diff_view.load_notes()`.
+- **Bidirectional Workflow**: The TUI can now notify an AI CLI session when the user creates a review note. The user presses `S` on a selected note, and lazygitrs spawns the configured `notifyCommand` (e.g. `opencode run --continue {{prompt}}`), sending a prompt that tells the AI to fetch notes from `GET /session-api/notes` and respond via `POST /session-api`.
+- **Enriched `.lines.json` Format**: Notes now include `source` (user/agent), `author`, `createdAt`, `status` (new/sent/addressed), `tags`, `confidence`, and `rationale`. The file uses a wrapped format with a `revision` counter for change detection.
+- **ACP Endpoints**: `GET /session-api/notes` returns all notes; `GET /session-api/notes/{file}` filters by file; `POST /session-api` with `action: "list"` is an alias for GET.
+- **AI Skill**: A skill file at `skills/lazygitrs-review/SKILL.md` teaches AI CLIs (opencode, codex, gemini) how to interact with the ACP server.
+- **Config**: `aiNotes` block in `config.yml` with `enabled`, `sessionId`, and `notifyCommand` fields (using `{{session_id}}` and `{{prompt}}` placeholders).
+- **Visual Status Indicators**: Note borders show source (`📝 Note` vs `🤖 AI Note`), status dots (`●` new, `◆` sent, `✓` addressed), and `[S] send` action button for unsent user notes.
+
 ## Current State
 The feature is fully functional. 
 - You can hover over a line, open the text editor, type a note, save it, and it will persist above the line (marked with `📝 Note:`). 
 - If you edit a line that already has a note and clear the text box, it will remove the note from `.lines.json`.
+- External AI agents can now send HTTP POST requests to `127.0.0.1:47657/session-api` to push notes directly into the diff view in real-time.
 
 ## Notes for GLM 5.2
 - The core logic for this feature lives heavily inside `src/pager/side_by_side.rs` (where the rendering and note loading happens) and `src/gui/mod.rs` (where keyboard/mouse events and the save logic are handled in `handle_inline_edit_key`).
+- The bidirectional AI workflow logic is in `src/gui/mod.rs` (`notify_ai_for_note`, `apply_acp_notes`) and `src/acp.rs` (HTTP server with `GET /session-api/notes` and `POST /session-api`).
+- The notes store I/O is centralized in `src/pager/notes_store.rs` — all reads/writes to `.lines.json` go through this module.
+- The `CommentNote` struct and its enriched fields (`source`, `status`, `tags`, etc.) are defined in `src/pager/mod.rs`.
+- The AI config block (`AiNotesConfig`) is in `src/config/user_config.rs`.
+- The skill file for AI CLIs is at `skills/lazygitrs-review/SKILL.md`.
 - If you need to make changes to how the diffs are parsed, refer to `parse_diff_output` and `parse_multi_file_diff` in `side_by_side.rs`.
 - The user may request further visual refinement or an explicit `(x)` click-to-close button on the dialog, but the foundation is solid and bug-free.

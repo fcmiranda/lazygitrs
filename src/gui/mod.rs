@@ -198,6 +198,11 @@ pub struct Gui {
     ai_commit_rx: mpsc::Receiver<AiCommitResult>,
     /// Sender cloned into background threads for AI commit generation.
     ai_commit_tx: mpsc::Sender<AiCommitResult>,
+    /// Receiver for ACP annotations
+    acp_rx: mpsc::Receiver<crate::acp::AcpEvent>,
+    /// Shared AI session ID registered via `POST /session-api {action:"register"}`.
+    /// Used to expand `{{session_id}}` in the `notifyCommand` template.
+    acp_session_id: crate::acp::SessionId,
     /// Receiver for incremental commit pages loaded after the first capped page.
     commit_page_rx: mpsc::Receiver<CommitPageResult>,
     /// Sender cloned into background threads for incremental commit loading.
@@ -362,6 +367,17 @@ impl Gui {
         let (remote_op_tx, remote_op_rx) = mpsc::channel();
         let (auto_fetch_tx, auto_fetch_rx) = mpsc::channel();
         let (menu_async_tx, menu_async_rx) = mpsc::channel();
+        let (acp_tx, acp_rx) = mpsc::channel();
+        // Restore session ID from .lines.json if available (survives restarts).
+        let persisted_session = crate::pager::notes_store::load(git.repo_path())
+            .session
+            .map(|s| s.session_id);
+        let acp_session_id: crate::acp::SessionId = Arc::new(Mutex::new(persisted_session));
+        crate::acp::spawn_server(
+            acp_tx,
+            git.repo_path().to_path_buf(),
+            acp_session_id.clone(),
+        );
         let show_file_tree = config
             .app_state
             .show_file_tree
@@ -441,6 +457,8 @@ impl Gui {
             diff_tx,
             ai_commit_rx,
             ai_commit_tx,
+            acp_rx,
+            acp_session_id,
             commit_page_rx,
             commit_page_tx,
             commit_page_loading: false,
@@ -597,6 +615,7 @@ impl Gui {
 
             // Check for completed background diff results
             self.receive_diff_results();
+            self.receive_acp_results();
 
             // Check for AI commit message generation results
             self.receive_ai_commit_results();
@@ -891,6 +910,80 @@ impl Gui {
         Ok(())
     }
 
+    fn receive_acp_results(&mut self) {
+        while let Ok(event) = self.acp_rx.try_recv() {
+            match event {
+                crate::acp::AcpEvent::ApplyNotes(ctx) => {
+                    self.apply_acp_notes(ctx);
+                }
+            }
+        }
+    }
+
+    fn apply_acp_notes(&mut self, ctx: crate::acp::AgentContext) {
+        let mut lines_file = crate::pager::notes_store::load(self.git.repo_path());
+
+        for file_ctx in ctx.files {
+            for ann in file_ctx.annotations {
+                let note_text = if let Some(r) = &ann.rationale {
+                    format!("{}\n{}", ann.summary, r)
+                } else {
+                    ann.summary.clone()
+                };
+
+                let id = ann.id.unwrap_or_else(|| {
+                    let line = ann
+                        .new_range
+                        .map(|(_, e)| e)
+                        .or_else(|| ann.old_range.map(|(_, e)| e))
+                        .unwrap_or(0);
+                    format!("{}-{}-agent", file_ctx.path, line)
+                });
+
+                let (line, panel) = if let Some((_, end_line)) = ann.new_range {
+                    (end_line, "New")
+                } else if let Some((_, end_line)) = ann.old_range {
+                    (end_line, "Old")
+                } else {
+                    continue;
+                };
+
+                // Mark any existing user notes on the same line as addressed.
+                for entry in lines_file.notes.iter_mut() {
+                    if entry.file == file_ctx.path
+                        && entry.line == line
+                        && entry.source == crate::pager::NoteSource::User
+                        && entry.status != crate::pager::NoteStatus::Addressed
+                    {
+                        entry.status = crate::pager::NoteStatus::Addressed;
+                    }
+                }
+
+                // Remove old agent note with same id, then push the new one.
+                lines_file.notes.retain(|c| c.id != id);
+                lines_file
+                    .notes
+                    .push(crate::pager::notes_store::LinesEntry {
+                        id,
+                        file: file_ctx.path.clone(),
+                        line,
+                        panel: panel.to_string(),
+                        comment: note_text,
+                        rationale: ann.rationale.clone(),
+                        source: crate::pager::NoteSource::Agent,
+                        author: ann.author.unwrap_or_else(|| "agent".to_string()),
+                        created_at: ann.created_at.unwrap_or_else(crate::pager::now_iso8601),
+                        status: crate::pager::NoteStatus::Addressed,
+                        tags: ann.tags.unwrap_or_default(),
+                        confidence: ann.confidence,
+                    });
+            }
+        }
+
+        crate::pager::notes_store::save(self.git.repo_path(), lines_file);
+        self.diff_view.load_notes(self.git.repo_path());
+    }
+
     /// Receive completed diff results from the background thread (non-blocking).
     fn receive_diff_results(&mut self) {
         // Drain all available results, keeping only the latest valid one
@@ -1016,11 +1109,11 @@ impl Gui {
                         old_segments: None,
                         new_segments: None,
                         file_header: None,
-                        comment_notes: vec![crate::pager::CommentNote {
-                            id: String::new(),
-                            text: note,
+                        comment_notes: vec![crate::pager::CommentNote::new_user(
+                            String::new(),
+                            note,
                             is_old,
-                        }],
+                        )],
                         section_index,
                     },
                 );
@@ -2385,31 +2478,28 @@ impl Gui {
                 .file_line_number(edit.line_idx, edit.panel)
                 .unwrap_or(0);
 
-            let target_path = self.git.repo_path().join(".lines.json");
-            let mut existing: Vec<serde_json::Value> = if target_path.exists() {
-                let content =
-                    std::fs::read_to_string(&target_path).unwrap_or_else(|_| "[]".to_string());
-                serde_json::from_str(&content).unwrap_or_default()
-            } else {
-                Vec::new()
-            };
-
             let panel_str = match edit.panel {
                 crate::pager::side_by_side::DiffPanel::Old => "Old",
                 crate::pager::side_by_side::DiffPanel::New => "New",
             };
 
+            let mut lines_file = crate::pager::notes_store::load(self.git.repo_path());
+
             // Editing existing note: update by id, or remove if emptied.
-            if !edit.editing_id.is_empty() {
+            // Track the note id so we can select it after saving.
+            let saved_note_id = if !edit.editing_id.is_empty() {
                 if comment.trim().is_empty() {
-                    existing.retain(|c| c["id"].as_str() != Some(&edit.editing_id));
+                    lines_file.notes.retain(|c| c.id != edit.editing_id);
+                    None
+                } else if let Some(entry) = lines_file
+                    .notes
+                    .iter_mut()
+                    .find(|c| c.id == edit.editing_id)
+                {
+                    entry.comment = comment;
+                    Some(edit.editing_id.clone())
                 } else {
-                    if let Some(entry) = existing
-                        .iter_mut()
-                        .find(|c| c["id"].as_str() == Some(&edit.editing_id))
-                    {
-                        entry["comment"] = serde_json::Value::String(comment);
-                    }
+                    None
                 }
             } else if !comment.trim().is_empty() {
                 // New note: generate unique id.
@@ -2423,18 +2513,24 @@ impl Gui {
                         .map(|d| d.as_nanos())
                         .unwrap_or(0)
                 );
-                existing.push(serde_json::json!({
-                    "id": id,
-                    "file": file_path,
-                    "comment": comment,
-                    "line": line_num,
-                    "panel": panel_str,
-                }));
-            }
+                lines_file
+                    .notes
+                    .push(crate::pager::notes_store::LinesEntry::new_user(
+                        id.clone(),
+                        file_path,
+                        line_num,
+                        panel_str,
+                        comment,
+                    ));
+                Some(id)
+            } else {
+                None
+            };
 
-            std::fs::write(target_path, serde_json::to_string_pretty(&existing)?)?;
+            crate::pager::notes_store::save(self.git.repo_path(), lines_file);
             self.diff_view.load_notes(self.git.repo_path());
             self.diff_view.inline_edit = None;
+            self.diff_view.selected_note = saved_note_id;
             return Ok(());
         }
 
@@ -2530,6 +2626,10 @@ impl Gui {
                     if let Some(ref note_id) = self.diff_view.selected_note.clone() {
                         for (i, dl) in self.diff_view.lines.iter().enumerate() {
                             if let Some(note) = dl.comment_notes.iter().find(|n| &n.id == note_id) {
+                                // Don't allow editing AI notes
+                                if note.source == crate::pager::NoteSource::Agent {
+                                    return Ok(());
+                                }
                                 let panel = if note.is_old {
                                     crate::pager::side_by_side::DiffPanel::Old
                                 } else {
@@ -2546,6 +2646,12 @@ impl Gui {
                     if let Some(ref note_id) = self.diff_view.selected_note.clone() {
                         self.delete_note(note_id.clone());
                         self.diff_view.selected_note = None;
+                    }
+                    return Ok(());
+                }
+                KeyCode::Char('S') => {
+                    if let Some(ref note_id) = self.diff_view.selected_note.clone() {
+                        self.notify_ai_for_note(note_id.clone());
                     }
                     return Ok(());
                 }
@@ -2839,6 +2945,13 @@ impl Gui {
                 self.diff_view.wrap = !self.diff_view.wrap;
                 self.diff_view.horizontal_scroll = 0;
                 self.persist_diff_line_wrap();
+            }
+            // t toggles note visibility
+            KeyCode::Char('t') => {
+                self.diff_view.notes_visible = !self.diff_view.notes_visible;
+                if !self.diff_view.notes_visible {
+                    self.diff_view.selected_note = None;
+                }
             }
             // Page up/down for larger scrolling
             KeyCode::PageDown => {
@@ -4941,6 +5054,34 @@ impl Gui {
                     description: "Copy selected text".into(),
                 },
                 HelpEntry {
+                    key: "c".into(),
+                    description: "Create note on line".into(),
+                },
+                HelpEntry {
+                    key: "t".into(),
+                    description: "Toggle notes visibility".into(),
+                },
+                HelpEntry {
+                    key: "n/N".into(),
+                    description: "Cycle next / previous note".into(),
+                },
+                HelpEntry {
+                    key: "e".into(),
+                    description: "Edit selected note (user notes only)".into(),
+                },
+                HelpEntry {
+                    key: "d".into(),
+                    description: "Delete selected note".into(),
+                },
+                HelpEntry {
+                    key: "S".into(),
+                    description: "Send selected note to AI".into(),
+                },
+                HelpEntry {
+                    key: "[+]".into(),
+                    description: "Click to add note on a line".into(),
+                },
+                HelpEntry {
                     key: "q".into(),
                     description: "Quit".into(),
                 },
@@ -6069,15 +6210,18 @@ impl Gui {
                                 );
                             }
                         }
-                        let note_count = self
-                            .diff_view
-                            .lines
-                            .get(line_idx)
-                            .map(|dl| dl.comment_notes.len())
-                            .unwrap_or(0);
+                        let note_count = if self.diff_view.notes_visible {
+                            self.diff_view
+                                .lines
+                                .get(line_idx)
+                                .map(|dl| dl.comment_notes.len())
+                                .unwrap_or(0)
+                        } else {
+                            0
+                        };
                         let plus_y = pl.inner_y + plus_acc as u16 + (note_count * 5) as u16;
 
-                        // Check if click was on `[+]` button
+                        // Check if click was on `[+]` button (hidden when notes are off)
                         let is_on_plus_x = match panel {
                             crate::pager::side_by_side::DiffPanel::Old => {
                                 mouse.column >= pl.old_content_end_x.saturating_sub(3)
@@ -6088,7 +6232,7 @@ impl Gui {
                                     && mouse.column < pl.new_content_end_x
                             }
                         };
-                        if is_on_plus_x && mouse.row == plus_y {
+                        if self.diff_view.notes_visible && is_on_plus_x && mouse.row == plus_y {
                             self.open_inline_note_editor(line_idx, panel, None);
                             return;
                         }
@@ -6134,7 +6278,7 @@ impl Gui {
                             let block_row = click_off % 5;
 
                             if block_row == 4 {
-                                // Bottom border — [d] del vs [e] edit by X position
+                                // Bottom border — [S] send / [e] edit / [d] del by X position
                                 let panel_end_x = match panel {
                                     crate::pager::side_by_side::DiffPanel::Old => {
                                         pl.old_content_end_x
@@ -6144,14 +6288,51 @@ impl Gui {
                                     }
                                 };
                                 let del_start = panel_end_x.saturating_sub(9);
-                                let edit_start = panel_end_x.saturating_sub(19);
 
-                                if mouse.column >= del_start && mouse.column < panel_end_x {
-                                    self.delete_note(note_id);
-                                } else if mouse.column >= edit_start && mouse.column < del_start {
-                                    self.open_inline_note_editor(line_idx, panel, Some(note_id));
+                                // Check note source to determine which buttons are shown
+                                let is_user_note = self.diff_view.lines[line_idx]
+                                    .comment_notes
+                                    .iter()
+                                    .any(|n| {
+                                        n.id == note_id
+                                            && n.source == crate::pager::NoteSource::User
+                                    });
+                                let has_send = self.diff_view.lines[line_idx]
+                                    .comment_notes
+                                    .iter()
+                                    .any(|n| {
+                                        n.id == note_id
+                                            && n.source == crate::pager::NoteSource::User
+                                            && n.status == crate::pager::NoteStatus::New
+                                    });
+
+                                if is_user_note {
+                                    let edit_start = panel_end_x.saturating_sub(19);
+                                    let send_start = panel_end_x.saturating_sub(29);
+                                    if mouse.column >= del_start && mouse.column < panel_end_x {
+                                        self.delete_note(note_id);
+                                    } else if mouse.column >= edit_start && mouse.column < del_start
+                                    {
+                                        self.open_inline_note_editor(
+                                            line_idx,
+                                            panel,
+                                            Some(note_id),
+                                        );
+                                    } else if has_send
+                                        && mouse.column >= send_start
+                                        && mouse.column < edit_start
+                                    {
+                                        self.notify_ai_for_note(note_id);
+                                    } else {
+                                        self.diff_view.selected_note = Some(note_id);
+                                    }
                                 } else {
-                                    self.diff_view.selected_note = Some(note_id);
+                                    // AI notes: only [d] del is shown
+                                    if mouse.column >= del_start && mouse.column < panel_end_x {
+                                        self.delete_note(note_id);
+                                    } else {
+                                        self.diff_view.selected_note = Some(note_id);
+                                    }
                                 }
                             } else {
                                 // Note body — just select, don't enter edit mode
@@ -6919,6 +7100,10 @@ impl Gui {
         if diff_line.comment_notes.is_empty() {
             return None;
         }
+        // Notes are not clickable when hidden
+        if !self.diff_view.notes_visible {
+            return None;
+        }
 
         let panel_is_old = match panel {
             DiffPanel::Old => true,
@@ -6975,22 +7160,151 @@ impl Gui {
     }
 
     fn delete_note(&mut self, note_id: String) {
-        let target_path = self.git.repo_path().join(".lines.json");
-        if !target_path.exists() {
+        let mut lines_file = crate::pager::notes_store::load(self.git.repo_path());
+        lines_file.notes.retain(|c| c.id != note_id);
+        crate::pager::notes_store::save(self.git.repo_path(), lines_file);
+        self.diff_view.load_notes(self.git.repo_path());
+    }
+
+    /// Send a user note to the AI session by spawning the configured
+    /// `notifyCommand` with `{{session_id}}` and `{{prompt}}` expanded.
+    ///
+    /// After spawning, the note's `status` is updated from `New` → `Sent`
+    /// in `.lines.json` so the TUI can show a visual indicator.
+    fn notify_ai_for_note(&mut self, note_id: String) {
+        let ai_config = &self.config.user_config.ai_notes;
+        if !ai_config.enabled || ai_config.notify_command.is_empty() {
+            self.show_error(
+                "AI Notes Not Configured",
+                anyhow::anyhow!(
+                    "Set `aiNotes.notifyCommand` in config.yml to enable sending notes to an AI session.\n\
+                     Example:\n\
+                     aiNotes:\n  enabled: true\n  notifyCommand: \"opencode run --continue {{prompt}}\""
+                ),
+            );
             return;
         }
-        let content = match std::fs::read_to_string(&target_path) {
-            Ok(c) => c,
-            Err(_) => return,
+
+        // Find the note and its file/line context.
+        let mut note_info: Option<(String, usize, String)> = None;
+        for (i, dl) in self.diff_view.lines.iter().enumerate() {
+            if let Some(note) = dl.comment_notes.iter().find(|n| n.id == note_id) {
+                let file = self.diff_view.file_at_line(i).to_string();
+                let panel = if note.is_old {
+                    crate::pager::side_by_side::DiffPanel::Old
+                } else {
+                    crate::pager::side_by_side::DiffPanel::New
+                };
+                let line = self.diff_view.file_line_number(i, panel).unwrap_or(0);
+                note_info = Some((file, line, note.text.clone()));
+                break;
+            }
+        }
+
+        let (file, line, note_text) = match note_info {
+            Some(info) => info,
+            None => return,
         };
-        let mut existing: Vec<serde_json::Value> =
-            serde_json::from_str(&content).unwrap_or_default();
-        existing.retain(|c| c["id"].as_str() != Some(&note_id));
-        let _ = std::fs::write(
-            target_path,
-            serde_json::to_string_pretty(&existing).unwrap_or_else(|_| "[]".to_string()),
+
+        // Build the prompt that tells the AI to check the notes endpoint.
+        let prompt = format!(
+            "A review note was created in lazygitrs on file '{}' at line {}:\n\n\"{}\"\n\n\
+             Load the lazygitrs-review skill if available. \
+             Fetch all notes with: curl -s http://127.0.0.1:47657/session-api/notes\n\
+             Review the note above and respond by POSTing your annotations to \
+             http://127.0.0.1:47657/session-api using the AgentContext JSON format:\n\
+             {{\"version\":1,\"files\":[{{\"path\":\"...\",\"annotations\":[{{\"summary\":\"...\",\"rationale\":\"...\",\"newRange\":[L,L]}}]}}]}}",
+            file, line, note_text
         );
-        self.diff_view.load_notes(self.git.repo_path());
+
+        // Expand the command template — read session ID from the shared
+        // ACP state (registered by the AI CLI via POST /session-api).
+        // Fall back to the persisted session in .lines.json if the
+        // in-memory state is empty (e.g. after a lazygitrs restart).
+        let session_id = self
+            .acp_session_id
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or(None)
+            .or_else(|| {
+                crate::pager::notes_store::load(self.git.repo_path())
+                    .session
+                    .map(|s| s.session_id)
+            })
+            .unwrap_or_default();
+        let cmd_str = ai_config
+            .notify_command
+            .replace("{{session_id}}", &session_id)
+            .replace("{{prompt}}", &shell_escape_arg(&prompt));
+
+        // Split into program + args (respecting quoted segments).
+        let parts = split_command(&cmd_str);
+        if parts.is_empty() {
+            self.show_error(
+                "AI Notes Error",
+                anyhow::anyhow!("Empty command after template expansion"),
+            );
+            return;
+        }
+
+        crate::os::cmd::log_command(&cmd_str);
+        let log_path = self.git.repo_path().join(".lazygitrs-ai-notify.log");
+        match std::fs::File::create(&log_path) {
+            Ok(log_file) => {
+                let stderr_file = log_file.try_clone().unwrap_or_else(|_| {
+                    std::fs::OpenOptions::new()
+                        .write(true)
+                        .open("/dev/null")
+                        .unwrap()
+                });
+                match std::process::Command::new(&parts[0])
+                    .args(&parts[1..])
+                    .stdout(std::process::Stdio::from(log_file))
+                    .stderr(std::process::Stdio::from(stderr_file))
+                    .spawn()
+                {
+                    Ok(_) => {
+                        // Update note status → Sent.
+                        let mut lines_file = crate::pager::notes_store::load(self.git.repo_path());
+                        if let Some(entry) = lines_file.notes.iter_mut().find(|c| c.id == note_id) {
+                            entry.status = crate::pager::NoteStatus::Sent;
+                        }
+                        crate::pager::notes_store::save(self.git.repo_path(), lines_file);
+                        self.diff_view.load_notes(self.git.repo_path());
+                    }
+                    Err(e) => {
+                        self.show_error(
+                            "AI Notes Error",
+                            anyhow::anyhow!("Failed to spawn AI CLI: {}", e),
+                        );
+                    }
+                }
+            }
+            Err(_) => {
+                // Fallback: redirect to /dev/null
+                match std::process::Command::new(&parts[0])
+                    .args(&parts[1..])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .spawn()
+                {
+                    Ok(_) => {
+                        let mut lines_file = crate::pager::notes_store::load(self.git.repo_path());
+                        if let Some(entry) = lines_file.notes.iter_mut().find(|c| c.id == note_id) {
+                            entry.status = crate::pager::NoteStatus::Sent;
+                        }
+                        crate::pager::notes_store::save(self.git.repo_path(), lines_file);
+                        self.diff_view.load_notes(self.git.repo_path());
+                    }
+                    Err(e) => {
+                        self.show_error(
+                            "AI Notes Error",
+                            anyhow::anyhow!("Failed to spawn AI CLI: {}", e),
+                        );
+                    }
+                }
+            }
+        }
     }
 
     fn cycle_note(&mut self, forward: bool) {
@@ -7847,6 +8161,46 @@ fn setup_terminal() -> Result<(Term, bool)> {
     let backend = CrosstermBackend::new(stdout);
     let terminal = Terminal::new(backend)?;
     Ok((terminal, keyboard_enhanced))
+}
+
+/// Shell-escape a string so it can be safely passed as a single argument.
+/// Wraps in single quotes and escapes any embedded single quotes.
+fn shell_escape_arg(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// Split a command string into program + args, respecting single-quoted
+/// segments (the prompt is always single-quoted via `shell_escape_arg`).
+fn split_command(cmd: &str) -> Vec<String> {
+    let mut parts = Vec::new();
+    let mut current = String::new();
+    let mut in_single_quote = false;
+
+    for c in cmd.chars() {
+        match c {
+            '\'' if !in_single_quote => {
+                in_single_quote = true;
+            }
+            '\'' if in_single_quote => {
+                in_single_quote = false;
+            }
+            c if in_single_quote => {
+                current.push(c);
+            }
+            ' ' | '\t' if !in_single_quote => {
+                if !current.is_empty() {
+                    parts.push(std::mem::take(&mut current));
+                }
+            }
+            c => {
+                current.push(c);
+            }
+        }
+    }
+    if !current.is_empty() {
+        parts.push(current);
+    }
+    parts
 }
 
 fn restore_terminal(terminal: &mut Term, keyboard_enhanced: bool) -> Result<()> {

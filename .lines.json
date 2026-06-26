@@ -1,0 +1,125 @@
+{
+  "version": 1,
+  "revision": 8,
+  "session": {
+    "sessionId": "opencode-session-001",
+    "cli": "opencode"
+  },
+  "notes": [
+    {
+      "id": "ai-note-session-persist",
+      "file": "src/pager/notes_store.rs",
+      "line": 44,
+      "panel": "New",
+      "comment": "Good addition: persisting session to .lines.json enables session recovery after lazygitrs restarts. Consider adding a timestamp to SessionInfo for stale-session detection.\nWithout a timestamp, a stale session from a previous CLI run could be restored even if that AI session no longer exists.",
+      "rationale": "Without a timestamp, a stale session from a previous CLI run could be restored even if that AI session no longer exists.",
+      "source": "agent",
+      "author": "glm-5.2",
+      "created_at": "2026-06-26T10:16:54.438Z",
+      "status": "addressed",
+      "tags": [
+        "enhancement"
+      ],
+      "confidence": "medium"
+    },
+    {
+      "id": "ai-note-load-fallback",
+      "file": "src/pager/notes_store.rs",
+      "line": 154,
+      "panel": "New",
+      "comment": "The legacy flat-array fallback correctly sets session: None. Good backward compat handling.\nOld .lines.json files won't have a session field, so defaulting to None is correct.",
+      "rationale": "Old .lines.json files won't have a session field, so defaulting to None is correct.",
+      "source": "agent",
+      "author": "glm-5.2",
+      "created_at": "2026-06-26T10:16:54.438Z",
+      "status": "addressed",
+      "tags": [
+        "compat"
+      ],
+      "confidence": "high"
+    },
+    {
+      "id": "ai-note-register-persist",
+      "file": "src/acp.rs",
+      "line": 181,
+      "panel": "New",
+      "comment": "The register handler now persists session+cli to .lines.json. This is the right approach for crash recovery.\nStoring both sessionId and cli allows the TUI to know which AI tool was connected, useful for the notifyCommand template.",
+      "rationale": "Storing both sessionId and cli allows the TUI to know which AI tool was connected, useful for the notifyCommand template.",
+      "source": "agent",
+      "author": "glm-5.2",
+      "created_at": "2026-06-26T10:16:54.438Z",
+      "status": "addressed",
+      "tags": [
+        "architecture"
+      ],
+      "confidence": "high"
+    },
+    {
+      "id": "ai-note-edit-guard",
+      "file": "src/gui/mod.rs",
+      "line": 1632,
+      "panel": "New",
+      "comment": "The guard that blocks editing AI notes is clean. The early return Ok(()) silently ignores the keypress — consider showing a brief status message like \"Cannot edit AI notes\".\nSilent ignores can confuse users who press e on an AI note and nothing happens.",
+      "rationale": "Silent ignores can confuse users who press e on an AI note and nothing happens.",
+      "source": "agent",
+      "author": "glm-5.2",
+      "created_at": "2026-06-26T10:16:54.438Z",
+      "status": "addressed",
+      "tags": [
+        "ux"
+      ],
+      "confidence": "medium"
+    },
+    {
+      "id": "src/pager/notes_store.rs-31-New-1782469065633824019",
+      "file": "src/pager/notes_store.rs",
+      "line": 31,
+      "panel": "New",
+      "comment": "what this line do?",
+      "created_at": "2026-06-26T10:17:45.633Z",
+      "status": "addressed"
+    },
+    {
+      "id": "agent-response-31",
+      "file": "src/pager/notes_store.rs",
+      "line": 31,
+      "panel": "New",
+      "comment": "This line applies the derive macros Debug, Clone, Serialize, Deserialize to the SessionInfo struct. Debug enables pretty-printing for logging. Clone allows cheap copies. Serialize/Deserialize let serde automatically convert SessionInfo to/from JSON in .lines.json — the #[serde(rename = \"sessionId\")] on the field below maps session_id to the camelCase JSON key.\nSessionInfo is persisted inside LinesFile and sent over the HTTP API, so it needs both Serialize (for writing to .lines.json and HTTP responses) and Deserialize (for reading back). Clone is used when the GUI reads the persisted session on startup. Debug is for developer convenience.",
+      "rationale": "SessionInfo is persisted inside LinesFile and sent over the HTTP API, so it needs both Serialize (for writing to .lines.json and HTTP responses) and Deserialize (for reading back). Clone is used when the GUI reads the persisted session on startup. Debug is for developer convenience.",
+      "source": "agent",
+      "author": "glm-5.2",
+      "created_at": "2026-06-26T10:18:14.442Z",
+      "status": "addressed",
+      "tags": [
+        "explanation"
+      ],
+      "confidence": "high"
+    },
+    {
+      "id": "src/pager/notes_store.rs-31-New-1782469208876833778",
+      "file": "src/pager/notes_store.rs",
+      "line": 31,
+      "panel": "New",
+      "comment": "nice, could you give me more details?",
+      "created_at": "2026-06-26T10:20:08.876Z",
+      "status": "sent"
+    },
+    {
+      "id": "agent-response-31-detailed",
+      "file": "src/pager/notes_store.rs",
+      "line": 37,
+      "panel": "New",
+      "comment": "Here is the full breakdown of each derive macro and attribute on SessionInfo (lines 31-38):\n\n1. **Debug** — Auto-generates a human-readable format via `{:?}`. Used in error logging and developer debugging. Example output: `SessionInfo { session_id: \"opencode-001\", cli: \"opencode\" }`.\n\n2. **Clone** — Generates a `.clone()` method that deep-copies the struct. Since SessionInfo only contains Strings (heap-owned), this is a cheap allocation. Used when the GUI reads the persisted session on startup (`notes_store::load()` returns a `LinesFile`, and `session.map(|s| s.session_id)` clones the string out).\n\n3. **Serialize** — Makes serde produce JSON from this struct. This is used in two places:\n   - `notes_store::save()` calls `serde_json::to_string_pretty(&file)` which serializes the whole `LinesFile` including the nested `SessionInfo`.\n   - The HTTP handler `handle_get_notes` returns the full `LinesFile` as JSON, so AI clients see the session field too.\n   The output JSON looks like: `{\"sessionId\":\"opencode-001\",\"cli\":\"opencode\"}`.\n\n4. **Deserialize** — Makes serde parse JSON into this struct. Used in:\n   - `notes_store::load()` when reading `.lines.json` back from disk.\n   - The register handler reads the incoming `sessionId` and `cli` from the POST body manually (not via Deserialize on SessionInfo), but the load path does use it.\n\n**Field-level serde attributes (lines 33-37):**\n- `#[serde(rename = \"sessionId\")]` on `session_id` — Maps the Rust snake_case field to camelCase JSON key. This matches the convention used by the HTTP API and the ACP protocol.\n- `#[serde(default, skip_serializing_if = \"String::is_empty\")]` on `cli` — If `cli` is missing from JSON during deserialization, it defaults to `String::default()` (empty string). When serializing, if `cli` is empty, it is omitted from the JSON output entirely. This keeps `.lines.json` clean when no CLI name was provided.\n\n**The `Option<SessionInfo>` wrapper on LinesFile (line 24):**\nSessionInfo is wrapped in `Option` because not all `.lines.json` files have a session (e.g. legacy files, or before any AI registers). The `skip_serializing_if = \"Option::is_none\"` attribute means the `session` key is entirely absent from JSON when there is no session, rather than being `null`.\nEach derive macro serves a specific role in the bidirectional workflow: Serialize/Deserialize for .lines.json persistence and HTTP API JSON responses, Clone for copying session data into the GUI on startup, Debug for developer logging. The serde attributes control JSON field naming and conditional output to keep the file format clean.",
+      "rationale": "Each derive macro serves a specific role in the bidirectional workflow: Serialize/Deserialize for .lines.json persistence and HTTP API JSON responses, Clone for copying session data into the GUI on startup, Debug for developer logging. The serde attributes control JSON field naming and conditional output to keep the file format clean.",
+      "source": "agent",
+      "author": "glm-5.2",
+      "created_at": "2026-06-26T10:20:38.570Z",
+      "status": "addressed",
+      "tags": [
+        "explanation",
+        "detailed"
+      ],
+      "confidence": "high"
+    }
+  ]
+}

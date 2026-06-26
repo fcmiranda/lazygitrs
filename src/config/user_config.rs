@@ -16,6 +16,8 @@ pub struct UserConfig {
     pub os: OsConfig,
     #[serde(rename = "customCommands")]
     pub custom_commands: Vec<CustomCommand>,
+    #[serde(rename = "aiNotes")]
+    pub ai_notes: AiNotesConfig,
 }
 
 impl Default for UserConfig {
@@ -27,6 +29,7 @@ impl Default for UserConfig {
             keybinding: KeybindingConfig::default(),
             os: OsConfig::default(),
             custom_commands: Vec::new(),
+            ai_notes: AiNotesConfig::default(),
         }
     }
 }
@@ -344,4 +347,50 @@ pub struct CustomCommandPrompt {
     pub key: Option<String>,
     pub command: Option<String>,
     pub filter: Option<String>,
+}
+
+/// Configuration for the bidirectional AI review notes workflow.
+///
+/// When the user presses `S` on a selected note, lazygitrs spawns the
+/// `notifyCommand` with `{{session_id}}` and `{{prompt}}` expanded, sending
+/// the note context to a running AI CLI session (opencode, codex, gemini, etc).
+///
+/// The session ID is registered dynamically by the AI CLI at startup via
+/// `POST /session-api {"action":"register","sessionId":"..."}` — no need to
+/// hardcode it in config.
+///
+/// Example config.yml:
+/// ```yaml
+/// aiNotes:
+///   enabled: true
+///   notifyCommand: "opencode run --session {{session_id}} {{prompt}}"
+/// ```
+///
+/// CLI-specific templates:
+/// - opencode: `"opencode run --session {{session_id}} {{prompt}}"`
+///   (or `--continue` instead of `--session <id>` for most-recent session)
+/// - codex:    `"codex exec resume {{session_id}} {{prompt}}"`
+///   (or `--last` instead of a session id)
+/// - gemini:   `"gemini -p {{prompt}}"`
+///   (gemini doesn't support explicit session continuation)
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AiNotesConfig {
+    /// Master toggle for the AI notes bidirectional workflow.
+    pub enabled: bool,
+    /// Command template with `{{session_id}}` and `{{prompt}}` placeholders.
+    /// If empty, the notify feature is disabled.
+    /// The session ID is provided at runtime by the AI CLI via
+    /// `POST /session-api {"action":"register"}`.
+    #[serde(rename = "notifyCommand")]
+    pub notify_command: String,
+}
+
+impl Default for AiNotesConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            notify_command: String::new(),
+        }
+    }
 }

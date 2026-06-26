@@ -355,6 +355,8 @@ pub struct DiffViewState {
     pub selected_note: Option<String>,
     /// Active inline note editor.
     pub inline_edit: Option<InlineEdit>,
+    /// Whether note boxes are visible (toggled with `t`).
+    pub notes_visible: bool,
 }
 
 impl Default for DiffViewState {
@@ -387,6 +389,7 @@ impl Default for DiffViewState {
             hovered_line: None,
             selected_note: None,
             inline_edit: None,
+            notes_visible: true,
         }
     }
 }
@@ -682,23 +685,9 @@ impl DiffViewState {
     }
 
     pub fn load_notes(&mut self, repo_path: &std::path::Path) {
-        let target_path = repo_path.join(".lines.json");
-        if !target_path.exists() {
-            for diff_line in self.lines.iter_mut() {
-                diff_line.comment_notes.clear();
-            }
-            return;
-        }
-        let content = match std::fs::read_to_string(&target_path) {
-            Ok(c) => c,
-            Err(_) => {
-                for diff_line in self.lines.iter_mut() {
-                    diff_line.comment_notes.clear();
-                }
-                return;
-            }
-        };
-        let existing: Vec<serde_json::Value> = serde_json::from_str(&content).unwrap_or_default();
+        let lines_file = crate::pager::notes_store::load(repo_path);
+        let existing = &lines_file.notes;
+
         if existing.is_empty() {
             for diff_line in self.lines.iter_mut() {
                 diff_line.comment_notes.clear();
@@ -739,18 +728,8 @@ impl DiffViewState {
             if let Some((line_num, _)) = diff_line.old_line.as_ref() {
                 let file_line = *line_num + old_off;
                 for c in existing.iter() {
-                    if c["file"].as_str() == Some(&current_file)
-                        && c["line"].as_u64() == Some(file_line as u64)
-                        && c["panel"].as_str().unwrap_or("New") == "Old"
-                    {
-                        if let Some(note) = c["comment"].as_str() {
-                            let id = c["id"].as_str().unwrap_or("").to_string();
-                            diff_line.comment_notes.push(crate::pager::CommentNote {
-                                id,
-                                text: note.to_string(),
-                                is_old: true,
-                            });
-                        }
+                    if c.file == current_file && c.line == file_line && c.panel == "Old" {
+                        diff_line.comment_notes.push(c.to_comment_note());
                     }
                 }
             }
@@ -758,18 +737,8 @@ impl DiffViewState {
             if let Some((line_num, _)) = diff_line.new_line.as_ref() {
                 let file_line = *line_num + new_off;
                 for c in existing.iter() {
-                    if c["file"].as_str() == Some(&current_file)
-                        && c["line"].as_u64() == Some(file_line as u64)
-                        && c["panel"].as_str().unwrap_or("New") == "New"
-                    {
-                        if let Some(note) = c["comment"].as_str() {
-                            let id = c["id"].as_str().unwrap_or("").to_string();
-                            diff_line.comment_notes.push(crate::pager::CommentNote {
-                                id,
-                                text: note.to_string(),
-                                is_old: false,
-                            });
-                        }
+                    if c.file == current_file && c.line == file_line && c.panel == "New" {
+                        diff_line.comment_notes.push(c.to_comment_note());
                     }
                 }
             }
@@ -2281,6 +2250,10 @@ fn render_file_header(buf: &mut Buffer, x: u16, y: u16, width: u16, filename: &s
 }
 
 fn render_hover_plus_button(buf: &mut Buffer, area: Rect, state: &DiffViewState, theme: &Theme) {
+    // Don't render [+] when notes are hidden.
+    if !state.notes_visible {
+        return;
+    }
     let (line_idx, panel) = match state.hovered_line {
         Some(h) => h,
         None => return,
@@ -2386,6 +2359,8 @@ fn render_diff_annotations(
 
     // Render saved notes and the editor interleaved in order.
     // When editing an existing note, the editor replaces it in-place.
+    // When notes are hidden, skip rendering saved note boxes (but still
+    // show the editor if one is active).
     for note in &diff_line.comment_notes {
         let is_being_edited = edit_active
             && state
@@ -2450,6 +2425,11 @@ fn render_diff_annotations(
             continue;
         }
 
+        // Skip rendering note boxes when notes are hidden.
+        if !state.notes_visible {
+            continue;
+        }
+
         if *row + 5 <= visible_height {
             let y = inner.y + *row as u16;
             let (area_x, area_w) = if note.is_old {
@@ -2468,23 +2448,67 @@ fn render_diff_annotations(
             } else {
                 Modifier::empty()
             };
-            let block = ratatui::widgets::Block::default()
-                .borders(ratatui::widgets::Borders::ALL)
-                .border_style(Style::default().fg(border_fg).add_modifier(border_mod))
-                .title(" 📝 Note ")
-                .title_bottom(
-                    ratatui::text::Line::from(vec![
+            let block = {
+                let title_prefix = if note.source == crate::pager::NoteSource::Agent {
+                    " 🤖 AI Note "
+                } else {
+                    " 📝 Note "
+                };
+                let status_dot = match note.status {
+                    crate::pager::NoteStatus::New => "●",
+                    crate::pager::NoteStatus::Sent => "◆",
+                    crate::pager::NoteStatus::Addressed => "✓",
+                };
+                let status_color = match note.status {
+                    crate::pager::NoteStatus::New => theme.text_dimmed,
+                    crate::pager::NoteStatus::Sent => theme.accent,
+                    crate::pager::NoteStatus::Addressed => theme.accent_secondary,
+                };
+                let title_spans = vec![
+                    ratatui::text::Span::styled(
+                        title_prefix,
+                        Style::default().fg(border_fg).add_modifier(border_mod),
+                    ),
+                    ratatui::text::Span::styled(
+                        status_dot,
+                        Style::default()
+                            .fg(status_color)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ];
+                let mut bottom_spans = vec![ratatui::text::Span::styled(
+                    " [d] del ",
+                    Style::default().fg(theme.text_dimmed),
+                )];
+                if note.source == crate::pager::NoteSource::User {
+                    bottom_spans.insert(
+                        0,
                         ratatui::text::Span::styled(
                             " [e] edit ",
                             Style::default().fg(theme.text_dimmed),
                         ),
-                        ratatui::text::Span::styled(
-                            " [d] del ",
-                            Style::default().fg(theme.text_dimmed),
-                        ),
-                    ])
-                    .alignment(ratatui::layout::Alignment::Right),
-                );
+                    );
+                    if note.status == crate::pager::NoteStatus::New {
+                        bottom_spans.insert(
+                            0,
+                            ratatui::text::Span::styled(
+                                " [S] send ",
+                                Style::default()
+                                    .fg(theme.accent)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                        );
+                    }
+                }
+                ratatui::widgets::Block::default()
+                    .borders(ratatui::widgets::Borders::ALL)
+                    .border_style(Style::default().fg(border_fg).add_modifier(border_mod))
+                    .title(ratatui::text::Line::from(title_spans))
+                    .title_bottom(
+                        ratatui::text::Line::from(bottom_spans)
+                            .alignment(ratatui::layout::Alignment::Right),
+                    )
+            };
             let text_fg = theme.accent_secondary;
             let widget = ratatui::widgets::Paragraph::new(note.text.as_str())
                 .style(Style::default().fg(text_fg).add_modifier(Modifier::BOLD));
@@ -2690,7 +2714,10 @@ pub fn line_visual_height(
         .map(|e| e.line_idx == line_idx)
         .unwrap_or(false);
     // Count saved notes (excluding the one being edited in-place).
-    let saved_note_count = if edit_active {
+    // When notes are hidden, saved notes contribute 0 rows.
+    let saved_note_count = if !state.notes_visible {
+        0
+    } else if edit_active {
         let editing_id = state
             .inline_edit
             .as_ref()
@@ -2749,7 +2776,9 @@ pub fn unified_line_visual_height(
         .as_ref()
         .map(|e| e.line_idx == line_idx)
         .unwrap_or(false);
-    let saved_note_count = if edit_active {
+    let saved_note_count = if !state.notes_visible {
+        0
+    } else if edit_active {
         let editing_id = state
             .inline_edit
             .as_ref()
