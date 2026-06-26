@@ -210,6 +210,9 @@ pub struct Gui {
     /// `http://127.0.0.1:4096`). When set, prompts are pushed directly to
     /// the running TUI instead of spawning a subprocess.
     acp_server_url: Arc<Mutex<Option<String>>>,
+    /// Notify command template registered by the AI CLI via
+    /// `POST /session-api {"action":"register"}`.
+    acp_notify_command: Arc<Mutex<Option<String>>>,
     /// Receiver for incremental commit pages loaded after the first capped page.
     commit_page_rx: mpsc::Receiver<CommitPageResult>,
     /// Sender cloned into background threads for incremental commit loading.
@@ -379,14 +382,24 @@ impl Gui {
         // (survives restarts).
         let persisted = crate::pager::notes_store::load(git.repo_path()).session;
         let persisted_session = persisted.as_ref().map(|s| s.session_id.clone());
-        let persisted_server_url = persisted.map(|s| s.server_url).filter(|u| !u.is_empty());
+        let persisted_server_url = persisted
+            .as_ref()
+            .map(|s| s.server_url.clone())
+            .filter(|u| !u.is_empty());
+        let persisted_notify_cmd = persisted
+            .as_ref()
+            .map(|s| s.notify_command.clone())
+            .filter(|c| !c.is_empty());
         let acp_session_id: crate::acp::SessionId = Arc::new(Mutex::new(persisted_session));
         let acp_server_url: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(persisted_server_url));
+        let acp_notify_command: Arc<Mutex<Option<String>>> =
+            Arc::new(Mutex::new(persisted_notify_cmd));
         let sse_tx = crate::acp::spawn_server(
             acp_tx,
             git.repo_path().to_path_buf(),
             acp_session_id.clone(),
             acp_server_url.clone(),
+            acp_notify_command.clone(),
         );
         let show_file_tree = config
             .app_state
@@ -471,6 +484,7 @@ impl Gui {
             acp_session_id,
             sse_tx,
             acp_server_url,
+            acp_notify_command,
             commit_page_rx,
             commit_page_tx,
             commit_page_loading: false,
@@ -7274,10 +7288,23 @@ impl Gui {
             return;
         }
 
-        // 3. Fallback: spawn the notifyCommand if configured.
-        if ai_config.notify_command.is_empty() {
-            return;
-        }
+        // 3. Fallback: spawn the notifyCommand if configured by the active session.
+        let notify_command = self
+            .acp_notify_command
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or(None)
+            .or_else(|| {
+                crate::pager::notes_store::load(self.git.repo_path())
+                    .session
+                    .filter(|s| !s.notify_command.is_empty())
+                    .map(|s| s.notify_command)
+            });
+
+        let cmd_template = match notify_command {
+            Some(cmd) if !cmd.is_empty() => cmd,
+            _ => return,
+        };
 
         // Expand the command template.
         let session_id = self
@@ -7291,8 +7318,7 @@ impl Gui {
                     .map(|s| s.session_id)
             })
             .unwrap_or_default();
-        let cmd_str = ai_config
-            .notify_command
+        let cmd_str = cmd_template
             .replace("{{session_id}}", &session_id)
             .replace("{{prompt}}", &shell_escape_arg(&prompt));
 

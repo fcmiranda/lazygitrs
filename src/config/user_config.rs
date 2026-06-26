@@ -355,42 +355,23 @@ pub struct CustomCommandPrompt {
 /// `notifyCommand` with `{{session_id}}` and `{{prompt}}` expanded, sending
 /// the note context to a running AI CLI session (opencode, codex, gemini, etc).
 ///
-/// The session ID is registered dynamically by the AI CLI at startup via
-/// `POST /session-api {"action":"register","sessionId":"..."}` — no need to
-/// hardcode it in config.
+/// The session ID and notify command are registered dynamically by the AI CLI at startup via
+/// `POST /session-api {"action":"register","sessionId":"...","notifyCommand":"..."}`.
 ///
 /// Example config.yml:
 /// ```yaml
 /// aiNotes:
 ///   enabled: true
-///   notifyCommand: "opencode run --session {{session_id}} {{prompt}}"
 /// ```
-///
-/// CLI-specific templates:
-/// - opencode: `"opencode run --session {{session_id}} {{prompt}}"`
-///   (or `--continue` instead of `--session <id>` for most-recent session)
-/// - codex:    `"codex exec resume {{session_id}} {{prompt}}"`
-///   (or `--last` instead of a session id)
-/// - gemini:   `"gemini -p {{prompt}}"`
-///   (gemini doesn't support explicit session continuation)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AiNotesConfig {
     /// Master toggle for the AI notes bidirectional workflow.
     pub enabled: bool,
-    /// Command template with `{{session_id}}` and `{{prompt}}` placeholders.
-    /// If empty, the notify feature is disabled.
-    /// The session ID is provided at runtime by the AI CLI via
-    /// `POST /session-api {"action":"register"}`.
-    #[serde(rename = "notifyCommand")]
-    pub notify_command: String,
 }
 
 impl Default for AiNotesConfig {
     fn default() -> Self {
-        Self {
-            enabled: true,
-            notify_command: String::new(),
-        }
+        Self { enabled: true }
     }
 }

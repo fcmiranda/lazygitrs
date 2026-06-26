@@ -60,12 +60,16 @@ pub type SseSender = broadcast::Sender<String>;
 /// When set, lazygitrs pushes prompts directly to the running TUI.
 pub type ServerUrl = Arc<Mutex<Option<String>>>;
 
+/// Shared notify command template registered by an AI CLI.
+pub type NotifyCommand = Arc<Mutex<Option<String>>>;
+
 #[derive(Clone)]
 struct AppState {
     tx: Arc<mpsc::Sender<AcpEvent>>,
     repo_path: Arc<std::path::PathBuf>,
     session_id: SessionId,
     server_url: ServerUrl,
+    notify_command: NotifyCommand,
     sse_tx: SseSender,
 }
 
@@ -81,6 +85,7 @@ pub fn spawn_server(
     repo_path: std::path::PathBuf,
     session_id: SessionId,
     server_url: ServerUrl,
+    notify_command: NotifyCommand,
 ) -> SseSender {
     let (sse_tx, _) = broadcast::channel::<String>(16);
 
@@ -89,6 +94,7 @@ pub fn spawn_server(
         repo_path: Arc::new(repo_path),
         session_id,
         server_url,
+        notify_command,
         sse_tx: sse_tx.clone(),
     };
 
@@ -233,6 +239,22 @@ async fn handle_acp_post(
             // Register the AI session ID for the notify command.
             "register" => {
                 if let Some(id) = payload.get("sessionId").and_then(|v| v.as_str()) {
+                    // Refuse to overwrite an existing session unless force is set.
+                    let force = payload
+                        .get("force")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let existing = state.session_id.lock().map(|g| g.clone()).unwrap_or(None);
+                    if let Some(ref current) = existing {
+                        if current != id && !force {
+                            return Json(serde_json::json!({
+                                "status": "conflict",
+                                "error": "A session is already registered",
+                                "currentSessionId": current,
+                                "hint": "Send \"force\": true to overwrite, or unregister first"
+                            }));
+                        }
+                    }
                     if let Ok(mut guard) = state.session_id.lock() {
                         *guard = Some(id.to_string());
                     }
@@ -249,6 +271,19 @@ async fn handle_acp_post(
                             Some(server_url_str.clone())
                         };
                     }
+                    let notify_command_str = payload
+                        .get("notifyCommand")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    // Update shared notify command state.
+                    if let Ok(mut guard) = state.notify_command.lock() {
+                        *guard = if notify_command_str.is_empty() {
+                            None
+                        } else {
+                            Some(notify_command_str.clone())
+                        };
+                    }
                     // Persist to .lines.json as fallback for restarts.
                     let cli = payload
                         .get("cli")
@@ -260,6 +295,7 @@ async fn handle_acp_post(
                         session_id: id.to_string(),
                         cli,
                         server_url: server_url_str,
+                        notify_command: notify_command_str,
                     });
                     crate::pager::notes_store::save(&state.repo_path, lines_file);
                     return Json(serde_json::json!({"status": "ok", "sessionId": id}));

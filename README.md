@@ -63,6 +63,10 @@ lazygitrs
   - [x] `git diff/compare` and then asks what branch/commit A and B, has quick search.
   - [x] `git rebase` and then asks rebase on top of what branch/commit.
   - [x] 🎨 Themes + Theme-Picker!
+- [x] **Universal AI Notes Architecture** — leave review comments on code diffs and instantly notify your AI CLI of choice to review or act on it. `lazygitrs` uses a dynamically registered `.lines.json` session architecture, supporting three transport layers to integrate with *any* AI tool on the market:
+  - **Subprocess Spawning** (`notifyCommand`): Spawns a background command (great for `agy`, `claude`, etc.)
+  - **HTTP Push** (`serverUrl`): Does an instant HTTP POST to local servers (great for `opencode`)
+  - **Server-Sent Events** (`SSE`): Real-time event streaming for wrapper scripts or IDE extensions.
 
 ### Configuration
 

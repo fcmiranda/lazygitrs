@@ -41,6 +41,14 @@ pub struct SessionInfo {
     /// spawning a subprocess.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub server_url: String,
+    /// Command template with `{{session_id}}` and `{{prompt}}` placeholders
+    /// to wake up the AI CLI if `server_url` is not provided.
+    #[serde(
+        rename = "notifyCommand",
+        default,
+        skip_serializing_if = "String::is_empty"
+    )]
+    pub notify_command: String,
 }
 
 impl Default for LinesFile {

@@ -38,7 +38,23 @@ data: {"type":"note-sent","noteId":"...","file":"src/main.rs","line":10,"note":"
 
 Parse the JSON, fetch all notes, review the code, and post your annotations back.
 
-If no SSE clients are connected when `S` is pressed, lazygitrs falls back to spawning the `notifyCommand` from config.
+If no SSE clients are connected when `S` is pressed, lazygitrs falls back to spawning the `notifyCommand` or pushing to the `serverUrl`.
+
+## Universal AI Integration Architecture
+
+lazygitrs is built to be completely agnostic to the AI tool you are using. It supports three distinct transport layers to wake up the AI when the user presses `S` on a note:
+
+1. **Subprocess Spawning (`notifyCommand`)**:
+   - Best for CLI tools like `agy` (Antigravity), `claude` (Claude Code), etc.
+   - lazygitrs spawns a background shell process, passing the prompt as an argument. The CLI then routes the message to the correct session.
+2. **HTTP Push (`serverUrl`)**:
+   - Best for tools running a local background server, like `opencode`.
+   - lazygitrs does an instant HTTP POST directly to the local server, injecting the prompt directly into the active TUI.
+3. **Server-Sent Events (`SSE`)**:
+   - Best for custom wrapper scripts or IDE extensions.
+   - AI tools can subscribe to `GET /session-api/events` and stream events in real-time.
+
+You configure which architecture your AI uses during the **registration** step.
 
 ## API Endpoints
 
@@ -47,12 +63,22 @@ If no SSE clients are connected when `S` is pressed, lazygitrs falls back to spa
 When your AI session starts, register your session ID so lazygitrs can target you when the user presses `S`:
 
 ```bash
+# Example for Antigravity (agy): Use your REAL internal Conversation ID!
 curl -s -X POST http://127.0.0.1:47657/session-api \
   -H 'content-type: application/json' \
-  --data '{"action":"register","sessionId":"YOUR_SESSION_ID","cli":"opencode","serverUrl":"http://127.0.0.1:4096"}'
+  --data '{"action":"register","sessionId":"YOUR_REAL_CONVERSATION_ID","cli":"antigravity","notifyCommand":"agy --conversation {{session_id}} --print {{prompt}}"}'
+
+# Example for opencode:
+curl -s -X POST http://127.0.0.1:47657/session-api \
+  -H 'content-type: application/json' \
+  --data '{"action":"register","sessionId":"YOUR_SESSION_ID","cli":"opencode","serverUrl":"http://127.0.0.1:4096","notifyCommand":"opencode run --continue {{prompt}}"}'
 ```
 
-The `cli` field is optional but helps identify which AI tool is registered. The session ID is persisted to `.lines.json` so it survives lazygitrs restarts.
+**CRITICAL**: You must use your *real*, unique conversation ID (e.g., your Antigravity conversation UUID) as the `sessionId`, and you must provide the correct `notifyCommand` for your CLI. If you use a fake/mock ID, background notifications spawned by lazygitrs will not know how to route messages back to your active chat window!
+
+The `cli` field is optional but helps identify which AI tool is registered. The `serverUrl` enables direct inline prompt pushing if your AI CLI runs a local web server. The `notifyCommand` is a shell command template that lazygitrs spawns when the user presses `S` (use `{{session_id}}` and `{{prompt}}` placeholders). The session ID and command are persisted to `.lines.json` so they survive lazygitrs restarts.
+
+**Session conflict:** If another session is already registered, the register call returns `{"status":"conflict"}` instead of overwriting. To force overwrite, add `"force": true` to the payload. To clear the existing session first, use the `unregister` action.
 
 #### opencode inline push (recommended)
 
