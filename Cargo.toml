@@ -40,6 +40,8 @@ unicode-width = "0.2"
 tui-textarea = { version = "0.7", features = ["crossterm"] }
 textwrap = "0.16.2"
 axum = "0.8.9"
+futures-util = "0.3"
+async-stream = "0.3"
 
 [profile.release]
 lto = true

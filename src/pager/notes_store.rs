@@ -35,6 +35,12 @@ pub struct SessionInfo {
     /// Which AI CLI registered (e.g. "opencode", "codex", "gemini").
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub cli: String,
+    /// Base URL of the AI CLI's HTTP server (e.g. "http://127.0.0.1:4096").
+    /// When set, lazygitrs pushes prompts directly to the running TUI via
+    /// `POST /tui/append-prompt` + `POST /tui/submit-prompt` instead of
+    /// spawning a subprocess.
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub server_url: String,
 }
 
 impl Default for LinesFile {

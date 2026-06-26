@@ -12,8 +12,8 @@ lazygitrs runs an embedded HTTP server on `127.0.0.1:47657` that accepts and ser
 User (TUI)                     AI CLI (you)
    │                               │
    │  press S on a note            │
-   │  ──spawn subprocess──►        │
-   │  "check /session-api/notes"   │
+   │  ──SSE event push──►          │  (or spawn subprocess fallback)
+   │  {note-sent, file, line}      │
    │                               │
    │             ◄──curl GET────   │  fetch user notes
    │                               │
@@ -21,6 +21,24 @@ User (TUI)                     AI CLI (you)
    │                               │
    │  notes appear in TUI          │
 ```
+
+### SSE (Server-Sent Events) — preferred notification method
+
+lazygitrs pushes `note-sent` events in real-time to any connected AI CLI. Connect with:
+
+```bash
+curl -N http://127.0.0.1:47657/session-api/events
+```
+
+This keeps a long-lived connection open. When the user presses `S`, you'll receive:
+
+```
+data: {"type":"note-sent","noteId":"...","file":"src/main.rs","line":10,"note":"...","prompt":"..."}
+```
+
+Parse the JSON, fetch all notes, review the code, and post your annotations back.
+
+If no SSE clients are connected when `S` is pressed, lazygitrs falls back to spawning the `notifyCommand` from config.
 
 ## API Endpoints
 
@@ -31,10 +49,30 @@ When your AI session starts, register your session ID so lazygitrs can target yo
 ```bash
 curl -s -X POST http://127.0.0.1:47657/session-api \
   -H 'content-type: application/json' \
-  --data '{"action":"register","sessionId":"YOUR_SESSION_ID","cli":"opencode"}'
+  --data '{"action":"register","sessionId":"YOUR_SESSION_ID","cli":"opencode","serverUrl":"http://127.0.0.1:4096"}'
 ```
 
 The `cli` field is optional but helps identify which AI tool is registered. The session ID is persisted to `.lines.json` so it survives lazygitrs restarts.
+
+#### opencode inline push (recommended)
+
+If you're running **opencode**, include `serverUrl` in the register call. opencode runs a built-in HTTP server (default port 4096). When `serverUrl` is set, lazygitrs pushes the review prompt **directly into your running TUI** via `POST /tui/append-prompt` + `POST /tui/submit-prompt` — no new process, fully inline.
+
+Start opencode with a fixed port:
+```bash
+opencode --port 4096
+```
+
+Then register:
+```bash
+curl -s -X POST http://127.0.0.1:47657/session-api \
+  -H 'content-type: application/json' \
+  --data '{"action":"register","sessionId":"opencode-session-001","cli":"opencode","serverUrl":"http://127.0.0.1:4096"}'
+```
+
+#### Other AI CLIs
+
+If your CLI doesn't have a TUI API, omit `serverUrl`. lazygitrs will try SSE next, then fall back to spawning `notifyCommand`.
 
 For opencode, you can get your session ID with:
 ```bash

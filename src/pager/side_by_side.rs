@@ -2250,7 +2250,7 @@ fn render_file_header(buf: &mut Buffer, x: u16, y: u16, width: u16, filename: &s
 }
 
 fn render_hover_plus_button(buf: &mut Buffer, area: Rect, state: &DiffViewState, theme: &Theme) {
-    // Don't render [+] when notes are hidden.
+    // Don't render  when notes are hidden.
     if !state.notes_visible {
         return;
     }
@@ -2315,7 +2315,7 @@ fn render_hover_plus_button(buf: &mut Buffer, area: Rect, state: &DiffViewState,
         pl.inner_y + acc as u16
     };
 
-    // [+] is an individual element. When there are notes, it sits on its own
+    //  is an individual element. When there are notes, it sits on its own
     // row after the last note. When there are no notes, it sits on the code row.
     let note_count = diff_line.comment_notes.len();
     let y = code_y + (note_count * 5) as u16;
@@ -2333,7 +2333,7 @@ fn render_hover_plus_button(buf: &mut Buffer, area: Rect, state: &DiffViewState,
     let style = Style::default()
         .fg(theme.accent)
         .add_modifier(Modifier::BOLD);
-    buf_write_str(buf, x, y, "[+]", style, 3);
+    buf_write_str(buf, x, y, "", style, 3);
 }
 
 fn render_diff_annotations(
@@ -2450,9 +2450,9 @@ fn render_diff_annotations(
             };
             let block = {
                 let title_prefix = if note.source == crate::pager::NoteSource::Agent {
-                    " 🤖 AI Note "
+                    " 󱙺 "
                 } else {
-                    " 📝 Note "
+                    " 󱇗 "
                 };
                 let status_dot = match note.status {
                     crate::pager::NoteStatus::New => "●",
@@ -2540,7 +2540,7 @@ fn render_diff_annotations(
                     )
                 };
 
-                let title = format!(" Draft Note - {} - {} ", file_path, line_num);
+                let title = format!(" 󱞂 - {} - {} ", file_path, line_num);
                 let block = ratatui::widgets::Block::default()
                     .borders(ratatui::widgets::Borders::ALL)
                     .border_style(Style::default().fg(theme.accent))

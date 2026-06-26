@@ -9,8 +9,8 @@ We successfully implemented and stabilized the inline note editor. Here are the 
 
 ### 1. Interactive UI & Mouse Tracking
 - **Mouse Tracking Enabled:** Enabled `\x1b[?1003h` ANSI escape to allow raw mouse movement events so we can track which line the user is hovering over.
-- **Hover Annotations:** When the user hovers over a line in the diff view, a `[+]` button is rendered on the right side of the screen.
-- **Interaction Hook:** Pressing `c` or clicking the `[+]` button triggers the `inline_edit` state for that specific line.
+- **Hover Annotations:** When the user hovers over a line in the diff view, a `` button is rendered on the right side of the screen.
+- **Interaction Hook:** Pressing `c` or clicking the `` button triggers the `inline_edit` state for that specific line.
 
 ### 2. Rendering & Layout Updates
 - **Inline Text Editor:** Integrated `tui_textarea` to render a 5-line text editor dialog (`Draft Note - [file] - [line]`) inline within the diff view.

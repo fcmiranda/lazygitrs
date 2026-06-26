@@ -203,6 +203,13 @@ pub struct Gui {
     /// Shared AI session ID registered via `POST /session-api {action:"register"}`.
     /// Used to expand `{{session_id}}` in the `notifyCommand` template.
     acp_session_id: crate::acp::SessionId,
+    /// SSE broadcast sender — pushes "note sent" events to connected AI CLIs
+    /// listening on `GET /session-api/events`.
+    sse_tx: crate::acp::SseSender,
+    /// Base URL of the AI CLI's HTTP server (e.g. opencode's
+    /// `http://127.0.0.1:4096`). When set, prompts are pushed directly to
+    /// the running TUI instead of spawning a subprocess.
+    acp_server_url: Arc<Mutex<Option<String>>>,
     /// Receiver for incremental commit pages loaded after the first capped page.
     commit_page_rx: mpsc::Receiver<CommitPageResult>,
     /// Sender cloned into background threads for incremental commit loading.
@@ -368,15 +375,18 @@ impl Gui {
         let (auto_fetch_tx, auto_fetch_rx) = mpsc::channel();
         let (menu_async_tx, menu_async_rx) = mpsc::channel();
         let (acp_tx, acp_rx) = mpsc::channel();
-        // Restore session ID from .lines.json if available (survives restarts).
-        let persisted_session = crate::pager::notes_store::load(git.repo_path())
-            .session
-            .map(|s| s.session_id);
+        // Restore session ID and server URL from .lines.json if available
+        // (survives restarts).
+        let persisted = crate::pager::notes_store::load(git.repo_path()).session;
+        let persisted_session = persisted.as_ref().map(|s| s.session_id.clone());
+        let persisted_server_url = persisted.map(|s| s.server_url).filter(|u| !u.is_empty());
         let acp_session_id: crate::acp::SessionId = Arc::new(Mutex::new(persisted_session));
-        crate::acp::spawn_server(
+        let acp_server_url: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(persisted_server_url));
+        let sse_tx = crate::acp::spawn_server(
             acp_tx,
             git.repo_path().to_path_buf(),
             acp_session_id.clone(),
+            acp_server_url.clone(),
         );
         let show_file_tree = config
             .app_state
@@ -459,6 +469,8 @@ impl Gui {
             ai_commit_tx,
             acp_rx,
             acp_session_id,
+            sse_tx,
+            acp_server_url,
             commit_page_rx,
             commit_page_tx,
             commit_page_loading: false,
@@ -934,16 +946,16 @@ impl Gui {
                 let id = ann.id.unwrap_or_else(|| {
                     let line = ann
                         .new_range
-                        .map(|(_, e)| e)
-                        .or_else(|| ann.old_range.map(|(_, e)| e))
+                        .map(|(s, _)| s)
+                        .or_else(|| ann.old_range.map(|(s, _)| s))
                         .unwrap_or(0);
                     format!("{}-{}-agent", file_ctx.path, line)
                 });
 
-                let (line, panel) = if let Some((_, end_line)) = ann.new_range {
-                    (end_line, "New")
-                } else if let Some((_, end_line)) = ann.old_range {
-                    (end_line, "Old")
+                let (line, panel) = if let Some((start_line, _)) = ann.new_range {
+                    (start_line, "New")
+                } else if let Some((start_line, _)) = ann.old_range {
+                    (start_line, "Old")
                 } else {
                     continue;
                 };
@@ -5078,7 +5090,7 @@ impl Gui {
                     description: "Send selected note to AI".into(),
                 },
                 HelpEntry {
-                    key: "[+]".into(),
+                    key: "".into(),
                     description: "Click to add note on a line".into(),
                 },
                 HelpEntry {
@@ -6078,13 +6090,13 @@ impl Gui {
             }
         }
 
-        // Track line hover for inline notes `[+]` button
+        // Track line hover for inline notes `` button
         let new_line_hover = if rect_contains(main_panel, mouse.column, mouse.row) {
             if let Some(panel) = pl.panel_at_x(mouse.column) {
                 if let Some((line_idx, _)) = self.diff_view.line_chunk_at_row(mouse.row, &pl) {
-                    // Check if this row is actually the [+] button row of the
+                    // Check if this row is actually the  button row of the
                     // previous line (after its notes). If so, keep hovering the
-                    // previous line so the [+] stays visible.
+                    // previous line so the  stays visible.
                     if line_idx > 0 {
                         let content_width =
                             pl.new_content_end_x.saturating_sub(pl.new_content_x) as usize;
@@ -6172,7 +6184,7 @@ impl Gui {
 
                 if in_main && !self.diff_view.is_empty() && !full_sidebar {
                     if let Some((line_idx, panel)) = self.diff_view.hovered_line {
-                        // Compute the [+] button Y position: code row + note_count * 5
+                        // Compute the  button Y position: code row + note_count * 5
                         let content_width =
                             pl.new_content_end_x.saturating_sub(pl.new_content_x) as usize;
                         let panel_width =
@@ -6221,7 +6233,7 @@ impl Gui {
                         };
                         let plus_y = pl.inner_y + plus_acc as u16 + (note_count * 5) as u16;
 
-                        // Check if click was on `[+]` button (hidden when notes are off)
+                        // Check if click was on `` button (hidden when notes are off)
                         let is_on_plus_x = match panel {
                             crate::pager::side_by_side::DiffPanel::Old => {
                                 mouse.column >= pl.old_content_end_x.saturating_sub(3)
@@ -7166,20 +7178,24 @@ impl Gui {
         self.diff_view.load_notes(self.git.repo_path());
     }
 
-    /// Send a user note to the AI session by spawning the configured
-    /// `notifyCommand` with `{{session_id}}` and `{{prompt}}` expanded.
+    /// Send a user note to the AI session.
     ///
-    /// After spawning, the note's `status` is updated from `New` → `Sent`
+    /// Delivery priority:
+    /// 1. **TUI push** — if the AI CLI registered a `serverUrl` (e.g.
+    ///    opencode's `http://127.0.0.1:4096`), call `POST /tui/append-prompt`
+    ///    + `POST /tui/submit-prompt` to inject the prompt inline.
+    /// 2. **SSE** — push an event to any connected SSE clients.
+    /// 3. **Spawn** — fall back to `notifyCommand` subprocess.
+    ///
+    /// After sending, the note's `status` is updated from `New` → `Sent`
     /// in `.lines.json` so the TUI can show a visual indicator.
     fn notify_ai_for_note(&mut self, note_id: String) {
-        let ai_config = &self.config.user_config.ai_notes;
-        if !ai_config.enabled || ai_config.notify_command.is_empty() {
+        let ai_config = self.config.user_config.ai_notes.clone();
+        if !ai_config.enabled {
             self.show_error(
                 "AI Notes Not Configured",
                 anyhow::anyhow!(
-                    "Set `aiNotes.notifyCommand` in config.yml to enable sending notes to an AI session.\n\
-                     Example:\n\
-                     aiNotes:\n  enabled: true\n  notifyCommand: \"opencode run --continue {{prompt}}\""
+                    "Set `aiNotes.enabled` to true in config.yml to enable sending notes to an AI session."
                 ),
             );
             return;
@@ -7217,10 +7233,53 @@ impl Gui {
             file, line, note_text
         );
 
-        // Expand the command template — read session ID from the shared
-        // ACP state (registered by the AI CLI via POST /session-api).
-        // Fall back to the persisted session in .lines.json if the
-        // in-memory state is empty (e.g. after a lazygitrs restart).
+        // 1. Try TUI push (opencode /tui/append-prompt + /tui/submit-prompt).
+        let server_url = self
+            .acp_server_url
+            .lock()
+            .map(|g| g.clone())
+            .unwrap_or(None)
+            .or_else(|| {
+                crate::pager::notes_store::load(self.git.repo_path())
+                    .session
+                    .filter(|s| !s.server_url.is_empty())
+                    .map(|s| s.server_url)
+            });
+
+        if let Some(ref url) = server_url {
+            if self.push_prompt_to_tui(url, &prompt) {
+                self.mark_note_sent(&note_id);
+                return;
+            }
+        }
+
+        // 2. Try SSE — if there are connected listeners, push the event.
+        let sse_payload = serde_json::json!({
+            "type": "note-sent",
+            "noteId": note_id,
+            "file": file,
+            "line": line,
+            "note": note_text,
+            "prompt": prompt,
+        })
+        .to_string();
+
+        let sse_delivered =
+            self.sse_tx.receiver_count() > 0 && self.sse_tx.send(sse_payload).is_ok();
+
+        // Update note status → Sent.
+        self.mark_note_sent(&note_id);
+
+        if sse_delivered {
+            return;
+        }
+
+        // 3. Fallback: spawn the notifyCommand if configured.
+        if ai_config.notify_command.is_empty() {
+            return;
+        }
+
+        // Expand the command template.
         let session_id = self
             .acp_session_id
             .lock()
@@ -7237,7 +7296,6 @@ impl Gui {
             .replace("{{session_id}}", &session_id)
             .replace("{{prompt}}", &shell_escape_arg(&prompt));
 
-        // Split into program + args (respecting quoted segments).
         let parts = split_command(&cmd_str);
         if parts.is_empty() {
             self.show_error(
@@ -7263,15 +7321,7 @@ impl Gui {
                     .stderr(std::process::Stdio::from(stderr_file))
                     .spawn()
                 {
-                    Ok(_) => {
-                        // Update note status → Sent.
-                        let mut lines_file = crate::pager::notes_store::load(self.git.repo_path());
-                        if let Some(entry) = lines_file.notes.iter_mut().find(|c| c.id == note_id) {
-                            entry.status = crate::pager::NoteStatus::Sent;
-                        }
-                        crate::pager::notes_store::save(self.git.repo_path(), lines_file);
-                        self.diff_view.load_notes(self.git.repo_path());
-                    }
+                    Ok(_) => {}
                     Err(e) => {
                         self.show_error(
                             "AI Notes Error",
@@ -7281,21 +7331,13 @@ impl Gui {
                 }
             }
             Err(_) => {
-                // Fallback: redirect to /dev/null
                 match std::process::Command::new(&parts[0])
                     .args(&parts[1..])
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
                     .spawn()
                 {
-                    Ok(_) => {
-                        let mut lines_file = crate::pager::notes_store::load(self.git.repo_path());
-                        if let Some(entry) = lines_file.notes.iter_mut().find(|c| c.id == note_id) {
-                            entry.status = crate::pager::NoteStatus::Sent;
-                        }
-                        crate::pager::notes_store::save(self.git.repo_path(), lines_file);
-                        self.diff_view.load_notes(self.git.repo_path());
-                    }
+                    Ok(_) => {}
                     Err(e) => {
                         self.show_error(
                             "AI Notes Error",
@@ -7305,6 +7347,56 @@ impl Gui {
                 }
             }
         }
+    }
+
+    /// Push a prompt to the AI CLI's TUI via its HTTP server.
+    /// Returns `true` on success.
+    fn push_prompt_to_tui(&self, server_url: &str, prompt: &str) -> bool {
+        let append_url = format!("{}/tui/append-prompt", server_url);
+        let submit_url = format!("{}/tui/submit-prompt", server_url);
+
+        let append_body = serde_json::json!({"text": prompt}).to_string();
+
+        // Append the prompt text.
+        let append_resp = std::process::Command::new("curl")
+            .args([
+                "-s",
+                "-X",
+                "POST",
+                &append_url,
+                "-H",
+                "content-type: application/json",
+                "--data",
+                &append_body,
+                "--max-time",
+                "3",
+            ])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+
+        if !matches!(append_resp, Ok(s) if s.success()) {
+            return false;
+        }
+
+        // Submit the prompt.
+        let submit_resp = std::process::Command::new("curl")
+            .args(["-s", "-X", "POST", &submit_url, "--max-time", "3"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+
+        matches!(submit_resp, Ok(s) if s.success())
+    }
+
+    /// Mark a note as `Sent` in `.lines.json` and reload the diff view.
+    fn mark_note_sent(&mut self, note_id: &str) {
+        let mut lines_file = crate::pager::notes_store::load(self.git.repo_path());
+        if let Some(entry) = lines_file.notes.iter_mut().find(|c| c.id == note_id) {
+            entry.status = crate::pager::NoteStatus::Sent;
+        }
+        crate::pager::notes_store::save(self.git.repo_path(), lines_file);
+        self.diff_view.load_notes(self.git.repo_path());
     }
 
     fn cycle_note(&mut self, forward: bool) {
@@ -7340,6 +7432,12 @@ impl Gui {
         };
 
         if let Some((line_idx, note_id)) = next {
+            // If the target note is above the current scroll offset,
+            // scroll up to it first to avoid an invalid slice range.
+            if line_idx < self.diff_view.scroll_offset {
+                self.diff_view.scroll_offset = line_idx;
+            }
+
             // Scroll to make the note visible.
             let main_panel = self.compute_main_panel_rect();
             let pl = DiffPanelLayout::compute(main_panel, &self.diff_view);
@@ -7349,12 +7447,10 @@ impl Gui {
                 pl.new_content_end_x.saturating_sub(pl.new_content_x) as usize;
             let visible_height = pl.inner_end_y.saturating_sub(pl.inner_y) as usize;
 
+            let start = self.diff_view.scroll_offset.min(line_idx);
             let mut acc = 0usize;
-            for (offset, dl) in self.diff_view.lines[self.diff_view.scroll_offset..=line_idx]
-                .iter()
-                .enumerate()
-            {
-                let idx = self.diff_view.scroll_offset + offset;
+            for (offset, dl) in self.diff_view.lines[start..=line_idx].iter().enumerate() {
+                let idx = start + offset;
                 if idx == line_idx {
                     break;
                 }

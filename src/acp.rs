@@ -1,11 +1,16 @@
 use axum::{
     Json, Router,
     extract::{Path, Query, State},
+    response::sse::{Event, KeepAlive, Sse},
     routing::{get, post},
 };
+use futures_util::Stream;
 use serde::Deserialize;
+use std::convert::Infallible;
 use std::sync::{Arc, Mutex, mpsc};
+use std::time::Duration;
 use tokio::net::TcpListener;
+use tokio::sync::broadcast;
 
 /// The full agent-context payload pushed by AI CLIs (matches hunk's schema).
 #[derive(Deserialize, Debug, Clone)]
@@ -47,26 +52,44 @@ pub struct AgentAnnotation {
 /// correct session when spawning the notify command.
 pub type SessionId = Arc<Mutex<Option<String>>>;
 
+/// Sender for SSE events — used by the GUI to push "note sent" notifications
+/// to any connected AI CLI listening on `GET /session-api/events`.
+pub type SseSender = broadcast::Sender<String>;
+
+/// Shared server URL of the AI CLI (e.g. opencode's `http://127.0.0.1:4096`).
+/// When set, lazygitrs pushes prompts directly to the running TUI.
+pub type ServerUrl = Arc<Mutex<Option<String>>>;
+
 #[derive(Clone)]
 struct AppState {
     tx: Arc<mpsc::Sender<AcpEvent>>,
     repo_path: Arc<std::path::PathBuf>,
     session_id: SessionId,
+    server_url: ServerUrl,
+    sse_tx: SseSender,
 }
 
 pub enum AcpEvent {
     ApplyNotes(AgentContext),
 }
 
+/// Spawn the ACP HTTP server. Returns the SSE broadcast sender so the GUI
+/// can push events to connected AI CLIs. The `server_url` is shared so the
+/// register handler can update it when an AI CLI provides its URL.
 pub fn spawn_server(
     tx: mpsc::Sender<AcpEvent>,
     repo_path: std::path::PathBuf,
     session_id: SessionId,
-) {
+    server_url: ServerUrl,
+) -> SseSender {
+    let (sse_tx, _) = broadcast::channel::<String>(16);
+
     let state = AppState {
         tx: Arc::new(tx),
         repo_path: Arc::new(repo_path),
         session_id,
+        server_url,
+        sse_tx: sse_tx.clone(),
     };
 
     std::thread::spawn(move || {
@@ -81,6 +104,8 @@ pub fn spawn_server(
                 .route("/session-api/notes", get(handle_get_notes))
                 .route("/session-api/notes/{file}", get(handle_get_notes_for_file))
                 .route("/session-api/session", get(handle_get_session))
+                .route("/session-api/server", get(handle_get_server))
+                .route("/session-api/events", get(handle_sse_events))
                 .with_state(state);
 
             match TcpListener::bind("127.0.0.1:47657").await {
@@ -93,6 +118,8 @@ pub fn spawn_server(
             }
         });
     });
+
+    sse_tx
 }
 
 /// `GET /session-api/session` — returns the currently registered AI session
@@ -100,6 +127,12 @@ pub fn spawn_server(
 async fn handle_get_session(State(state): State<AppState>) -> Json<serde_json::Value> {
     let id = state.session_id.lock().map(|g| g.clone()).unwrap_or(None);
     Json(serde_json::json!({"sessionId": id}))
+}
+
+/// `GET /session-api/server` — returns the AI CLI's server URL (if any).
+async fn handle_get_server(State(state): State<AppState>) -> Json<serde_json::Value> {
+    let url = state.server_url.lock().map(|g| g.clone()).unwrap_or(None);
+    Json(serde_json::json!({"serverUrl": url}))
 }
 
 /// `GET /session-api/notes` — returns the full `.lines.json` content so AI
@@ -130,6 +163,42 @@ async fn handle_get_notes_for_file(
         "file": file,
         "notes": filtered,
     }))
+}
+
+/// `GET /session-api/events` — Server-Sent Events stream.
+///
+/// AI CLIs connect to this endpoint with a long-lived connection
+/// (e.g. `curl -N http://127.0.0.1:47657/session-api/events`). When the
+/// user presses `S` on a note in lazygitrs, an event is pushed containing
+/// the review prompt as JSON.
+///
+/// Event format: `data: {"type":"note-sent","file":"...","line":N,"note":"...","prompt":"..."}`
+async fn handle_sse_events(
+    State(state): State<AppState>,
+) -> Sse<impl Stream<Item = Result<Event, Infallible>>> {
+    let mut rx = state.sse_tx.subscribe();
+
+    let stream = async_stream::stream! {
+        loop {
+            match rx.recv().await {
+                Ok(msg) => {
+                    yield Ok(Event::default().data(msg));
+                }
+                Err(broadcast::error::RecvError::Lagged(_)) => {
+                    continue;
+                }
+                Err(broadcast::error::RecvError::Closed) => {
+                    break;
+                }
+            }
+        }
+    };
+
+    Sse::new(stream).keep_alive(
+        KeepAlive::new()
+            .interval(Duration::from_secs(15))
+            .text("ping"),
+    )
 }
 
 /// Query params for `POST /session-api` with `action: "list"`.
@@ -167,6 +236,19 @@ async fn handle_acp_post(
                     if let Ok(mut guard) = state.session_id.lock() {
                         *guard = Some(id.to_string());
                     }
+                    let server_url_str = payload
+                        .get("serverUrl")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    // Update shared server URL state.
+                    if let Ok(mut guard) = state.server_url.lock() {
+                        *guard = if server_url_str.is_empty() {
+                            None
+                        } else {
+                            Some(server_url_str.clone())
+                        };
+                    }
                     // Persist to .lines.json as fallback for restarts.
                     let cli = payload
                         .get("cli")
@@ -177,6 +259,7 @@ async fn handle_acp_post(
                     lines_file.session = Some(crate::pager::notes_store::SessionInfo {
                         session_id: id.to_string(),
                         cli,
+                        server_url: server_url_str,
                     });
                     crate::pager::notes_store::save(&state.repo_path, lines_file);
                     return Json(serde_json::json!({"status": "ok", "sessionId": id}));
@@ -186,6 +269,9 @@ async fn handle_acp_post(
             // Clear the registered session ID.
             "unregister" => {
                 if let Ok(mut guard) = state.session_id.lock() {
+                    *guard = None;
+                }
+                if let Ok(mut guard) = state.server_url.lock() {
                     *guard = None;
                 }
                 // Clear from .lines.json too.
