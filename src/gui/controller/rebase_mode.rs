@@ -23,7 +23,10 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
 
 fn handle_planning_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
     // q or Esc: abort / exit without rebasing
-    if key.code == KeyCode::Char('q') || key.code == KeyCode::Esc {
+    let kb = &gui.config.user_config.keybinding;
+    if crate::gui::matches_key(key, &kb.universal.quit)
+        || crate::gui::matches_key(key, &kb.universal.return_key)
+    {
         gui.rebase_mode.exit();
         return Ok(());
     }
@@ -163,10 +166,11 @@ fn handle_planning_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
 // ── InProgress phase ────────────────────────────────────────────────────
 
 fn handle_in_progress_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
-    // q or Esc: close the rebase view (doesn't abort — rebase stays in progress).
-    // Mark the view as dismissed so the periodic auto-refresh does not re-open
-    // it. The rebase-options-menu key still re-opens it explicitly.
-    if key.code == KeyCode::Char('q') || key.code == KeyCode::Esc {
+    // q or Esc: exit without running rebase continue
+    let kb = &gui.config.user_config.keybinding;
+    if crate::gui::matches_key(key, &kb.universal.quit)
+        || crate::gui::matches_key(key, &kb.universal.return_key)
+    {
         gui.rebase_mode.in_progress_dismissed = true;
         gui.rebase_mode.exit();
         return Ok(());

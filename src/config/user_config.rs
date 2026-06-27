@@ -69,7 +69,7 @@ impl UserConfig {
                 }
             }
         }
-        
+
         if config_path.exists() {
             let contents = std::fs::read_to_string(&config_path)?;
             let config: UserConfig = serde_yaml::from_str(&contents)?;

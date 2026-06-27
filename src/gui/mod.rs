@@ -2996,19 +2996,27 @@ impl Gui {
             return Ok(());
         }
 
-        match key.code {
-            // Escape: clear revert-hunk selection first, then search, then unfocus diff
-            KeyCode::Esc => {
-                if self.diff_view.selected_note.is_some() {
-                    self.diff_view.selected_note = None;
-                } else if self.diff_view.selected_revert_hunk.is_some() {
-                    self.diff_view.selected_revert_hunk = None;
-                } else if !self.diff_view.search_query.is_empty() {
-                    self.diff_view.clear_search();
-                } else {
-                    self.diff_focused = false;
-                }
+        if matches_key(key, &keybindings.universal.quit)
+            || matches_key(key, &keybindings.universal.quit_alt1)
+        {
+            self.should_quit = true;
+            return Ok(());
+        }
+
+        if matches_key(key, &keybindings.universal.return_key) {
+            if self.diff_view.selected_note.is_some() {
+                self.diff_view.selected_note = None;
+            } else if self.diff_view.selected_revert_hunk.is_some() {
+                self.diff_view.selected_revert_hunk = None;
+            } else if !self.diff_view.search_query.is_empty() {
+                self.diff_view.clear_search();
+            } else {
+                self.diff_focused = false;
             }
+            return Ok(());
+        }
+
+        match key.code {
             KeyCode::Char('c') => {
                 if !self.diff_view.lines.is_empty() {
                     let line_idx = if let Some((idx, _)) = self.diff_view.hovered_line {
@@ -3024,10 +3032,6 @@ impl Gui {
                     };
                     self.open_inline_note_editor(line_idx, panel, None);
                 }
-            }
-            // q quits the app (same as global behavior)
-            KeyCode::Char('q') => {
-                self.should_quit = true;
             }
             // n/N: cycle to next/previous note
             KeyCode::Char('n') => {

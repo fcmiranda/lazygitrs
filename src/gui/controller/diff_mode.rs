@@ -29,7 +29,10 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
     }
 
     // q to exit diff mode
-    if key.code == KeyCode::Char('q') {
+    let kb = &gui.config.user_config.keybinding;
+    if crate::gui::matches_key(key, &kb.universal.quit)
+        || crate::gui::matches_key(key, &kb.universal.return_key)
+    {
         gui.diff_mode.exit();
         return Ok(());
     }
