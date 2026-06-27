@@ -39,6 +39,14 @@ struct Cli {
     /// Specific file to focus in diff view (implies --diff)
     #[arg(short = 'f', long)]
     file: Option<String>,
+
+    /// Print the default configuration YAML to stdout and exit
+    #[arg(long)]
+    print_default_config: bool,
+
+    /// Configuration file or preset name to use (e.g. 'popup' or ~/.config/lazygitrs/config.yml)
+    #[arg(short = 'c', long = "config")]
+    config: Option<String>,
 }
 
 /// Restore the terminal on panic so the user isn't left in raw mode + mouse
@@ -64,6 +72,13 @@ fn main() {
     install_panic_hook();
     let cli = Cli::parse();
 
+    if cli.print_default_config {
+        let config = config::user_config::UserConfig::default();
+        let yaml = serde_yaml::to_string(&config).unwrap();
+        println!("{}", yaml);
+        std::process::exit(0);
+    }
+
     // Set up logging if debug mode
     if cli.debug {
         tracing_subscriber::fmt()
@@ -79,7 +94,7 @@ fn main() {
 
     let start_in_diff = cli.diff || cli.file.is_some();
 
-    match app::App::new(repo_path, cli.debug, start_in_diff, cli.file) {
+    match app::App::new(repo_path, cli.debug, start_in_diff, cli.file, cli.config) {
         Ok(app) => {
             if let Err(e) = app.run() {
                 eprintln!("Error: {:#}", e);

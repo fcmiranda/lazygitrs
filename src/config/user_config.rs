@@ -56,8 +56,20 @@ impl Default for RefresherConfig {
 }
 
 impl UserConfig {
-    pub fn load(config_dir: &Path) -> Result<Self> {
-        let config_path = config_dir.join("config.yml");
+    pub fn load(config_dir: &Path, config_override: Option<&String>) -> Result<Self> {
+        let mut config_path = config_dir.join("config.yml");
+        if let Some(over) = config_override {
+            let over_path = std::path::PathBuf::from(over);
+            if over_path.is_absolute() || over.ends_with(".yml") || over.ends_with(".yaml") {
+                config_path = over_path;
+            } else {
+                config_path = config_dir.join("presets").join(format!("{}.yaml", over));
+                if !config_path.exists() {
+                    config_path = config_dir.join("presets").join(format!("{}.yml", over));
+                }
+            }
+        }
+        
         if config_path.exists() {
             let contents = std::fs::read_to_string(&config_path)?;
             let config: UserConfig = serde_yaml::from_str(&contents)?;

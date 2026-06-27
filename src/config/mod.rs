@@ -32,7 +32,7 @@ pub struct AppConfig {
 }
 
 impl AppConfig {
-    pub fn load(debug: bool) -> Result<Self> {
+    pub fn load(debug: bool, config_override: Option<String>) -> Result<Self> {
         let home_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
         let candidates = config_dir_candidates();
         let config_dir = candidates
@@ -57,7 +57,7 @@ impl AppConfig {
             let _ = std::fs::copy(&legacy_state_path, &state_path);
         }
 
-        let user_config = UserConfig::load(&config_dir)?;
+        let user_config = UserConfig::load(&config_dir, config_override.as_ref())?;
         let app_state = AppState::load(&state_path)?;
 
         Ok(Self {

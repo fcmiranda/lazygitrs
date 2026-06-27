@@ -19,8 +19,9 @@ impl App {
         debug: bool,
         start_in_diff: bool,
         filter_file: Option<String>,
+        config_override: Option<String>,
     ) -> Result<Self> {
-        let config = AppConfig::load(debug)?;
+        let config = AppConfig::load(debug, config_override)?;
 
         // Validate git repo
         if !GitCommands::is_valid_repo(&repo_path) {
