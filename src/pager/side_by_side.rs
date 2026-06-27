@@ -1894,7 +1894,7 @@ fn render_unified_diff_body(
             GUTTER_WIDTH * 2,
             0,
             inner.x,
-            0,
+            content_width,
             theme,
         );
 
