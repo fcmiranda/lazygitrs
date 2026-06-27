@@ -1244,6 +1244,7 @@ pub fn render_diff(
         let block = Block::default()
             .title(" Diff ")
             .borders(Borders::ALL)
+            .border_type(theme.border_type)
             .border_style(border_style);
         let widget = Paragraph::new(msg);
         frame.render_widget(widget.block(block), area);
@@ -1264,6 +1265,7 @@ pub fn render_diff(
     let mut block = Block::default()
         .title(title)
         .borders(Borders::ALL)
+        .border_type(theme.border_type)
         .border_style(border_style);
 
     // Bottom-right footnote: revert-hunk undo indicator. Only shown when
@@ -2410,6 +2412,7 @@ fn render_diff_annotations(
                     ];
                     let block = ratatui::widgets::Block::default()
                         .borders(ratatui::widgets::Borders::ALL)
+                        .border_type(theme.border_type)
                         .border_style(Style::default().fg(theme.accent))
                         .title(title)
                         .title_bottom(
@@ -2502,6 +2505,7 @@ fn render_diff_annotations(
                 }
                 ratatui::widgets::Block::default()
                     .borders(ratatui::widgets::Borders::ALL)
+                    .border_type(theme.border_type)
                     .border_style(Style::default().fg(border_fg).add_modifier(border_mod))
                     .title(ratatui::text::Line::from(title_spans))
                     .title_bottom(
@@ -2543,6 +2547,7 @@ fn render_diff_annotations(
                 let title = format!(" 󱞂 - {} - {} ", file_path, line_num);
                 let block = ratatui::widgets::Block::default()
                     .borders(ratatui::widgets::Borders::ALL)
+                    .border_type(theme.border_type)
                     .border_style(Style::default().fg(theme.accent))
                     .title(title)
                     .title_bottom(

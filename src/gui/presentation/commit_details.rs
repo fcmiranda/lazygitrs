@@ -52,6 +52,7 @@ pub fn render_commit_details(
         .title(title_line)
         .title(hint_line)
         .borders(Borders::ALL)
+        .border_type(theme.border_type)
         .border_style(theme.inactive_border);
 
     let inner = block.inner(rect);

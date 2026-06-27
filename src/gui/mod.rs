@@ -5935,8 +5935,9 @@ impl Gui {
                             ratatui::layout::Constraint::Length(1),
                         ])
                         .split(area);
-                    let block =
-                        ratatui::widgets::Block::default().borders(ratatui::widgets::Borders::ALL);
+                    let block = ratatui::widgets::Block::default()
+                        .borders(ratatui::widgets::Borders::ALL)
+                        .border_type(ratatui::widgets::BorderType::Rounded);
                     let inner = block.inner(outer[0]);
                     let has_banner =
                         self.rebase_mode.phase == modes::rebase_mode::RebasePhase::InProgress;

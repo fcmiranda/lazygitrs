@@ -110,6 +110,7 @@ fn render_selector(
     let block = Block::default()
         .title(number_label)
         .borders(Borders::ALL)
+        .border_type(theme.border_type)
         .border_style(border);
 
     if editing {
@@ -151,6 +152,7 @@ fn render_commit_files(frame: &mut Frame, area: Rect, state: &mut DiffModeState,
     let block = Block::default()
         .title(title)
         .borders(Borders::ALL)
+        .border_type(theme.border_type)
         .border_style(border);
 
     if state.diff_files.is_empty() {
@@ -319,6 +321,7 @@ fn render_diff_panel(
         let block = Block::default()
             .title(" 4 Diff ")
             .borders(Borders::ALL)
+            .border_type(theme.border_type)
             .border_style(border);
         let msg = if diff_loading_show {
             " Loading diff..."
@@ -496,6 +499,7 @@ fn render_dropdown(
 
     let block = Block::default()
         .borders(Borders::ALL)
+        .border_type(theme.border_type)
         .border_style(theme.active_border);
 
     let list = List::new(items)

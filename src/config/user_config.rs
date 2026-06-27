@@ -68,7 +68,7 @@ impl UserConfig {
     }
 
     pub fn theme(&self) -> Theme {
-        Theme::from_config(&self.gui.theme)
+        Theme::from_config(&self.gui)
     }
 }
 
@@ -94,6 +94,12 @@ pub struct GuiConfig {
     pub show_bottom_line: bool,
     #[serde(rename = "nerdFontsVersion")]
     pub nerd_fonts_version: String,
+    #[serde(default = "default_border")]
+    pub border: String,
+}
+
+fn default_border() -> String {
+    "rounded".to_string()
 }
 
 impl Default for GuiConfig {
@@ -109,6 +115,7 @@ impl Default for GuiConfig {
             show_command_log: true,
             show_bottom_line: true,
             nerd_fonts_version: "3".to_string(),
+            border: default_border(),
         }
     }
 }

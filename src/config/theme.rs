@@ -11,6 +11,7 @@ pub struct Theme {
     // ── Borders & chrome ─────────────────────────────────────────────
     pub active_border: Style,
     pub inactive_border: Style,
+    pub border_type: ratatui::widgets::BorderType,
     pub selected_line: Style,
     pub options_text: Style,
     pub title: Style,
@@ -161,19 +162,27 @@ impl Default for Theme {
 }
 
 impl Theme {
-    pub fn from_config(config: &ThemeConfig) -> Self {
+    pub fn from_config(config: &super::user_config::GuiConfig) -> Self {
         let mut theme = Self::dark();
 
-        if let Some(color) = parse_color_list(&config.active_border_color) {
+        theme.border_type = match config.border.as_str() {
+            "single" | "plain" => ratatui::widgets::BorderType::Plain,
+            "double" => ratatui::widgets::BorderType::Double,
+            "thick" => ratatui::widgets::BorderType::Thick,
+            "hidden" | "none" => ratatui::widgets::BorderType::Plain,
+            "rounded" | _ => ratatui::widgets::BorderType::Rounded,
+        };
+
+        if let Some(color) = parse_color_list(&config.theme.active_border_color) {
             theme.active_border = Style::default().fg(color).add_modifier(Modifier::BOLD);
         }
-        if let Some(color) = parse_color_list(&config.inactive_border_color) {
+        if let Some(color) = parse_color_list(&config.theme.inactive_border_color) {
             theme.inactive_border = Style::default().fg(color);
         }
-        if let Some(color) = parse_color_list(&config.selected_line_bg_color) {
+        if let Some(color) = parse_color_list(&config.theme.selected_line_bg_color) {
             theme.selected_line = Style::default().bg(color);
         }
-        if let Some(color) = parse_color_list(&config.options_text_color) {
+        if let Some(color) = parse_color_list(&config.theme.options_text_color) {
             theme.options_text = Style::default().fg(color);
         }
 
@@ -186,6 +195,7 @@ impl Theme {
                 .fg(Color::Green)
                 .add_modifier(Modifier::BOLD),
             inactive_border: Style::default().fg(Color::DarkGray),
+            border_type: ratatui::widgets::BorderType::Rounded,
             selected_line: Style::default().bg(Color::DarkGray),
             options_text: Style::default().fg(Color::Blue),
             title: Style::default()
@@ -603,6 +613,7 @@ impl ThemeJson {
                 .fg(border_active)
                 .add_modifier(Modifier::BOLD),
             inactive_border: Style::default().fg(border),
+            border_type: ratatui::widgets::BorderType::Rounded,
             selected_line: Style::default().bg(selected_bg),
             options_text: Style::default().fg(info),
             title: Style::default()
