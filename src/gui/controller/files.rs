@@ -13,17 +13,19 @@ use crate::pager::side_by_side::DiffPanel;
 
 pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) -> Result<()> {
     // Enter: toggle directory collapse in tree view, or focus diff for files
-    if key.code == KeyCode::Enter {
+    // '-' explicitly toggles directory collapse
+    if key.code == KeyCode::Enter || key.code == KeyCode::Char('-') {
         if gui.show_file_tree {
             let selected = gui.context_mgr.selected_active();
             if let Some(node) = gui.file_tree_nodes.get(selected) {
                 if node.is_dir {
                     let is_root = node.path == ".";
-                    let is_shift = key.modifiers.contains(crossterm::event::KeyModifiers::SHIFT);
+                    let is_minus = key.code == KeyCode::Char('-');
 
                     // For the root directory, Enter focuses the combined diff view.
-                    // Shift+Enter toggles collapse. For other dirs, Enter toggles collapse.
-                    if is_root && !is_shift {
+                    // '-' explicitly toggles collapse for any directory (including root).
+                    // For non-root dirs, Enter also toggles collapse.
+                    if is_root && !is_minus {
                         if !gui.diff_view.is_empty() {
                             gui.diff_focused = true;
                         }
@@ -41,6 +43,11 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) 
                 }
             }
         }
+
+        if key.code == KeyCode::Char('-') {
+            return Ok(());
+        }
+
         // Focus the diff panel for the selected file
         if !gui.diff_view.is_empty() {
             gui.diff_focused = true;
