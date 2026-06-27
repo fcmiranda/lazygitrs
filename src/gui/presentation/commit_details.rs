@@ -51,7 +51,7 @@ pub fn render_commit_details(
     let block = Block::default()
         .title(title_line)
         .title(hint_line)
-        .borders(Borders::ALL)
+        .borders(theme.borders)
         .border_type(theme.border_type)
         .border_style(theme.inactive_border);
 

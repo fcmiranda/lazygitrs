@@ -552,10 +552,24 @@ impl Gui {
 
     /// Get the currently active theme.
     pub fn active_theme(&self) -> crate::config::Theme {
-        crate::config::COLOR_THEMES
+        let mut theme = crate::config::COLOR_THEMES
             .get(self.current_theme_index)
             .map(|ct| ct.to_theme())
-            .unwrap_or_default()
+            .unwrap_or_default();
+
+        theme.borders = ratatui::widgets::Borders::ALL;
+        theme.border_type = match self.config.user_config.gui.border.as_str() {
+            "single" | "plain" => ratatui::widgets::BorderType::Plain,
+            "double" => ratatui::widgets::BorderType::Double,
+            "thick" => ratatui::widgets::BorderType::Thick,
+            "hidden" | "none" => {
+                theme.borders = ratatui::widgets::Borders::NONE;
+                ratatui::widgets::BorderType::Plain
+            }
+            "rounded" | _ => ratatui::widgets::BorderType::Rounded,
+        };
+
+        theme
     }
 
     pub fn run(&mut self) -> Result<()> {

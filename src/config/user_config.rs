@@ -382,3 +382,18 @@ impl Default for AiNotesConfig {
         Self { enabled: true }
     }
 }
+
+#[cfg(test)]
+mod test {
+    use super::*;
+
+    #[test]
+    fn test_border_parsing() {
+        let yaml = r#"
+gui:
+  border: "double"
+"#;
+        let config: UserConfig = serde_yaml::from_str(yaml).unwrap();
+        assert_eq!(config.gui.border, "double");
+    }
+}

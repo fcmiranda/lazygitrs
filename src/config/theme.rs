@@ -12,6 +12,7 @@ pub struct Theme {
     pub active_border: Style,
     pub inactive_border: Style,
     pub border_type: ratatui::widgets::BorderType,
+    pub borders: ratatui::widgets::Borders,
     pub selected_line: Style,
     pub options_text: Style,
     pub title: Style,
@@ -196,6 +197,7 @@ impl Theme {
                 .add_modifier(Modifier::BOLD),
             inactive_border: Style::default().fg(Color::DarkGray),
             border_type: ratatui::widgets::BorderType::Rounded,
+            borders: ratatui::widgets::Borders::ALL,
             selected_line: Style::default().bg(Color::DarkGray),
             options_text: Style::default().fg(Color::Blue),
             title: Style::default()
@@ -614,6 +616,7 @@ impl ThemeJson {
                 .add_modifier(Modifier::BOLD),
             inactive_border: Style::default().fg(border),
             border_type: ratatui::widgets::BorderType::Rounded,
+            borders: ratatui::widgets::Borders::ALL,
             selected_line: Style::default().bg(selected_bg),
             options_text: Style::default().fg(info),
             title: Style::default()

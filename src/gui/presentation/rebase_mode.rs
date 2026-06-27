@@ -68,7 +68,7 @@ fn render_main_block(frame: &mut Frame, area: Rect, state: &mut RebaseModeState,
 
     let block = Block::default()
         .title(Line::from(title_spans))
-        .borders(Borders::ALL)
+        .borders(theme.borders)
         .border_type(theme.border_type)
         .border_style(theme.active_border);
 

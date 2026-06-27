@@ -113,7 +113,7 @@ pub fn render(
             } else if diff_loading {
                 let block = Block::default()
                     .title(" Diff ")
-                    .borders(Borders::ALL)
+                    .borders(theme.borders)
                     .border_type(theme.border_type)
                     .border_style(theme.active_border);
                 if diff_loading_show {
@@ -125,7 +125,7 @@ pub fn render(
             } else {
                 let block = Block::default()
                     .title(" Diff ")
-                    .borders(Borders::ALL)
+                    .borders(theme.borders)
                     .border_type(theme.border_type)
                     .border_style(theme.active_border);
                 let widget = Paragraph::new(" No changes to display").block(block);
@@ -156,7 +156,7 @@ pub fn render(
             };
             let block = Block::default()
                 .title(title)
-                .borders(Borders::ALL)
+                .borders(theme.borders)
                 .border_type(theme.border_type)
                 .border_style(theme.active_border);
 
@@ -223,7 +223,7 @@ pub fn render(
                         let rb_selected = ctx_mgr.selected(ContextId::RemoteBranches);
                         let rb_block = Block::default()
                             .title(format!(" Remote Branches ({}) ", remote_branches_name))
-                            .borders(Borders::ALL)
+                            .borders(theme.borders)
                             .border_type(theme.border_type)
                             .border_style(theme.active_border);
                         let items = presentation::remote_branches::render_remote_branch_list(
@@ -441,7 +441,7 @@ pub fn render(
 
         let block = Block::default()
             .title(title)
-            .borders(Borders::ALL)
+            .borders(theme.borders)
             .border_type(theme.border_type)
             .border_style(border_style);
 
@@ -515,7 +515,7 @@ pub fn render(
                     );
                     let cf_block = Block::default()
                         .title(cf_title)
-                        .borders(Borders::ALL)
+                        .borders(theme.borders)
                         .border_type(theme.border_type)
                         .border_style(border_style);
                     if show_commit_file_tree {
@@ -556,7 +556,7 @@ pub fn render(
                     let bc_title = build_branch_commits_title(branch_commits_name, theme);
                     let bc_block = Block::default()
                         .title(bc_title)
-                        .borders(Borders::ALL)
+                        .borders(theme.borders)
                         .border_type(theme.border_type)
                         .border_style(border_style);
                     let items = presentation::commits::render_sub_commit_list(model, theme);
@@ -597,7 +597,7 @@ pub fn render(
                     );
                     let cf_block = Block::default()
                         .title(cf_title)
-                        .borders(Borders::ALL)
+                        .borders(theme.borders)
                         .border_type(theme.border_type)
                         .border_style(border_style);
                     if show_commit_file_tree {
@@ -640,7 +640,7 @@ pub fn render(
                     let bc_title = build_branch_commits_title(branch_commits_name, theme);
                     let bc_block = Block::default()
                         .title(bc_title)
-                        .borders(Borders::ALL)
+                        .borders(theme.borders)
                         .border_type(theme.border_type)
                         .border_style(border_style);
                     let items = presentation::commits::render_sub_commit_list(model, theme);
@@ -660,7 +660,7 @@ pub fn render(
                     let rb_title = format!(" Remote Branches ({}) ", remote_branches_name);
                     let rb_block = Block::default()
                         .title(rb_title)
-                        .borders(Borders::ALL)
+                        .borders(theme.borders)
                         .border_type(theme.border_type)
                         .border_style(border_style);
                     let items = presentation::remote_branches::render_remote_branch_list(
@@ -698,7 +698,7 @@ pub fn render(
                     );
                     let cf_block = Block::default()
                         .title(cf_title)
-                        .borders(Borders::ALL)
+                        .borders(theme.borders)
                         .border_type(theme.border_type)
                         .border_style(border_style);
                     if show_commit_file_tree {
@@ -739,7 +739,7 @@ pub fn render(
                     let bc_title = build_branch_commits_title(branch_commits_name, theme);
                     let bc_block = Block::default()
                         .title(bc_title)
-                        .borders(Borders::ALL)
+                        .borders(theme.borders)
                         .border_type(theme.border_type)
                         .border_style(border_style);
                     let items = presentation::commits::render_sub_commit_list(model, theme);
@@ -773,7 +773,7 @@ pub fn render(
                     );
                     let cf_block = Block::default()
                         .title(cf_title)
-                        .borders(Borders::ALL)
+                        .borders(theme.borders)
                         .border_type(theme.border_type)
                         .border_style(border_style);
                     if show_commit_file_tree {
@@ -838,7 +838,7 @@ pub fn render(
                     );
                     let cf_block = Block::default()
                         .title(cf_title)
-                        .borders(Borders::ALL)
+                        .borders(theme.borders)
                         .border_type(theme.border_type)
                         .border_style(border_style);
                     if show_commit_file_tree {
@@ -893,7 +893,7 @@ pub fn render(
                     );
                     let sf_block = Block::default()
                         .title(sf_title)
-                        .borders(Borders::ALL)
+                        .borders(theme.borders)
                         .border_type(theme.border_type)
                         .border_style(border_style);
                     if show_commit_file_tree {
@@ -949,7 +949,7 @@ pub fn render(
             // Status view: show logo + copyright in the main content area
             let status_block = Block::default()
                 .title(" Status ")
-                .borders(Borders::ALL)
+                .borders(theme.borders)
                 .border_type(theme.border_type)
                 .border_style(theme.active_border);
             render_status_main(frame, fl.main_panel, model, config, theme, status_block);
@@ -970,7 +970,7 @@ pub fn render(
             // Diff is being loaded — show empty panel during grace period, then "Loading..." after delay
             let block = Block::default()
                 .title(" Diff ")
-                .borders(Borders::ALL)
+                .borders(theme.borders)
                 .border_type(theme.border_type)
                 .border_style(theme.inactive_border);
             if diff_loading_show {
@@ -983,7 +983,7 @@ pub fn render(
             // Fallback: show info about selected item
             let block = Block::default()
                 .title(" Diff ")
-                .borders(Borders::ALL)
+                .borders(theme.borders)
                 .border_type(theme.border_type)
                 .border_style(theme.inactive_border);
 
@@ -1144,7 +1144,7 @@ fn render_command_log(
             ])
             .alignment(ratatui::layout::Alignment::Right),
         )
-        .borders(Borders::ALL)
+        .borders(theme.borders)
         .border_type(theme.border_type)
         .border_style(Style::default().fg(border_color));
 
@@ -2377,7 +2377,7 @@ pub fn render_loading_overlay(
 
     let block = Block::default()
         .title(format!(" {} ", title))
-        .borders(Borders::ALL)
+        .borders(theme.borders)
         .border_type(theme.border_type)
         .border_style(Style::default().fg(theme.accent_secondary));
 
@@ -2444,7 +2444,7 @@ pub fn render_popup(
             frame.render_widget(Clear, popup_rect);
             let block = Block::default()
                 .title(format!(" {} ", title))
-                .borders(Borders::ALL)
+                .borders(theme.borders)
                 .border_type(theme.border_type)
                 .border_style(Style::default().fg(theme.accent_secondary));
 
@@ -2487,7 +2487,7 @@ pub fn render_popup(
             };
             let block = Block::default()
                 .title(format!(" {}{} ", icon, title))
-                .borders(Borders::ALL)
+                .borders(theme.borders)
                 .border_type(theme.border_type)
                 .border_style(Style::default().fg(border_color));
 
@@ -2525,7 +2525,7 @@ pub fn render_popup(
             // Render a container block with title and hint
             let outer = Block::default()
                 .title(format!(" {} ", title))
-                .borders(Borders::ALL)
+                .borders(theme.borders)
                 .border_type(theme.border_type)
                 .border_style(Style::default().fg(theme.popup_border));
             frame.render_widget(outer, ta_rect);
@@ -2623,7 +2623,7 @@ pub fn render_popup(
                 let outer = Block::default()
                     .title_top(main_title)
                     .title_top(close_title)
-                    .borders(Borders::ALL)
+                    .borders(theme.borders)
                     .border_type(theme.border_type)
                     .border_style(Style::default().fg(theme.popup_border));
                 frame.render_widget(outer, ta_rect);
@@ -2673,7 +2673,7 @@ pub fn render_popup(
             };
             let outer = Block::default()
                 .title(" Commit message ")
-                .borders(Borders::ALL)
+                .borders(theme.borders)
                 .border_type(theme.border_type)
                 .border_style(Style::default().fg(border_color));
             frame.render_widget(outer, ta_rect);
@@ -2755,7 +2755,7 @@ pub fn render_popup(
 
             let block = Block::default()
                 .title(format!(" {} ", title))
-                .borders(Borders::ALL)
+                .borders(theme.borders)
                 .border_type(theme.border_type)
                 .border_style(Style::default().fg(theme.accent));
 
@@ -2862,7 +2862,7 @@ pub fn render_popup(
 
             let block = Block::default()
                 .title(format!(" {} ", title))
-                .borders(Borders::ALL)
+                .borders(theme.borders)
                 .border_type(theme.border_type)
                 .border_style(Style::default().fg(theme.accent));
             frame.render_widget(block, popup_rect);
@@ -3028,7 +3028,7 @@ pub fn render_popup(
 
             let block = Block::default()
                 .title(" Keybindings ")
-                .borders(Borders::ALL)
+                .borders(theme.borders)
                 .border_type(theme.border_type)
                 .border_style(Style::default().fg(theme.accent));
             frame.render_widget(block, popup_rect);
@@ -3339,7 +3339,7 @@ fn render_list_picker(
 
     let block = Block::default()
         .title(format!(" {} ", title))
-        .borders(Borders::ALL)
+        .borders(theme.borders)
         .border_type(theme.border_type)
         .border_style(Style::default().fg(theme.accent));
     frame.render_widget(block, popup_rect);

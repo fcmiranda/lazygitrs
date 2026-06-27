@@ -109,7 +109,7 @@ fn render_selector(
     };
     let block = Block::default()
         .title(number_label)
-        .borders(Borders::ALL)
+        .borders(theme.borders)
         .border_type(theme.border_type)
         .border_style(border);
 
@@ -151,7 +151,7 @@ fn render_commit_files(frame: &mut Frame, area: Rect, state: &mut DiffModeState,
     );
     let block = Block::default()
         .title(title)
-        .borders(Borders::ALL)
+        .borders(theme.borders)
         .border_type(theme.border_type)
         .border_style(border);
 
@@ -320,7 +320,7 @@ fn render_diff_panel(
         };
         let block = Block::default()
             .title(" 4 Diff ")
-            .borders(Borders::ALL)
+            .borders(theme.borders)
             .border_type(theme.border_type)
             .border_style(border);
         let msg = if diff_loading_show {
@@ -498,7 +498,7 @@ fn render_dropdown(
         .collect();
 
     let block = Block::default()
-        .borders(Borders::ALL)
+        .borders(theme.borders)
         .border_type(theme.border_type)
         .border_style(theme.active_border);
 
