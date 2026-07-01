@@ -108,6 +108,12 @@ pub struct GuiConfig {
     pub nerd_fonts_version: String,
     #[serde(default)]
     pub border: BorderConfig,
+    #[serde(rename = "sideBySide", default = "default_side_by_side")]
+    pub side_by_side: bool,
+}
+
+fn default_side_by_side() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -137,6 +143,7 @@ impl Default for GuiConfig {
             show_bottom_line: true,
             nerd_fonts_version: "3".to_string(),
             border: BorderConfig::default(),
+            side_by_side: true,
         }
     }
 }

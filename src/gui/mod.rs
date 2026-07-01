@@ -429,7 +429,13 @@ impl Gui {
             .diff_view
             .as_deref()
             .and_then(DiffViewLayout::from_state_value)
-            .unwrap_or_default();
+            .unwrap_or_else(|| {
+                if config.user_config.gui.side_by_side {
+                    DiffViewLayout::SideBySide
+                } else {
+                    DiffViewLayout::Unified
+                }
+            });
         let show_commit_details = config.app_state.show_commit_details.unwrap_or(true);
         let command_log = crate::os::cmd::new_command_log();
         crate::os::cmd::set_thread_command_log(command_log.clone());
