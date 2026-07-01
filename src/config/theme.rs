@@ -13,6 +13,8 @@ pub struct Theme {
     pub inactive_border: Style,
     pub border_type: ratatui::widgets::BorderType,
     pub borders: ratatui::widgets::Borders,
+    pub panel_border_types: std::collections::HashMap<String, ratatui::widgets::BorderType>,
+    pub panel_borders: std::collections::HashMap<String, ratatui::widgets::Borders>,
     pub selected_line: Style,
     pub options_text: Style,
     pub title: Style,
@@ -163,16 +165,67 @@ impl Default for Theme {
 }
 
 impl Theme {
+    pub fn borders_for(&self, panel: &str) -> ratatui::widgets::Borders {
+        self.panel_borders
+            .get(panel)
+            .copied()
+            .unwrap_or(self.borders)
+    }
+
+    pub fn border_type_for(&self, panel: &str) -> ratatui::widgets::BorderType {
+        self.panel_border_types
+            .get(panel)
+            .copied()
+            .unwrap_or(self.border_type)
+    }
+
+    pub fn parse_border_type(s: &str) -> (ratatui::widgets::BorderType, ratatui::widgets::Borders) {
+        match s {
+            "single" | "plain" => (
+                ratatui::widgets::BorderType::Plain,
+                ratatui::widgets::Borders::ALL,
+            ),
+            "double" => (
+                ratatui::widgets::BorderType::Double,
+                ratatui::widgets::Borders::ALL,
+            ),
+            "thick" => (
+                ratatui::widgets::BorderType::Thick,
+                ratatui::widgets::Borders::ALL,
+            ),
+            "hidden" | "none" => (
+                ratatui::widgets::BorderType::Plain,
+                ratatui::widgets::Borders::NONE,
+            ),
+            "rounded" | _ => (
+                ratatui::widgets::BorderType::Rounded,
+                ratatui::widgets::Borders::ALL,
+            ),
+        }
+    }
+
     pub fn from_config(config: &super::user_config::GuiConfig) -> Self {
         let mut theme = Self::dark();
 
-        theme.border_type = match config.border.as_str() {
-            "single" | "plain" => ratatui::widgets::BorderType::Plain,
-            "double" => ratatui::widgets::BorderType::Double,
-            "thick" => ratatui::widgets::BorderType::Thick,
-            "hidden" | "none" => ratatui::widgets::BorderType::Plain,
-            "rounded" | _ => ratatui::widgets::BorderType::Rounded,
+        let global_border = match &config.border {
+            crate::config::user_config::BorderConfig::Global(s) => s.clone(),
+            crate::config::user_config::BorderConfig::Granular(map) => map
+                .get("default")
+                .cloned()
+                .unwrap_or_else(|| "rounded".to_string()),
         };
+
+        let (b_type, b_all) = Self::parse_border_type(&global_border);
+        theme.border_type = b_type;
+        theme.borders = b_all;
+
+        if let crate::config::user_config::BorderConfig::Granular(map) = &config.border {
+            for (k, v) in map {
+                let (bt, ba) = Self::parse_border_type(v);
+                theme.panel_border_types.insert(k.clone(), bt);
+                theme.panel_borders.insert(k.clone(), ba);
+            }
+        }
 
         if let Some(color) = parse_color_list(&config.theme.active_border_color) {
             theme.active_border = Style::default().fg(color).add_modifier(Modifier::BOLD);
@@ -198,6 +251,8 @@ impl Theme {
             inactive_border: Style::default().fg(Color::DarkGray),
             border_type: ratatui::widgets::BorderType::Rounded,
             borders: ratatui::widgets::Borders::ALL,
+            panel_border_types: std::collections::HashMap::new(),
+            panel_borders: std::collections::HashMap::new(),
             selected_line: Style::default().bg(Color::DarkGray),
             options_text: Style::default().fg(Color::Blue),
             title: Style::default()
@@ -617,6 +672,8 @@ impl ThemeJson {
             inactive_border: Style::default().fg(border),
             border_type: ratatui::widgets::BorderType::Rounded,
             borders: ratatui::widgets::Borders::ALL,
+            panel_border_types: std::collections::HashMap::new(),
+            panel_borders: std::collections::HashMap::new(),
             selected_line: Style::default().bg(selected_bg),
             options_text: Style::default().fg(info),
             title: Style::default()

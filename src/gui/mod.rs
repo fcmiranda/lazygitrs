@@ -378,6 +378,7 @@ impl Gui {
         git: GitCommands,
         start_in_diff: bool,
         filter_file: Option<String>,
+        is_popup: bool,
     ) -> Result<Self> {
         let (diff_tx, diff_rx) = mpsc::channel();
         let (ai_commit_tx, ai_commit_rx) = mpsc::channel();
@@ -402,13 +403,18 @@ impl Gui {
         let acp_server_url: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(persisted_server_url));
         let acp_notify_command: Arc<Mutex<Option<String>>> =
             Arc::new(Mutex::new(persisted_notify_cmd));
-        let sse_tx = crate::acp::spawn_server(
-            acp_tx,
-            git.repo_path().to_path_buf(),
-            acp_session_id.clone(),
-            acp_server_url.clone(),
-            acp_notify_command.clone(),
-        );
+        let sse_tx = if is_popup {
+            let (tx, _) = tokio::sync::broadcast::channel(16);
+            tx
+        } else {
+            crate::acp::spawn_server(
+                acp_tx,
+                git.repo_path().to_path_buf(),
+                acp_session_id.clone(),
+                acp_server_url.clone(),
+                acp_notify_command.clone(),
+            )
+        };
         let show_file_tree = config
             .app_state
             .show_file_tree
@@ -557,17 +563,27 @@ impl Gui {
             .map(|ct| ct.to_theme())
             .unwrap_or_default();
 
-        theme.borders = ratatui::widgets::Borders::ALL;
-        theme.border_type = match self.config.user_config.gui.border.as_str() {
-            "single" | "plain" => ratatui::widgets::BorderType::Plain,
-            "double" => ratatui::widgets::BorderType::Double,
-            "thick" => ratatui::widgets::BorderType::Thick,
-            "hidden" | "none" => {
-                theme.borders = ratatui::widgets::Borders::NONE;
-                ratatui::widgets::BorderType::Plain
-            }
-            "rounded" | _ => ratatui::widgets::BorderType::Rounded,
+        let global_border = match &self.config.user_config.gui.border {
+            crate::config::user_config::BorderConfig::Global(s) => s.clone(),
+            crate::config::user_config::BorderConfig::Granular(map) => map
+                .get("default")
+                .cloned()
+                .unwrap_or_else(|| "rounded".to_string()),
         };
+
+        let (b_type, b_all) = crate::config::Theme::parse_border_type(&global_border);
+        theme.border_type = b_type;
+        theme.borders = b_all;
+
+        if let crate::config::user_config::BorderConfig::Granular(map) =
+            &self.config.user_config.gui.border
+        {
+            for (k, v) in map {
+                let (bt, ba) = crate::config::Theme::parse_border_type(v);
+                theme.panel_border_types.insert(k.clone(), bt);
+                theme.panel_borders.insert(k.clone(), ba);
+            }
+        }
 
         theme
     }
@@ -1035,7 +1051,15 @@ impl Gui {
     fn apply_acp_notes(&mut self, ctx: crate::acp::AgentContext) {
         let mut lines_file = crate::pager::notes_store::load(self.git.repo_path());
 
+        let modified_files: std::collections::HashSet<String> = {
+            let model = self.model.lock().unwrap();
+            model.files.iter().map(|f| f.name.clone()).collect()
+        };
+
         for file_ctx in ctx.files {
+            if !modified_files.contains(&file_ctx.path) {
+                continue;
+            }
             for ann in file_ctx.annotations {
                 let note_text = if let Some(r) = &ann.rationale {
                     format!("{}\n{}", ann.summary, r)
@@ -2621,6 +2645,21 @@ impl Gui {
             let edit = self.diff_view.inline_edit.as_ref().unwrap();
             let comment = edit.textarea.lines().join("\n");
             let file_path = self.diff_view.file_at_line(edit.line_idx).to_string();
+
+            let is_modified = {
+                let model = self.model.lock().unwrap();
+                model.files.iter().any(|f| f.name == file_path)
+            };
+
+            if !is_modified {
+                self.show_error(
+                    "Erro",
+                    anyhow::anyhow!("Não é permitido salvar notas em arquivos não modificados."),
+                );
+                self.diff_view.inline_edit = None;
+                return Ok(());
+            }
+
             let line_num = self
                 .diff_view
                 .file_line_number(edit.line_idx, edit.panel)
@@ -7367,9 +7406,9 @@ impl Gui {
         let prompt = format!(
             "A review note was created in lazygitrs on file '{}' at line {}:\n\n\"{}\"\n\n\
              Load the lazygitrs-review skill if available. \
-             Fetch all notes with: curl -s http://127.0.0.1:47657/session-api/notes\n\
+             Fetch all notes with: PORT=$(cat .lazygitrs.port) && curl -s http://127.0.0.1:$PORT/session-api/notes\n\
              Review the note above and respond by POSTing your annotations to \
-             http://127.0.0.1:47657/session-api using the AgentContext JSON format:\n\
+             http://127.0.0.1:$PORT/session-api using the AgentContext JSON format:\n\
              {{\"version\":1,\"files\":[{{\"path\":\"...\",\"annotations\":[{{\"summary\":\"...\",\"rationale\":\"...\",\"newRange\":[L,L]}}]}}]}}",
             file, line, note_text
         );
@@ -7426,6 +7465,22 @@ impl Gui {
                     .session
                     .filter(|s| !s.notify_command.is_empty())
                     .map(|s| s.notify_command)
+            })
+            .or_else(|| {
+                if let Ok(home) = std::env::var("HOME") {
+                    let global_path =
+                        std::path::PathBuf::from(home).join(".lazygitrs_active_session.json");
+                    if let Ok(data) = std::fs::read_to_string(&global_path) {
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&data) {
+                            if let Some(cmd) = json.get("notifyCommand").and_then(|v| v.as_str()) {
+                                if !cmd.is_empty() {
+                                    return Some(cmd.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+                None
             });
 
         let cmd_template = match notify_command {
@@ -7444,19 +7499,26 @@ impl Gui {
                     .session
                     .map(|s| s.session_id)
             })
+            .or_else(|| {
+                if let Ok(home) = std::env::var("HOME") {
+                    let global_path =
+                        std::path::PathBuf::from(home).join(".lazygitrs_active_session.json");
+                    if let Ok(data) = std::fs::read_to_string(&global_path) {
+                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&data) {
+                            if let Some(sid) = json.get("sessionId").and_then(|v| v.as_str()) {
+                                if !sid.is_empty() {
+                                    return Some(sid.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+                None
+            })
             .unwrap_or_default();
         let cmd_str = cmd_template
             .replace("{{session_id}}", &session_id)
             .replace("{{prompt}}", &shell_escape_arg(&prompt));
-
-        let parts = split_command(&cmd_str);
-        if parts.is_empty() {
-            self.show_error(
-                "AI Notes Error",
-                anyhow::anyhow!("Empty command after template expansion"),
-            );
-            return;
-        }
 
         crate::os::cmd::log_command(&cmd_str);
         let log_path = self.git.repo_path().join(".lazygitrs-ai-notify.log");
@@ -7468,8 +7530,9 @@ impl Gui {
                         .open("/dev/null")
                         .unwrap()
                 });
-                match std::process::Command::new(&parts[0])
-                    .args(&parts[1..])
+                match std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(&cmd_str)
                     .stdout(std::process::Stdio::from(log_file))
                     .stderr(std::process::Stdio::from(stderr_file))
                     .spawn()
@@ -7484,8 +7547,9 @@ impl Gui {
                 }
             }
             Err(_) => {
-                match std::process::Command::new(&parts[0])
-                    .args(&parts[1..])
+                match std::process::Command::new("sh")
+                    .arg("-c")
+                    .arg(&cmd_str)
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
                     .spawn()

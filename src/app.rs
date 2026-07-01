@@ -11,6 +11,7 @@ pub struct App {
     pub repo_path: PathBuf,
     pub start_in_diff: bool,
     pub filter_file: Option<String>,
+    pub is_popup: bool,
 }
 
 impl App {
@@ -21,6 +22,7 @@ impl App {
         filter_file: Option<String>,
         config_override: Option<String>,
     ) -> Result<Self> {
+        let is_popup = config_override.as_deref() == Some("popup");
         let config = AppConfig::load(debug, config_override)?;
 
         // Validate git repo
@@ -33,6 +35,7 @@ impl App {
             repo_path,
             start_in_diff,
             filter_file,
+            is_popup,
         })
     }
 
@@ -44,7 +47,13 @@ impl App {
         self.config.app_state.add_recent_repo(&repo_str);
         let _ = self.config.save_state();
 
-        let mut gui = Gui::new(self.config, git, self.start_in_diff, self.filter_file)?;
+        let mut gui = Gui::new(
+            self.config,
+            git,
+            self.start_in_diff,
+            self.filter_file,
+            self.is_popup,
+        )?;
         gui.run()?;
 
         Ok(())

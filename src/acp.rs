@@ -92,6 +92,69 @@ pub struct NavigateContext {
     pub combined_view: Option<bool>,
 }
 
+/// Probe the instance referenced by this workspace's `.lazygitrs.port`.
+/// If it is alive AND its `GET /session-api/session` reports the *same*
+/// canonical `workspacePath`, return that port — meaning another lazygitrs
+/// instance is already serving this exact workspace and we should defer to it
+/// instead of binding a second (stray) listener whose SSE channel no one will
+/// subscribe to.
+///
+/// This is the root-cause fix for the "duplicate process silently drops SSE
+/// events" failure mode: when the user launches a popup/second instance of the
+/// same repo, that second instance must NOT bind a new HTTP server, otherwise
+/// `S` pressed in it would push onto a private broadcast channel with zero
+/// listeners while the bridge is connected to the first instance.
+fn existing_instance_owns_workspace(repo_path: &std::path::Path) -> Option<u16> {
+    use std::io::{Read, Write};
+    use std::net::TcpStream;
+
+    let port_file = repo_path.join(".lazygitrs.port");
+    let port: u16 = std::fs::read_to_string(&port_file)
+        .ok()?
+        .trim()
+        .parse()
+        .ok()?;
+    if port == 0 {
+        return None;
+    }
+
+    let addr = std::net::SocketAddr::new(
+        std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
+        port,
+    );
+    let mut stream =
+        TcpStream::connect_timeout(&addr, std::time::Duration::from_millis(150)).ok()?;
+    // HTTP/1.0 forces the server to close the connection after the response,
+    // so a bounded read_to_end terminates promptly.
+    let req = "GET /session-api/session HTTP/1.0\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n";
+    if stream.write_all(req.as_bytes()).is_err() {
+        return None;
+    }
+    let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(200)));
+
+    let mut buf = Vec::with_capacity(2048);
+    let _ = stream.read_to_end(&mut buf);
+    let text = String::from_utf8_lossy(&buf);
+
+    // Split HTTP headers from body.
+    let body = match text.split_once("\r\n\r\n") {
+        Some((_, b)) => b,
+        None => &text[..],
+    };
+    // Tolerate any stray NULs Axum/buffering might append.
+    let body = body.trim_matches(|c: char| c == '\0' || c.is_whitespace());
+    let v: serde_json::Value = serde_json::from_str(body).ok()?;
+    let ws = v.get("workspacePath").and_then(|w| w.as_str())?;
+
+    let canonical =
+        |p: &str| std::fs::canonicalize(p).unwrap_or_else(|_| std::path::PathBuf::from(p));
+    if canonical(ws) == canonical(&repo_path.to_string_lossy().to_string()) {
+        Some(port)
+    } else {
+        None
+    }
+}
+
 /// Spawn the ACP HTTP server. Returns the SSE broadcast sender so the GUI
 /// can push events to connected AI CLIs. The `server_url` is shared so the
 /// register handler can update it when an AI CLI provides its URL.
@@ -102,6 +165,15 @@ pub fn spawn_server(
     server_url: ServerUrl,
     notify_command: NotifyCommand,
 ) -> SseSender {
+    // If another lazygitrs instance is already serving THIS workspace, do NOT
+    // bind a second listener. Return a no-op sender whose `receiver_count()`
+    // is always 0, so `notify_ai_for_note` skips SSE and falls back to the
+    // notifyCommand path. Prevents the stray-port + silent-event-drop bug.
+    if existing_instance_owns_workspace(&repo_path).is_some() {
+        let (noop_tx, _) = broadcast::channel::<String>(16);
+        return noop_tx;
+    }
+
     let (sse_tx, _) = broadcast::channel::<String>(16);
 
     let state = AppState {
@@ -127,31 +199,46 @@ pub fn spawn_server(
                 .route("/session-api/session", get(handle_get_session))
                 .route("/session-api/server", get(handle_get_server))
                 .route("/session-api/events", get(handle_sse_events))
-                .with_state(state);
+                .with_state(state.clone());
 
-            // Retry binding in case the previous process hasn't released
-            // the port yet (TIME_WAIT or slow shutdown).
             let mut bound: Option<TcpListener> = None;
-            for attempt in 0..10u32 {
-                match TcpListener::bind("127.0.0.1:47657").await {
+            let mut bound_port = 47657;
+            for port in 47657..47757 {
+                match TcpListener::bind(format!("127.0.0.1:{}", port)).await {
                     Ok(listener) => {
                         bound = Some(listener);
+                        bound_port = port;
                         break;
                     }
-                    Err(e) if attempt < 9 => {
-                        eprintln!(
-                            "lazygitrs: ACP port 47657 busy (attempt {}), retrying in 500ms: {}",
-                            attempt + 1,
-                            e
-                        );
-                        tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-                    }
-                    Err(e) => {
-                        eprintln!("lazygitrs: Failed to bind ACP server after retries: {}", e);
+                    Err(_) => {
+                        continue;
                     }
                 }
             }
             if let Some(listener) = bound {
+                let port_file = state.repo_path.join(".lazygitrs.port");
+                let mut should_write = true;
+
+                if let Ok(existing_port) = std::fs::read_to_string(&port_file) {
+                    if let Ok(port_num) = existing_port.trim().parse::<u16>() {
+                        if std::net::TcpStream::connect_timeout(
+                            &std::net::SocketAddr::new(
+                                std::net::IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)),
+                                port_num,
+                            ),
+                            std::time::Duration::from_millis(50),
+                        )
+                        .is_ok()
+                        {
+                            should_write = false;
+                        }
+                    }
+                }
+
+                if should_write {
+                    let _ = std::fs::write(&port_file, bound_port.to_string());
+                }
+
                 let _ = axum::serve(listener, app).await;
             }
         });
@@ -164,7 +251,10 @@ pub fn spawn_server(
 /// ID (if any).
 async fn handle_get_session(State(state): State<AppState>) -> Json<serde_json::Value> {
     let id = state.session_id.lock().map(|g| g.clone()).unwrap_or(None);
-    Json(serde_json::json!({"sessionId": id}))
+    Json(serde_json::json!({
+        "sessionId": id,
+        "workspacePath": state.repo_path.to_string_lossy().to_string()
+    }))
 }
 
 /// `GET /session-api/server` — returns the AI CLI's server URL (if any).
@@ -325,11 +415,27 @@ async fn handle_acp_post(
                     let mut lines_file = crate::pager::notes_store::load(&state.repo_path);
                     lines_file.session = Some(crate::pager::notes_store::SessionInfo {
                         session_id: id.to_string(),
-                        cli,
-                        server_url: server_url_str,
-                        notify_command: notify_command_str,
+                        cli: cli.clone(),
+                        server_url: server_url_str.clone(),
+                        notify_command: notify_command_str.clone(),
                     });
                     crate::pager::notes_store::save(&state.repo_path, lines_file);
+
+                    // Fallback to global config so other repos inherit the session
+                    if let Ok(home) = std::env::var("HOME") {
+                        let global_path =
+                            std::path::PathBuf::from(home).join(".lazygitrs_active_session.json");
+                        let global_json = serde_json::json!({
+                            "sessionId": id,
+                            "cli": cli,
+                            "serverUrl": server_url_str,
+                            "notifyCommand": notify_command_str
+                        });
+                        let _ = std::fs::write(
+                            global_path,
+                            serde_json::to_string_pretty(&global_json).unwrap(),
+                        );
+                    }
                     return Json(serde_json::json!({"status": "ok", "sessionId": id}));
                 }
                 return Json(serde_json::json!({"error": "missing sessionId field"}));
@@ -346,6 +452,14 @@ async fn handle_acp_post(
                 let mut lines_file = crate::pager::notes_store::load(&state.repo_path);
                 lines_file.session = None;
                 crate::pager::notes_store::save(&state.repo_path, lines_file);
+
+                // Clear global session fallback file if it exists.
+                if let Ok(home) = std::env::var("HOME") {
+                    let global_path =
+                        std::path::PathBuf::from(home).join(".lazygitrs_active_session.json");
+                    let _ = std::fs::remove_file(global_path);
+                }
+
                 return Json(serde_json::json!({"status": "ok"}));
             }
             "list" | "comment-list" => {

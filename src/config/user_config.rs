@@ -106,12 +106,21 @@ pub struct GuiConfig {
     pub show_bottom_line: bool,
     #[serde(rename = "nerdFontsVersion")]
     pub nerd_fonts_version: String,
-    #[serde(default = "default_border")]
-    pub border: String,
+    #[serde(default)]
+    pub border: BorderConfig,
 }
 
-fn default_border() -> String {
-    "rounded".to_string()
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum BorderConfig {
+    Global(String),
+    Granular(std::collections::HashMap<String, String>),
+}
+
+impl Default for BorderConfig {
+    fn default() -> Self {
+        BorderConfig::Global("rounded".to_string())
+    }
 }
 
 impl Default for GuiConfig {
@@ -127,7 +136,7 @@ impl Default for GuiConfig {
             show_command_log: true,
             show_bottom_line: true,
             nerd_fonts_version: "3".to_string(),
-            border: default_border(),
+            border: BorderConfig::default(),
         }
     }
 }
@@ -406,6 +415,9 @@ gui:
   border: "double"
 "#;
         let config: UserConfig = serde_yaml::from_str(yaml).unwrap();
-        assert_eq!(config.gui.border, "double");
+        match config.gui.border {
+            BorderConfig::Global(b) => assert_eq!(b, "double"),
+            _ => panic!("Expected Global"),
+        }
     }
 }

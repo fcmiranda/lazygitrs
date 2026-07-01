@@ -77,7 +77,38 @@ Persisted State lives at `~/.local/state/lazygitrs/state.yml` and `~/.local/stat
 **New config properties:**
 
 - `git.commit.generateCommand` — shell command for AI-generated commit messages. See [What's different](#whats-different) for examples.
+- `gui.border` — can be a string (`rounded`, `single`, `double`, `hidden`) or an object for granular borders:
+  ```yaml
+  gui:
+    border:
+      default: hidden
+      notes: rounded
+      files: rounded
+      branches: single
+      commits: hidden
+      stash: double
+      status: rounded
+      main: rounded
+  ```
+  Supported granular components: `notes`, `files`, `branches`, `commits`, `stash`, `status`, `main`, `commandLog`.
 - `~/.config/lazygitrs/themes/*.json` — drop custom theme files here. See [Themes](#themes).
+
+### Clearing AI Sessions
+
+If you need to clear or unregister an active AI session for the current repository, you can run the following command:
+
+```sh
+PORT=$(cat .lazygitrs.port 2>/dev/null || echo 47657)
+curl -s -X POST http://127.0.0.1:$PORT/session-api \
+  -H 'content-type: application/json' \
+  --data '{"action":"unregister"}'
+```
+
+To clear active sessions **globally** across all your repositories (and unregister the currently active one in the directory), you can now simply use the built-in CLI flag:
+
+```sh
+lazygitrs --clear-session
+```
 
 ### Themes
 

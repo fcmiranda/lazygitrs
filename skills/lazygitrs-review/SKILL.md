@@ -4,7 +4,10 @@
 
 This skill enables AI coding agents (opencode, codex, gemini, etc.) to participate in a bidirectional review-notes workflow with **lazygitrs**, a Rust TUI for git.
 
-lazygitrs runs an embedded HTTP server on `127.0.0.1:47657` that accepts and serves review notes. The user creates inline notes in the diff view, sends them to your AI session, and you respond by posting annotations back.
+lazygitrs runs an embedded HTTP server on a dynamic port (defaults to `47657`). The active port is written to `.lazygitrs.port`. 
+**CRITICAL**: Before running any of the curl commands below, ALWAYS determine the port by running `PORT=$(cat .lazygitrs.port 2>/dev/null || echo 47657)`. The commands below use `$PORT` as a placeholder.
+
+The user creates inline notes in the diff view, sends them to your AI session, and you respond by posting annotations back.
 
 ## Architecture
 
@@ -27,7 +30,8 @@ User (TUI)                     AI CLI (you)
 lazygitrs pushes `note-sent` events in real-time to any connected AI CLI. Connect with:
 
 ```bash
-curl -N http://127.0.0.1:47657/session-api/events
+PORT=$(cat .lazygitrs.port 2>/dev/null || echo 47657)
+curl -N http://127.0.0.1:$PORT/session-api/events
 ```
 
 This keeps a long-lived connection open. When the user presses `S`, you'll receive:
@@ -64,12 +68,14 @@ When your AI session starts, register your session ID so lazygitrs can target yo
 
 ```bash
 # Example for Antigravity (agy): Use your REAL internal Conversation ID!
-curl -s -X POST http://127.0.0.1:47657/session-api \
+PORT=$(cat .lazygitrs.port 2>/dev/null || echo 47657)
+curl -s -X POST http://127.0.0.1:$PORT/session-api \
   -H 'content-type: application/json' \
-  --data '{"action":"register","sessionId":"YOUR_REAL_CONVERSATION_ID","cli":"antigravity","notifyCommand":"agy --conversation {{session_id}} --print {{prompt}}"}'
+  --data '{"action":"register","sessionId":"YOUR_REAL_CONVERSATION_ID","cli":"antigravity","notifyCommand":"/home/fecavmi/.local/bin/agy --conversation {{session_id}} --print {{prompt}}"}'
 
 # Example for opencode:
-curl -s -X POST http://127.0.0.1:47657/session-api \
+PORT=$(cat .lazygitrs.port 2>/dev/null || echo 47657)
+curl -s -X POST http://127.0.0.1:$PORT/session-api \
   -H 'content-type: application/json' \
   --data '{"action":"register","sessionId":"YOUR_SESSION_ID","cli":"opencode","serverUrl":"http://127.0.0.1:4096","notifyCommand":"opencode run --continue {{prompt}}"}'
 ```
@@ -91,7 +97,8 @@ opencode --port 4096
 
 Then register:
 ```bash
-curl -s -X POST http://127.0.0.1:47657/session-api \
+PORT=$(cat .lazygitrs.port 2>/dev/null || echo 47657)
+curl -s -X POST http://127.0.0.1:$PORT/session-api \
   -H 'content-type: application/json' \
   --data '{"action":"register","sessionId":"opencode-session-001","cli":"opencode","serverUrl":"http://127.0.0.1:4096"}'
 ```
@@ -112,12 +119,14 @@ notifyCommand: "opencode run --continue {{prompt}}"
 
 To check the currently registered session:
 ```bash
-curl -s http://127.0.0.1:47657/session-api/session
+PORT=$(cat .lazygitrs.port 2>/dev/null || echo 47657)
+curl -s http://127.0.0.1:$PORT/session-api/session
 ```
 
 To unregister (on exit):
 ```bash
-curl -s -X POST http://127.0.0.1:47657/session-api \
+PORT=$(cat .lazygitrs.port 2>/dev/null || echo 47657)
+curl -s -X POST http://127.0.0.1:$PORT/session-api \
   -H 'content-type: application/json' \
   --data '{"action":"unregister"}'
 ```
@@ -125,7 +134,8 @@ curl -s -X POST http://127.0.0.1:47657/session-api \
 ### Fetch all notes
 
 ```bash
-curl -s http://127.0.0.1:47657/session-api/notes
+PORT=$(cat .lazygitrs.port 2>/dev/null || echo 47657)
+curl -s http://127.0.0.1:$PORT/session-api/notes
 ```
 
 Response:
@@ -157,13 +167,15 @@ Response:
 ### Fetch notes for a specific file
 
 ```bash
-curl -s http://127.0.0.1:47657/session-api/notes/src%2Fmain.rs
+PORT=$(cat .lazygitrs.port 2>/dev/null || echo 47657)
+curl -s http://127.0.0.1:$PORT/session-api/notes/src%2Fmain.rs
 ```
 
 ### List notes (POST alternative)
 
 ```bash
-curl -s -X POST http://127.0.0.1:47657/session-api \
+PORT=$(cat .lazygitrs.port 2>/dev/null || echo 47657)
+curl -s -X POST http://127.0.0.1:$PORT/session-api \
   -H 'content-type: application/json' \
   --data '{"action":"list"}'
 ```
@@ -174,7 +186,8 @@ Forces the TUI to focus on a specific file, scroll to the requested line, and hi
 By default, this collapses all other files. To preserve the unified view of all diffs, set `"combinedView": true`.
 
 ```bash
-curl -s -X POST http://127.0.0.1:47657/session-api \
+PORT=$(cat .lazygitrs.port 2>/dev/null || echo 47657)
+curl -s -X POST http://127.0.0.1:$PORT/session-api \
   -H 'content-type: application/json' \
   --data '{
     "action": "navigate",
@@ -188,7 +201,8 @@ curl -s -X POST http://127.0.0.1:47657/session-api \
 ### Push review annotations
 
 ```bash
-curl -s -X POST http://127.0.0.1:47657/session-api \
+PORT=$(cat .lazygitrs.port 2>/dev/null || echo 47657)
+curl -s -X POST http://127.0.0.1:$PORT/session-api \
   -H 'content-type: application/json' \
   --data '{
     "version": 1,
@@ -241,7 +255,7 @@ When you POST annotations for a file+line that has a user note with `status: "se
 
 1. **Receive notification**: The user presses `S` on a note in lazygitrs. Your AI session receives a prompt telling you to check the notes endpoint.
 
-2. **Fetch notes**: Run `curl -s http://127.0.0.1:47657/session-api/notes` to see all user review notes. Filter for `status: "sent"` to find notes awaiting your response.
+2. **Fetch notes**: Run `PORT=$(cat .lazygitrs.port 2>/dev/null || echo 47657) && curl -s http://127.0.0.1:$PORT/session-api/notes` to see all user review notes. Filter for `status: "sent"` to find notes awaiting your response.
 
 3. **Review the code**: Read the files and lines referenced by the notes. Understand the user's concern.
 
@@ -255,3 +269,4 @@ When you POST annotations for a file+line that has a user note with `status: "se
 - Use `newRange` for lines that exist in the new version of the file, `oldRange` for deleted lines
 - Line numbers are 1-based file line numbers (not diff hunk line numbers)
 - The `revision` counter in the response increments on every change — you can poll and compare to detect new notes efficiently
+

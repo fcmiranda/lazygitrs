@@ -11,6 +11,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
+/// The ASCII logo for lazygitrs
 const LOGO: &str = include_str!("../logo.txt");
 
 #[derive(Parser)]
@@ -47,6 +48,10 @@ struct Cli {
     /// Configuration file or preset name to use (e.g. 'popup' or ~/.config/lazygitrs/config.yml)
     #[arg(short = 'c', long = "config")]
     config: Option<String>,
+
+    /// Clear the active AI session for this repository and globally
+    #[arg(long)]
+    clear_session: bool,
 }
 
 /// Restore the terminal on panic so the user isn't left in raw mode + mouse
@@ -76,6 +81,40 @@ fn main() {
         let config = config::user_config::UserConfig::default();
         let yaml = serde_yaml::to_string(&config).unwrap();
         println!("{}", yaml);
+        std::process::exit(0);
+    }
+
+    if cli.clear_session {
+        // 1. Delete global fallback file
+        if let Ok(home) = std::env::var("HOME") {
+            let global_path = std::path::PathBuf::from(home).join(".lazygitrs_active_session.json");
+            let _ = std::fs::remove_file(global_path);
+        }
+
+        // 2. Try to notify running instance for the current directory via API
+        if let Ok(port_str) = std::fs::read_to_string(".lazygitrs.port") {
+            if let Ok(port) = port_str.trim().parse::<u16>() {
+                let url = format!("http://127.0.0.1:{}/session-api", port);
+                let _ = std::process::Command::new("curl")
+                    .args([
+                        "-s",
+                        "-X",
+                        "POST",
+                        &url,
+                        "-H",
+                        "content-type: application/json",
+                        "--data",
+                        r#"{"action":"unregister"}"#,
+                    ])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+            }
+        }
+
+        println!(
+            "AI sessions cleared (global fallback removed, and local instance unregistered if running)."
+        );
         std::process::exit(0);
     }
 

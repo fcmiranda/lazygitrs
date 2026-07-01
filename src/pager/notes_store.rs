@@ -22,6 +22,12 @@ pub struct LinesFile {
     pub revision: u64,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub session: Option<SessionInfo>,
+    #[serde(
+        rename = "workspacePath",
+        default,
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub workspace_path: Option<String>,
     pub notes: Vec<LinesEntry>,
 }
 
@@ -57,6 +63,7 @@ impl Default for LinesFile {
             version: 1,
             revision: 0,
             session: None,
+            workspace_path: None,
             notes: Vec::new(),
         }
     }
@@ -144,15 +151,22 @@ impl LinesEntry {
 pub fn load(repo_path: &Path) -> LinesFile {
     let target = repo_path.join(".lines.json");
     if !target.exists() {
-        return LinesFile::default();
+        let mut lf = LinesFile::default();
+        lf.workspace_path = Some(repo_path.to_string_lossy().to_string());
+        return lf;
     }
     let content = match std::fs::read_to_string(&target) {
         Ok(c) => c,
-        Err(_) => return LinesFile::default(),
+        Err(_) => {
+            let mut lf = LinesFile::default();
+            lf.workspace_path = Some(repo_path.to_string_lossy().to_string());
+            return lf;
+        }
     };
 
     // Try new wrapped format first.
-    if let Ok(wrapped) = serde_json::from_str::<LinesFile>(&content) {
+    if let Ok(mut wrapped) = serde_json::from_str::<LinesFile>(&content) {
+        wrapped.workspace_path = Some(repo_path.to_string_lossy().to_string());
         return wrapped;
     }
 
@@ -166,11 +180,14 @@ pub fn load(repo_path: &Path) -> LinesFile {
             version: 1,
             revision: 0,
             session: None,
+            workspace_path: Some(repo_path.to_string_lossy().to_string()),
             notes,
         };
     }
 
-    LinesFile::default()
+    let mut lf = LinesFile::default();
+    lf.workspace_path = Some(repo_path.to_string_lossy().to_string());
+    lf
 }
 
 /// Save `.lines.json` in the new wrapped format, incrementing the revision

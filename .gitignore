@@ -2,3 +2,5 @@ _tmp_*
 target/
 
 .claude/settings.local.json
+.lazygitrs*
+.lines.json

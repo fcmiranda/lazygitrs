@@ -2411,8 +2411,8 @@ fn render_diff_annotations(
                         ),
                     ];
                     let block = ratatui::widgets::Block::default()
-                        .borders(theme.borders)
-                        .border_type(theme.border_type)
+                        .borders(theme.borders_for("notes"))
+                        .border_type(theme.border_type_for("notes"))
                         .border_style(Style::default().fg(theme.accent))
                         .title(title)
                         .title_bottom(
@@ -2504,8 +2504,8 @@ fn render_diff_annotations(
                     }
                 }
                 ratatui::widgets::Block::default()
-                    .borders(theme.borders)
-                    .border_type(theme.border_type)
+                    .borders(theme.borders_for("notes"))
+                    .border_type(theme.border_type_for("notes"))
                     .border_style(Style::default().fg(border_fg).add_modifier(border_mod))
                     .title(ratatui::text::Line::from(title_spans))
                     .title_bottom(
@@ -2546,8 +2546,8 @@ fn render_diff_annotations(
 
                 let title = format!(" 󱞂 - {} - {} ", file_path, line_num);
                 let block = ratatui::widgets::Block::default()
-                    .borders(theme.borders)
-                    .border_type(theme.border_type)
+                    .borders(theme.borders_for("notes"))
+                    .border_type(theme.border_type_for("notes"))
                     .border_style(Style::default().fg(theme.accent))
                     .title(title)
                     .title_bottom(
