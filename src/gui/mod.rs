@@ -1051,15 +1051,7 @@ impl Gui {
     fn apply_acp_notes(&mut self, ctx: crate::acp::AgentContext) {
         let mut lines_file = crate::pager::notes_store::load(self.git.repo_path());
 
-        let modified_files: std::collections::HashSet<String> = {
-            let model = self.model.lock().unwrap();
-            model.files.iter().map(|f| f.name.clone()).collect()
-        };
-
         for file_ctx in ctx.files {
-            if !modified_files.contains(&file_ctx.path) {
-                continue;
-            }
             for ann in file_ctx.annotations {
                 let note_text = if let Some(r) = &ann.rationale {
                     format!("{}\n{}", ann.summary, r)
