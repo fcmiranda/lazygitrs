@@ -67,6 +67,7 @@ lazygitrs
   - **Subprocess Spawning** (`notifyCommand`): Spawns a background command (great for `agy`, `claude`, etc.)
   - **HTTP Push** (`serverUrl`): Does an instant HTTP POST to local servers (great for `opencode`)
   - **Server-Sent Events** (`SSE`): Real-time event streaming for wrapper scripts or IDE extensions.
+  - **Bidirectional Sync**: AI review annotations are posted back directly into the lazygitrs TUI diff view.
 
 ### Configuration
 
