@@ -2824,7 +2824,6 @@ impl Gui {
                 KeyCode::Char('d') => {
                     if let Some(ref note_id) = self.diff_view.selected_note.clone() {
                         self.delete_note(note_id.clone());
-                        self.diff_view.selected_note = None;
                     }
                     return Ok(());
                 }
@@ -7345,9 +7344,41 @@ impl Gui {
 
     fn delete_note(&mut self, note_id: String) {
         let mut lines_file = crate::pager::notes_store::load(self.git.repo_path());
+        let deleted_note_opt = lines_file.notes.iter().find(|c| c.id == note_id).cloned();
         lines_file.notes.retain(|c| c.id != note_id);
-        crate::pager::notes_store::save(self.git.repo_path(), lines_file);
+        crate::pager::notes_store::save(self.git.repo_path(), lines_file.clone());
         self.diff_view.load_notes(self.git.repo_path());
+
+        if let Some(deleted) = deleted_note_opt {
+            let mut closest: Option<(&crate::pager::notes_store::LinesEntry, usize)> = None;
+            for note in &lines_file.notes {
+                if note.file != deleted.file {
+                    continue;
+                }
+                let dist = (note.line as isize - deleted.line as isize).abs() as usize;
+                match closest {
+                    None => {
+                        closest = Some((note, dist));
+                    }
+                    Some((prev_note, prev_dist)) => {
+                        if dist < prev_dist {
+                            closest = Some((note, dist));
+                        } else if dist == prev_dist {
+                            if note.panel == deleted.panel && prev_note.panel != deleted.panel {
+                                closest = Some((note, dist));
+                            }
+                        }
+                    }
+                }
+            }
+            if let Some((note, _)) = closest {
+                self.diff_view.selected_note = Some(note.id.clone());
+            } else {
+                self.diff_view.selected_note = None;
+            }
+        } else {
+            self.diff_view.selected_note = None;
+        }
     }
 
     /// Send a user note to the AI session.

@@ -399,15 +399,19 @@ fn render_status_bar(frame: &mut Frame, area: Rect, state: &DiffModeState, theme
     let hints = if state.editing.is_some() {
         vec![("Enter", "select"), ("Esc", "cancel"), ("↑↓", "navigate")]
     } else {
-        vec![
+        let mut h = vec![
             ("q", "exit"),
             ("Tab", "cycle"),
             ("1-4", "panel"),
             ("<c-s>", "swap"),
             ("`", "tree"),
             ("v", "view"),
-            ("?", "help"),
-        ]
+        ];
+        if state.focus == DiffModeFocus::DiffExploration {
+            h.push(("c", "note"));
+        }
+        h.push(("?", "help"));
+        h
     };
 
     let key_style = Style::default().fg(theme.text).add_modifier(Modifier::BOLD);

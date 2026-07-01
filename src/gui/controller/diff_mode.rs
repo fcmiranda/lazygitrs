@@ -868,6 +868,10 @@ fn show_diff_mode_help(gui: &mut Gui) {
                 description: "Copy to clipboard".into(),
             },
             HelpEntry {
+                key: "c".into(),
+                description: "Create note on line".into(),
+            },
+            HelpEntry {
                 key: "?".into(),
                 description: "Show this help".into(),
             },

@@ -1,5 +1,0 @@
-Nota enviada e respondida direto no seu `lazygitrs`!
-
-Essa linha `302` faz parte do `ContextManager` e está interligada exatamente com o que conversamos na nota anterior. O `set_selected` é o método que permite forçar a seleção de um item em qualquer painel (contexto) do TUI. Foi usando essa função que conseguimos fazer a IA navegar automaticamente até um arquivo específico e destacá-lo na lista para você.
-
-É muito legal ver as engrenagens internas funcionando juntas. Há mais alguma linha que você queira explorar?
