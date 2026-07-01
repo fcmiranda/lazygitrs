@@ -40,11 +40,12 @@ Because it is saved to `.lines.json`, **any subsequent popup instance** of `lazy
 ### 3. The Tmux Injector Script (`lazygit-tmux-injector.sh`)
 When a user presses `S` on a note inside a popup, `lazygitrs` detects that it has `0` SSE clients. It immediately triggers its native fallback mechanism, executing the `notifyCommand`.
 
-The injector script executes the following bulletproof logic:
+The injector script executes the following logic:
 - Reads the target `tmux` pane from the `/tmp` tracker.
-- Compresses the multi-line `{{prompt}}` into a **single continuous string** using `tr '\n' ' '`.
-- Uses `tmux send-keys -l` to stream the payload into the `agy` prompt instantly.
-- Appends a standard `Enter` keystroke, bypassing the need for `Alt+Enter` or bracketed paste workarounds.
+- **Staleness guard**: checks `tmux list-panes` to confirm the pane still runs `agy`/`node`. If the agy session died and the pane was reused by a shell, the script refuses to inject.
+- **Primary path**: loads the full multi-line `{{prompt}}` into a tmux buffer and uses `tmux paste-buffer -p` (bracketed paste) to inject it atomically. An A/B test against a live `agy` input widget confirmed this preserves newlines (markdown lists, code fences) in the prompt box without premature submit, and — being a single atomic operation — eliminates the PTY buffer-tearing race the original flattening worked around.
+- **Fallback**: if `paste-buffer` is unavailable, flattens the prompt to a single line with `tr '\n' ' '` and streams it with `tmux send-keys -l`.
+- Appends a standard `Enter` keystroke to submit.
 
 ## Workflow Execution (End-to-End)
 
@@ -60,4 +61,5 @@ The injector script executes the following bulletproof logic:
 
 - **No Zombie Processes**: There are no background `while` loops, `curl` listeners, or fragile bash daemons running on the host machine.
 - **Perfect Popup Support**: Popups act as stateless clients. They don't need to fight for HTTP ports or maintain network connections.
-- **Fail-Safe Injection**: Single-line flattening guarantees that the terminal's PTY buffer never tears or chunks the payload, completely eliminating the multi-line paste race condition.
+- **Structure-Preserving Injection**: Bracketed `paste-buffer` delivers multi-line prompts atomically (no PTY tearing race) while keeping markdown structure intact, with single-line flattening retained as a fallback.
+- **Portable Registration**: the `notifyCommand` uses a `{{workspace_path}}` placeholder substituted by lazygitrs at spawn time, so the persisted `.lines.json` survives repo renames/moves without the pane tracker going stale.
