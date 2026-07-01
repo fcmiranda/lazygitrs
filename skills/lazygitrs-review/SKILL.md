@@ -82,7 +82,13 @@ curl -s -X POST http://127.0.0.1:$PORT/session-api \
 
 **CRITICAL**: You must use your *real*, unique conversation ID (e.g., your Antigravity conversation UUID) as the `sessionId`, and you must provide the correct `notifyCommand` for your CLI. If you use a fake/mock ID, background notifications spawned by lazygitrs will not know how to route messages back to your active chat window!
 
-The `cli` field is optional but helps identify which AI tool is registered. The `serverUrl` enables direct inline prompt pushing if your AI CLI runs a local web server. The `notifyCommand` is a shell command template that lazygitrs spawns when the user presses `S` (use `{{session_id}}` and `{{prompt}}` placeholders). The session ID and command are persisted to `.lines.json` so they survive lazygitrs restarts.
+The `cli` field is optional but helps identify which AI tool is registered. The `serverUrl` enables direct inline prompt pushing if your AI CLI runs a local web server. The `notifyCommand` is a shell command template that lazygitrs spawns when the user presses `S`. Supported placeholders (substituted at spawn time, so they always reflect the current repo):
+
+- `{{session_id}}` — the registered AI session ID
+- `{{workspace_path}}` — the current lazygitrs repo path (shell-escaped)
+- `{{prompt}}` — the review prompt (shell-escaped, single-line)
+
+Using `{{workspace_path}}` instead of baking an absolute path into the template makes the persisted `.lines.json` portable across repo renames/moves. The session ID and command are persisted to `.lines.json` so they survive lazygitrs restarts.
 
 **Session conflict:** If another session is already registered, the register call returns `{"status":"conflict"}` instead of overwriting. To force overwrite, add `"force": true` to the payload. To clear the existing session first, use the `unregister` action.
 

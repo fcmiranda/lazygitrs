@@ -7516,8 +7516,10 @@ impl Gui {
                 None
             })
             .unwrap_or_default();
+        let workspace_path = self.git.repo_path().to_string_lossy().to_string();
         let cmd_str = cmd_template
             .replace("{{session_id}}", &session_id)
+            .replace("{{workspace_path}}", &shell_escape_arg(&workspace_path))
             .replace("{{prompt}}", &shell_escape_arg(&prompt));
 
         crate::os::cmd::log_command(&cmd_str);
