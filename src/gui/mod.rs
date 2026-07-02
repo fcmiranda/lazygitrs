@@ -2829,7 +2829,9 @@ impl Gui {
                 }
                 KeyCode::Char('d') => {
                     if let Some(ref note_id) = self.diff_view.selected_note.clone() {
-                        self.delete_note(note_id.clone());
+                        if self.ensure_note_visible(note_id) {
+                            self.delete_note(note_id.clone());
+                        }
                     }
                     return Ok(());
                 }
@@ -7392,17 +7394,93 @@ impl Gui {
 
     fn delete_note(&mut self, note_id: String) {
         let mut lines_file = crate::pager::notes_store::load(self.git.repo_path());
+        let original_notes = lines_file.notes.clone();
         let deleted_note_opt = lines_file.notes.iter().find(|c| c.id == note_id).cloned();
         lines_file.notes.retain(|c| c.id != note_id);
         crate::pager::notes_store::save(self.git.repo_path(), lines_file.clone());
         self.diff_view.load_notes(self.git.repo_path());
 
         if let Some(deleted) = deleted_note_opt {
-            let mut closest: Option<(&crate::pager::notes_store::LinesEntry, usize)> = None;
-            for note in &lines_file.notes {
-                if note.file != deleted.file {
-                    continue;
+            let notes_on_same_line: Vec<&crate::pager::notes_store::LinesEntry> = original_notes
+                .iter()
+                .filter(|n| {
+                    n.file == deleted.file && n.line == deleted.line && n.panel == deleted.panel
+                })
+                .collect();
+
+            let mut found_next_on_same_line = None;
+            if let Some(pos) = notes_on_same_line.iter().position(|n| n.id == deleted.id) {
+                if pos + 1 < notes_on_same_line.len() {
+                    found_next_on_same_line = Some(notes_on_same_line[pos + 1].id.clone());
+                } else if pos > 0 {
+                    found_next_on_same_line = Some(notes_on_same_line[pos - 1].id.clone());
                 }
+            }
+
+            if found_next_on_same_line.is_some() {
+                self.diff_view.selected_note = found_next_on_same_line;
+                return;
+            }
+
+            let main_panel = self.compute_main_panel_rect();
+            let pl = DiffPanelLayout::compute(main_panel, &self.diff_view);
+            let content_width = pl.new_content_end_x.saturating_sub(pl.new_content_x) as usize;
+            let panel_width = pl.old_content_end_x.saturating_sub(pl.old_content_x) as usize;
+            let right_content_width =
+                pl.new_content_end_x.saturating_sub(pl.new_content_x) as usize;
+            let visible_height = pl.inner_end_y.saturating_sub(pl.inner_y) as usize;
+
+            let start = self.diff_view.scroll_offset;
+            let mut acc = 0usize;
+            let mut visible_note_ids = HashSet::new();
+            for idx in start..self.diff_view.lines.len() {
+                if acc >= visible_height {
+                    break;
+                }
+                let dl = &self.diff_view.lines[idx];
+                for note in &dl.comment_notes {
+                    visible_note_ids.insert(note.id.clone());
+                }
+                if self.diff_view.view_layout == crate::pager::side_by_side::DiffViewLayout::Unified
+                    || self.diff_view.side_view != crate::pager::side_by_side::DiffSideView::Both
+                {
+                    acc += crate::pager::side_by_side::unified_line_visual_height(
+                        dl,
+                        content_width,
+                        &self.diff_view,
+                        idx,
+                    );
+                } else {
+                    acc += crate::pager::side_by_side::line_visual_height(
+                        dl,
+                        panel_width,
+                        right_content_width,
+                        &self.diff_view,
+                        idx,
+                    );
+                }
+            }
+
+            let candidate_notes: Vec<&crate::pager::notes_store::LinesEntry> = lines_file
+                .notes
+                .iter()
+                .filter(|n| n.file == deleted.file)
+                .collect();
+
+            let visible_candidates: Vec<&crate::pager::notes_store::LinesEntry> = candidate_notes
+                .iter()
+                .filter(|n| visible_note_ids.contains(&n.id))
+                .cloned()
+                .collect();
+
+            let subset = if !visible_candidates.is_empty() {
+                visible_candidates
+            } else {
+                candidate_notes
+            };
+
+            let mut closest: Option<(&crate::pager::notes_store::LinesEntry, usize)> = None;
+            for &note in &subset {
                 let dist = (note.line as isize - deleted.line as isize).abs() as usize;
                 match closest {
                     None => {
@@ -7419,6 +7497,7 @@ impl Gui {
                     }
                 }
             }
+
             if let Some((note, _)) = closest {
                 self.diff_view.selected_note = Some(note.id.clone());
             } else {
@@ -7427,6 +7506,98 @@ impl Gui {
         } else {
             self.diff_view.selected_note = None;
         }
+    }
+
+    fn ensure_note_visible(&mut self, note_id: &str) -> bool {
+        let main_panel = self.compute_main_panel_rect();
+        let pl = DiffPanelLayout::compute(main_panel, &self.diff_view);
+        let content_width = pl.new_content_end_x.saturating_sub(pl.new_content_x) as usize;
+        let panel_width = pl.old_content_end_x.saturating_sub(pl.old_content_x) as usize;
+        let right_content_width = pl.new_content_end_x.saturating_sub(pl.new_content_x) as usize;
+        let visible_height = pl.inner_end_y.saturating_sub(pl.inner_y) as usize;
+
+        let start = self.diff_view.scroll_offset;
+        let mut acc = 0usize;
+        let mut visible_note_ids = HashSet::new();
+        for idx in start..self.diff_view.lines.len() {
+            if acc >= visible_height {
+                break;
+            }
+            let dl = &self.diff_view.lines[idx];
+            for note in &dl.comment_notes {
+                visible_note_ids.insert(note.id.clone());
+            }
+            if self.diff_view.view_layout == crate::pager::side_by_side::DiffViewLayout::Unified
+                || self.diff_view.side_view != crate::pager::side_by_side::DiffSideView::Both
+            {
+                acc += crate::pager::side_by_side::unified_line_visual_height(
+                    dl,
+                    content_width,
+                    &self.diff_view,
+                    idx,
+                );
+            } else {
+                acc += crate::pager::side_by_side::line_visual_height(
+                    dl,
+                    panel_width,
+                    right_content_width,
+                    &self.diff_view,
+                    idx,
+                );
+            }
+        }
+
+        if visible_note_ids.contains(note_id) {
+            return true;
+        }
+
+        // Scroll to make it visible
+        let mut target_line_idx = None;
+        for (i, dl) in self.diff_view.lines.iter().enumerate() {
+            if dl.comment_notes.iter().any(|n| n.id == note_id) {
+                target_line_idx = Some(i);
+                break;
+            }
+        }
+
+        if let Some(line_idx) = target_line_idx {
+            if line_idx < self.diff_view.scroll_offset {
+                self.diff_view.scroll_offset = line_idx;
+            }
+
+            let start = self.diff_view.scroll_offset.min(line_idx);
+            let mut acc = 0usize;
+            for (offset, dl) in self.diff_view.lines[start..=line_idx].iter().enumerate() {
+                let idx = start + offset;
+                if idx == line_idx {
+                    break;
+                }
+                if self.diff_view.view_layout == crate::pager::side_by_side::DiffViewLayout::Unified
+                    || self.diff_view.side_view != crate::pager::side_by_side::DiffSideView::Both
+                {
+                    acc += crate::pager::side_by_side::unified_line_visual_height(
+                        dl,
+                        content_width,
+                        &self.diff_view,
+                        idx,
+                    );
+                } else {
+                    acc += crate::pager::side_by_side::line_visual_height(
+                        dl,
+                        panel_width,
+                        right_content_width,
+                        &self.diff_view,
+                        idx,
+                    );
+                }
+            }
+
+            if acc >= visible_height {
+                self.diff_view.scroll_offset = line_idx.saturating_sub(visible_height / 3);
+            }
+        }
+
+        false
     }
 
     /// Send a user note to the AI session.
