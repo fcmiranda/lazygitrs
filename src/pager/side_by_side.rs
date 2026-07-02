@@ -2335,7 +2335,7 @@ fn render_hover_plus_button(buf: &mut Buffer, area: Rect, state: &DiffViewState,
     let style = Style::default()
         .fg(theme.accent)
         .add_modifier(Modifier::BOLD);
-    buf_write_str(buf, x, y, "", style, 3);
+    buf_write_str(buf, x, y, "  ", style, 3);
 }
 
 fn render_diff_annotations(
