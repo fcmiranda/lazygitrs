@@ -336,6 +336,10 @@ pub struct Gui {
     /// Whether the mouse is currently hovering the AI-generate button (✦)
     /// in the commit message popup. Drives tooltip visibility.
     pub commit_ai_button_hovered: bool,
+    /// Whether we started directly in diff view (e.g. lazygit --diff)
+    pub started_in_diff_mode: bool,
+    /// Whether this is a popup instance (popup.yaml config)
+    pub is_popup: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -559,6 +563,8 @@ impl Gui {
             commit_details_scroll_hash: String::new(),
             show_commit_details,
             commit_ai_button_hovered: false,
+            started_in_diff_mode: start_in_diff,
+            is_popup,
         })
     }
 
@@ -3073,6 +3079,11 @@ impl Gui {
                 self.diff_view.clear_search();
             } else {
                 self.diff_focused = false;
+                if self.started_in_diff_mode {
+                    self.started_in_diff_mode = false;
+                    self.screen_mode = ScreenMode::Normal;
+                    self.layout.side_panel_ratio = 0.25;
+                }
             }
             return Ok(());
         }

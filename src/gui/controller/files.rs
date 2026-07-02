@@ -26,6 +26,8 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) 
                     if !is_minus {
                         if !gui.diff_view.is_empty() {
                             gui.diff_focused = true;
+                            gui.screen_mode = crate::gui::ScreenMode::Full;
+                            gui.started_in_diff_mode = true;
                         }
                         return Ok(());
                     }
@@ -49,6 +51,8 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) 
         // Focus the diff panel for the selected file
         if !gui.diff_view.is_empty() {
             gui.diff_focused = true;
+            gui.screen_mode = crate::gui::ScreenMode::Full;
+            gui.started_in_diff_mode = true;
         }
         return Ok(());
     }
