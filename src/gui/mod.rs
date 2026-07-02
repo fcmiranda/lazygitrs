@@ -2839,6 +2839,22 @@ impl Gui {
                     }
                     return Ok(());
                 }
+                KeyCode::Char('c') => {
+                    if let Some(ref note_id) = self.diff_view.selected_note.clone() {
+                        for (i, dl) in self.diff_view.lines.iter().enumerate() {
+                            if dl.comment_notes.iter().any(|n| &n.id == note_id) {
+                                let panel = if dl.new_line.is_some() {
+                                    crate::pager::side_by_side::DiffPanel::New
+                                } else {
+                                    crate::pager::side_by_side::DiffPanel::Old
+                                };
+                                self.open_inline_note_editor(i, panel, None);
+                                break;
+                            }
+                        }
+                    }
+                    return Ok(());
+                }
                 _ => {}
             }
         }
