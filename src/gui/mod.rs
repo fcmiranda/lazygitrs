@@ -2611,7 +2611,14 @@ impl Gui {
         // `.` toggles the commit-details box when in any commit-related
         // context.  Kept outside per-context controllers so the binding is
         // consistent across Commits / BranchCommits / Reflog / CommitFiles.
-        if key.code == KeyCode::Char('.') && self.context_has_commit_details() {
+        if key.code == KeyCode::Char('.')
+            && self.context_has_commit_details()
+            && !(self.show_commit_file_tree
+                && matches!(
+                    self.context_mgr.active(),
+                    ContextId::CommitFiles | ContextId::BranchCommitFiles | ContextId::StashFiles
+                ))
+        {
             self.show_commit_details = !self.show_commit_details;
             self.persist_commit_details_visibility();
             return Ok(());
@@ -3093,6 +3100,127 @@ impl Gui {
             }
             KeyCode::Char('N') => {
                 self.cycle_note(false);
+            }
+            KeyCode::Char(',') => {
+                let active = self.context_mgr.active();
+                let new_idx = match active {
+                    ContextId::Files if self.show_file_tree => {
+                        let selected = self.context_mgr.selected(ContextId::Files);
+                        crate::model::file_tree::find_parent_idx(&self.file_tree_nodes, selected)
+                            .map(|idx| (ContextId::Files, idx))
+                    }
+                    ContextId::CommitFiles
+                    | ContextId::StashFiles
+                    | ContextId::BranchCommitFiles
+                        if self.show_commit_file_tree =>
+                    {
+                        let selected = self.context_mgr.selected(active);
+                        crate::model::file_tree::find_parent_idx(
+                            &self.commit_file_tree_nodes,
+                            selected,
+                        )
+                        .map(|idx| (active, idx))
+                    }
+                    _ => None,
+                };
+                if let Some((ctx, idx)) = new_idx {
+                    self.context_mgr.set_selected(ctx, idx);
+                    self.needs_diff_refresh = true;
+                }
+                return Ok(());
+            }
+            KeyCode::Char('.') => {
+                let active = self.context_mgr.active();
+                let new_idx = match active {
+                    ContextId::Files if self.show_file_tree => {
+                        let selected = self.context_mgr.selected(ContextId::Files);
+                        crate::model::file_tree::find_first_child_idx(
+                            &self.file_tree_nodes,
+                            selected,
+                        )
+                        .map(|idx| (ContextId::Files, idx))
+                    }
+                    ContextId::CommitFiles
+                    | ContextId::StashFiles
+                    | ContextId::BranchCommitFiles
+                        if self.show_commit_file_tree =>
+                    {
+                        let selected = self.context_mgr.selected(active);
+                        crate::model::file_tree::find_first_child_idx(
+                            &self.commit_file_tree_nodes,
+                            selected,
+                        )
+                        .map(|idx| (active, idx))
+                    }
+                    _ => None,
+                };
+                if let Some((ctx, idx)) = new_idx {
+                    self.context_mgr.set_selected(ctx, idx);
+                    self.needs_diff_refresh = true;
+                }
+                return Ok(());
+            }
+            KeyCode::Char('>') => {
+                let active = self.context_mgr.active();
+                let new_idx = match active {
+                    ContextId::Files if self.show_file_tree => {
+                        let selected = self.context_mgr.selected(ContextId::Files);
+                        crate::model::file_tree::find_next_sibling_idx(
+                            &self.file_tree_nodes,
+                            selected,
+                        )
+                        .map(|idx| (ContextId::Files, idx))
+                    }
+                    ContextId::CommitFiles
+                    | ContextId::StashFiles
+                    | ContextId::BranchCommitFiles
+                        if self.show_commit_file_tree =>
+                    {
+                        let selected = self.context_mgr.selected(active);
+                        crate::model::file_tree::find_next_sibling_idx(
+                            &self.commit_file_tree_nodes,
+                            selected,
+                        )
+                        .map(|idx| (active, idx))
+                    }
+                    _ => None,
+                };
+                if let Some((ctx, idx)) = new_idx {
+                    self.context_mgr.set_selected(ctx, idx);
+                    self.needs_diff_refresh = true;
+                }
+                return Ok(());
+            }
+            KeyCode::Char('<') => {
+                let active = self.context_mgr.active();
+                let new_idx = match active {
+                    ContextId::Files if self.show_file_tree => {
+                        let selected = self.context_mgr.selected(ContextId::Files);
+                        crate::model::file_tree::find_prev_sibling_idx(
+                            &self.file_tree_nodes,
+                            selected,
+                        )
+                        .map(|idx| (ContextId::Files, idx))
+                    }
+                    ContextId::CommitFiles
+                    | ContextId::StashFiles
+                    | ContextId::BranchCommitFiles
+                        if self.show_commit_file_tree =>
+                    {
+                        let selected = self.context_mgr.selected(active);
+                        crate::model::file_tree::find_prev_sibling_idx(
+                            &self.commit_file_tree_nodes,
+                            selected,
+                        )
+                        .map(|idx| (active, idx))
+                    }
+                    _ => None,
+                };
+                if let Some((ctx, idx)) = new_idx {
+                    self.context_mgr.set_selected(ctx, idx);
+                    self.needs_diff_refresh = true;
+                }
+                return Ok(());
             }
             // j/k/up/down scroll line by line
             KeyCode::Char('j') | KeyCode::Down => {

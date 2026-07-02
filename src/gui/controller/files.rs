@@ -53,6 +53,42 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) 
         return Ok(());
     }
 
+    // Tree navigation (, = parent, . = child, > = next sibling, < = prev sibling)
+    if gui.show_file_tree {
+        match key.code {
+            KeyCode::Char(',') | KeyCode::Char('.') | KeyCode::Char('<') | KeyCode::Char('>') => {
+                let selected = gui
+                    .context_mgr
+                    .selected(crate::gui::context::ContextId::Files);
+                let new_idx = match key.code {
+                    KeyCode::Char(',') => {
+                        crate::model::file_tree::find_parent_idx(&gui.file_tree_nodes, selected)
+                    }
+                    KeyCode::Char('.') => crate::model::file_tree::find_first_child_idx(
+                        &gui.file_tree_nodes,
+                        selected,
+                    ),
+                    KeyCode::Char('>') => crate::model::file_tree::find_next_sibling_idx(
+                        &gui.file_tree_nodes,
+                        selected,
+                    ),
+                    KeyCode::Char('<') => crate::model::file_tree::find_prev_sibling_idx(
+                        &gui.file_tree_nodes,
+                        selected,
+                    ),
+                    _ => unreachable!(),
+                };
+                if let Some(idx) = new_idx {
+                    gui.context_mgr
+                        .set_selected(crate::gui::context::ContextId::Files, idx);
+                    gui.needs_diff_refresh = true;
+                }
+                return Ok(());
+            }
+            _ => {}
+        }
+    }
+
     // Stage/unstage toggle with space
     if key.code == KeyCode::Char(' ') {
         return toggle_stage(gui);

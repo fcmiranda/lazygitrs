@@ -311,6 +311,42 @@ fn handle_commit_files_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
             gui.diff_mode.focus = DiffModeFocus::DiffExploration;
             gui.needs_diff_refresh = true;
         }
+        KeyCode::Char(',') if gui.diff_mode.show_tree => {
+            if let Some(idx) = crate::model::file_tree::find_parent_idx(
+                &gui.diff_mode.tree_nodes,
+                gui.diff_mode.diff_files_selected,
+            ) {
+                gui.diff_mode.diff_files_selected = idx;
+                gui.needs_diff_refresh = true;
+            }
+        }
+        KeyCode::Char('.') if gui.diff_mode.show_tree => {
+            if let Some(idx) = crate::model::file_tree::find_first_child_idx(
+                &gui.diff_mode.tree_nodes,
+                gui.diff_mode.diff_files_selected,
+            ) {
+                gui.diff_mode.diff_files_selected = idx;
+                gui.needs_diff_refresh = true;
+            }
+        }
+        KeyCode::Char('>') if gui.diff_mode.show_tree => {
+            if let Some(idx) = crate::model::file_tree::find_next_sibling_idx(
+                &gui.diff_mode.tree_nodes,
+                gui.diff_mode.diff_files_selected,
+            ) {
+                gui.diff_mode.diff_files_selected = idx;
+                gui.needs_diff_refresh = true;
+            }
+        }
+        KeyCode::Char('<') if gui.diff_mode.show_tree => {
+            if let Some(idx) = crate::model::file_tree::find_prev_sibling_idx(
+                &gui.diff_mode.tree_nodes,
+                gui.diff_mode.diff_files_selected,
+            ) {
+                gui.diff_mode.diff_files_selected = idx;
+                gui.needs_diff_refresh = true;
+            }
+        }
         KeyCode::Char('g') => {
             gui.diff_mode.diff_files_selected = 0;
             gui.diff_mode.viewport_manually_scrolled = false;
@@ -592,6 +628,42 @@ fn handle_diff_exploration_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
                 gui.diff_view.clear_search();
             } else {
                 gui.diff_mode.focus = DiffModeFocus::CommitFiles;
+            }
+        }
+        KeyCode::Char(',') if gui.diff_mode.show_tree => {
+            if let Some(idx) = crate::model::file_tree::find_parent_idx(
+                &gui.diff_mode.tree_nodes,
+                gui.diff_mode.diff_files_selected,
+            ) {
+                gui.diff_mode.diff_files_selected = idx;
+                gui.needs_diff_refresh = true;
+            }
+        }
+        KeyCode::Char('.') if gui.diff_mode.show_tree => {
+            if let Some(idx) = crate::model::file_tree::find_first_child_idx(
+                &gui.diff_mode.tree_nodes,
+                gui.diff_mode.diff_files_selected,
+            ) {
+                gui.diff_mode.diff_files_selected = idx;
+                gui.needs_diff_refresh = true;
+            }
+        }
+        KeyCode::Char('>') if gui.diff_mode.show_tree => {
+            if let Some(idx) = crate::model::file_tree::find_next_sibling_idx(
+                &gui.diff_mode.tree_nodes,
+                gui.diff_mode.diff_files_selected,
+            ) {
+                gui.diff_mode.diff_files_selected = idx;
+                gui.needs_diff_refresh = true;
+            }
+        }
+        KeyCode::Char('<') if gui.diff_mode.show_tree => {
+            if let Some(idx) = crate::model::file_tree::find_prev_sibling_idx(
+                &gui.diff_mode.tree_nodes,
+                gui.diff_mode.diff_files_selected,
+            ) {
+                gui.diff_mode.diff_files_selected = idx;
+                gui.needs_diff_refresh = true;
             }
         }
         KeyCode::Char('j') | KeyCode::Down => {

@@ -62,6 +62,41 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) 
         return Ok(());
     }
 
+    // Tree navigation (, = parent, . = child, > = next sibling, < = prev sibling)
+    if gui.show_commit_file_tree {
+        match key.code {
+            KeyCode::Char(',') | KeyCode::Char('.') | KeyCode::Char('<') | KeyCode::Char('>') => {
+                let active = gui.context_mgr.active();
+                let selected = gui.context_mgr.selected(active);
+                let new_idx = match key.code {
+                    KeyCode::Char(',') => crate::model::file_tree::find_parent_idx(
+                        &gui.commit_file_tree_nodes,
+                        selected,
+                    ),
+                    KeyCode::Char('.') => crate::model::file_tree::find_first_child_idx(
+                        &gui.commit_file_tree_nodes,
+                        selected,
+                    ),
+                    KeyCode::Char('>') => crate::model::file_tree::find_next_sibling_idx(
+                        &gui.commit_file_tree_nodes,
+                        selected,
+                    ),
+                    KeyCode::Char('<') => crate::model::file_tree::find_prev_sibling_idx(
+                        &gui.commit_file_tree_nodes,
+                        selected,
+                    ),
+                    _ => unreachable!(),
+                };
+                if let Some(idx) = new_idx {
+                    gui.context_mgr.set_selected(active, idx);
+                    gui.needs_diff_refresh = true;
+                }
+                return Ok(());
+            }
+            _ => {}
+        }
+    }
+
     // Toggle file tree view
     if matches_key(key, &keybindings.files.toggle_tree_view) {
         gui.show_commit_file_tree = !gui.show_commit_file_tree;
