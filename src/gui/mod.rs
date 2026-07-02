@@ -6432,7 +6432,6 @@ impl Gui {
                         if total_width > 0.0 {
                             let new_ratio = (mouse.column as f64) / total_width;
                             self.layout.side_panel_ratio = new_ratio.clamp(0.05, 0.95);
-                            self.needs_refresh = true;
                         }
                         return;
                     }
