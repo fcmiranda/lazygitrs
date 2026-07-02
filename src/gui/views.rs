@@ -83,6 +83,7 @@ pub fn render(
     show_commit_details: bool,
     ai_button_hovered: bool,
     ai_configured: bool,
+    grab_column_hovered: bool,
 ) {
     let area = frame.area();
     let panel_count = SideWindow::ALL.len();
@@ -1010,6 +1011,28 @@ pub fn render(
             frame.render_widget(widget, fl.main_panel);
         }
     } // end main_panel.width > 0
+
+    // Render grab column if present
+    if let Some(grab_rect) = fl.grab_column {
+        use ratatui::style::Color;
+        let style = if grab_column_hovered {
+            Style::default().bg(theme.selected_bg).fg(theme.accent)
+        } else {
+            Style::default().fg(theme.inactive_border.fg.unwrap_or(Color::DarkGray))
+        };
+        let buf = frame.buffer_mut();
+        for y in grab_rect.top()..grab_rect.bottom() {
+            if let Some(cell) = buf.cell_mut((grab_rect.x, y)) {
+                if grab_column_hovered {
+                    cell.set_char(' ');
+                    cell.set_style(style);
+                } else {
+                    cell.set_char('│');
+                    cell.set_style(style);
+                }
+            }
+        }
+    }
 
     // Normal/Half mode: compact details box sits at the bottom of the active
     // sidebar panel (layout carves the rect out of the active side panel).

@@ -340,6 +340,8 @@ pub struct Gui {
     pub started_in_diff_mode: bool,
     /// Whether this is a popup instance (popup.yaml config)
     pub is_popup: bool,
+    pub grab_column_hovered: bool,
+    pub grab_column_dragging: Option<u16>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -565,6 +567,8 @@ impl Gui {
             commit_ai_button_hovered: false,
             started_in_diff_mode: start_in_diff,
             is_popup,
+            grab_column_hovered: false,
+            grab_column_dragging: None,
         })
     }
 
@@ -893,6 +897,7 @@ impl Gui {
                             .generate_command
                             .trim()
                             .is_empty(),
+                        self.grab_column_hovered,
                     );
                     if self.popup == PopupState::None && self.ai_commit_generation_active() {
                         views::render_loading_overlay(
@@ -6411,6 +6416,54 @@ impl Gui {
                 _ => {}
             }
             return;
+        }
+
+        let fl = self.compute_current_frame_layout();
+        if let Some(grab_rect) = fl.grab_column {
+            let over_grab = mouse.column == grab_rect.x
+                && mouse.row >= grab_rect.y
+                && mouse.row < grab_rect.y + grab_rect.height;
+
+            if self.grab_column_dragging.is_some() {
+                self.grab_column_hovered = true;
+                match mouse.kind {
+                    MouseEventKind::Drag(MouseButton::Left) => {
+                        let total_width = self.layout.width as f64;
+                        if total_width > 0.0 {
+                            let new_ratio = (mouse.column as f64) / total_width;
+                            self.layout.side_panel_ratio = new_ratio.clamp(0.05, 0.95);
+                            self.needs_refresh = true;
+                        }
+                        return;
+                    }
+                    MouseEventKind::Up(MouseButton::Left) => {
+                        self.grab_column_dragging = None;
+                        self.grab_column_hovered = over_grab;
+                        return;
+                    }
+                    _ => {}
+                }
+            }
+
+            match mouse.kind {
+                MouseEventKind::Down(MouseButton::Left) if over_grab => {
+                    self.grab_column_dragging = Some(mouse.column);
+                    self.grab_column_hovered = true;
+                    return;
+                }
+                MouseEventKind::Moved | MouseEventKind::Drag(_) => {
+                    if self.grab_column_hovered != over_grab {
+                        self.grab_column_hovered = over_grab;
+                    }
+                    if over_grab {
+                        return;
+                    }
+                }
+                _ => {}
+            }
+        } else {
+            self.grab_column_hovered = false;
+            self.grab_column_dragging = None;
         }
 
         let main_panel = self.compute_main_panel_rect();
