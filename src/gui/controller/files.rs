@@ -19,13 +19,11 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) 
             let selected = gui.context_mgr.selected_active();
             if let Some(node) = gui.file_tree_nodes.get(selected) {
                 if node.is_dir {
-                    let is_root = node.path == ".";
                     let is_minus = key.code == KeyCode::Char('-');
 
-                    // For the root directory, Enter focuses the combined diff view.
+                    // For any directory, Enter focuses the combined diff view.
                     // '-' explicitly toggles collapse for any directory (including root).
-                    // For non-root dirs, Enter also toggles collapse.
-                    if is_root && !is_minus {
+                    if !is_minus {
                         if !gui.diff_view.is_empty() {
                             gui.diff_focused = true;
                         }

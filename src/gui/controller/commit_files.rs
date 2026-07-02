@@ -28,12 +28,19 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) 
         return Ok(());
     }
 
-    // Enter: toggle directory collapse in tree view, or focus diff for files
-    if key.code == KeyCode::Enter {
+    // Enter: focus diff for files/directories, '-' explicitly toggles directory collapse
+    if key.code == KeyCode::Enter || key.code == KeyCode::Char('-') {
         if gui.show_commit_file_tree {
             let selected = gui.context_mgr.selected_active();
             if let Some(node) = gui.commit_file_tree_nodes.get(selected) {
                 if node.is_dir {
+                    let is_minus = key.code == KeyCode::Char('-');
+                    if !is_minus {
+                        if !gui.diff_view.is_empty() {
+                            gui.diff_focused = true;
+                        }
+                        return Ok(());
+                    }
                     let path = node.path.clone();
                     if gui.commit_files_collapsed_dirs.contains(&path) {
                         gui.commit_files_collapsed_dirs.remove(&path);
@@ -44,6 +51,9 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) 
                     return Ok(());
                 }
             }
+        }
+        if key.code == KeyCode::Char('-') {
+            return Ok(());
         }
         // Focus the diff panel for the selected file
         if !gui.diff_view.is_empty() {

@@ -280,15 +280,20 @@ fn handle_commit_files_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
                 gui.needs_diff_refresh = true;
             }
         }
-        KeyCode::Enter => {
+        KeyCode::Enter | KeyCode::Char('-') => {
             if gui.diff_mode.show_tree {
-                // Toggle dir collapse or focus diff
                 if let Some(node) = gui
                     .diff_mode
                     .tree_nodes
                     .get(gui.diff_mode.diff_files_selected)
                 {
                     if node.is_dir {
+                        let is_minus = key.code == KeyCode::Char('-');
+                        if !is_minus {
+                            gui.diff_mode.focus = DiffModeFocus::DiffExploration;
+                            gui.needs_diff_refresh = true;
+                            return Ok(());
+                        }
                         let path = node.path.clone();
                         if gui.diff_mode.collapsed_dirs.contains(&path) {
                             gui.diff_mode.collapsed_dirs.remove(&path);
@@ -299,6 +304,9 @@ fn handle_commit_files_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
                         return Ok(());
                     }
                 }
+            }
+            if key.code == KeyCode::Char('-') {
+                return Ok(());
             }
             gui.diff_mode.focus = DiffModeFocus::DiffExploration;
             gui.needs_diff_refresh = true;
