@@ -7269,7 +7269,33 @@ impl Gui {
             return None;
         }
         let (line_idx, chunk_idx) = self.diff_view.line_chunk_at_row(row, layout)?;
-        if chunk_idx != 0 {
+        let diff_line = self.diff_view.lines.get(line_idx)?;
+        let edit_active = self
+            .diff_view
+            .inline_edit
+            .as_ref()
+            .map(|e| e.line_idx == line_idx)
+            .unwrap_or(false);
+        let saved_note_count = if !self.diff_view.notes_visible {
+            0
+        } else if edit_active {
+            let editing_id = self
+                .diff_view
+                .inline_edit
+                .as_ref()
+                .map(|e| e.editing_id.as_str())
+                .unwrap_or("");
+            diff_line
+                .comment_notes
+                .iter()
+                .filter(|n| n.id != editing_id)
+                .count()
+        } else {
+            diff_line.comment_notes.len()
+        };
+        let extra_rows = saved_note_count * 5 + if edit_active { 5 } else { 0 };
+
+        if chunk_idx != extra_rows {
             return None;
         }
         self.diff_view.hunk_index_for_start_line(line_idx)
