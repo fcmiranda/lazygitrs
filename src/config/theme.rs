@@ -70,6 +70,8 @@ pub struct Theme {
     pub text_strong: Color,
     /// Color for separator lines.
     pub separator: Color,
+    /// Character or string to repeat for the separator line.
+    pub separator_char: String,
     /// Background for selected / highlighted items.
     pub selected_bg: Color,
     /// Background for popup overlays.
@@ -262,6 +264,8 @@ impl Theme {
             theme.options_text = Style::default().fg(color);
         }
 
+        theme.separator_char = config.file_header_separator_char.clone();
+
         theme
     }
 
@@ -316,6 +320,7 @@ impl Theme {
             text: Color::Gray,
             text_strong: Color::White,
             separator: Color::DarkGray,
+            separator_char: "─".to_string(),
             selected_bg: Color::DarkGray,
             popup_border: Color::Cyan,
 
@@ -739,6 +744,7 @@ impl ThemeJson {
             text,
             text_strong,
             separator,
+            separator_char: dark.separator_char.clone(),
             selected_bg,
             popup_border,
 

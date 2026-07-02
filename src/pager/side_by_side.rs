@@ -2241,12 +2241,21 @@ fn render_file_header(buf: &mut Buffer, x: u16, y: u16, width: u16, filename: &s
         .bg(theme.diff_selection_bg)
         .add_modifier(Modifier::BOLD);
 
-    // Build header text: "── filename ──────..."
-    let prefix = "── ";
-    let suffix_char = '─';
+    // Build header text: "── filename ──────..." using theme.separator_char
+    let sep = &theme.separator_char;
+    let prefix = format!("{}{} ", sep, sep);
     let label = format!("{}{} ", prefix, filename);
-    let remaining = (width as usize).saturating_sub(label.len());
-    let full_line = format!("{}{}", label, suffix_char.to_string().repeat(remaining));
+
+    let prefix_width = unicode_width::UnicodeWidthStr::width(prefix.as_str());
+    let filename_width = unicode_width::UnicodeWidthStr::width(filename);
+    let label_width = prefix_width + filename_width + 1;
+
+    let sep_width = unicode_width::UnicodeWidthStr::width(sep.as_str()).max(1);
+    let remaining_cells = (width as usize).saturating_sub(label_width);
+    let repeat_count = remaining_cells / sep_width;
+    let suffix = sep.repeat(repeat_count);
+
+    let full_line = format!("{}{}", label, suffix);
 
     buf_write_str(buf, x, y, &full_line, header_style, width);
 }

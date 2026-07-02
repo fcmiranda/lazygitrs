@@ -110,10 +110,19 @@ pub struct GuiConfig {
     pub border: BorderConfig,
     #[serde(rename = "sideBySide", default = "default_side_by_side")]
     pub side_by_side: bool,
+    #[serde(
+        rename = "fileHeaderSeparatorChar",
+        default = "default_file_header_separator_char"
+    )]
+    pub file_header_separator_char: String,
 }
 
 fn default_side_by_side() -> bool {
     true
+}
+
+fn default_file_header_separator_char() -> String {
+    "─".to_string()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -144,6 +153,7 @@ impl Default for GuiConfig {
             nerd_fonts_version: "3".to_string(),
             border: BorderConfig::default(),
             side_by_side: true,
+            file_header_separator_char: "─".to_string(),
         }
     }
 }
