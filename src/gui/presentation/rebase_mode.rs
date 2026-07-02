@@ -68,8 +68,8 @@ fn render_main_block(frame: &mut Frame, area: Rect, state: &mut RebaseModeState,
 
     let block = Block::default()
         .title(Line::from(title_spans))
-        .borders(theme.borders)
-        .border_type(theme.border_type)
+        .borders(theme.borders_for("commits"))
+        .border_type(theme.border_type_for("commits"))
         .border_style(theme.active_border);
 
     let inner = block.inner(area);

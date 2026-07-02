@@ -1243,8 +1243,8 @@ pub fn render_diff(
         };
         let block = Block::default()
             .title(" Diff ")
-            .borders(theme.borders)
-            .border_type(theme.border_type)
+            .borders(theme.borders_for("diff"))
+            .border_type(theme.border_type_for("diff"))
             .border_style(border_style);
         let widget = Paragraph::new(msg);
         frame.render_widget(widget.block(block), area);
@@ -1264,8 +1264,8 @@ pub fn render_diff(
 
     let mut block = Block::default()
         .title(title)
-        .borders(theme.borders)
-        .border_type(theme.border_type)
+        .borders(theme.borders_for("diff"))
+        .border_type(theme.border_type_for("diff"))
         .border_style(border_style);
 
     // Bottom-right footnote: revert-hunk undo indicator. Only shown when

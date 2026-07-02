@@ -166,17 +166,39 @@ impl Default for Theme {
 
 impl Theme {
     pub fn borders_for(&self, panel: &str) -> ratatui::widgets::Borders {
-        self.panel_borders
-            .get(panel)
-            .copied()
-            .unwrap_or(self.borders)
+        let keys = if panel == "diff" {
+            vec!["diff", "main"]
+        } else if panel == "main" {
+            vec!["main", "diff"]
+        } else if panel == "commit_details" {
+            vec!["commit_details", "commits"]
+        } else {
+            vec![panel]
+        };
+        for key in keys {
+            if let Some(b) = self.panel_borders.get(key) {
+                return *b;
+            }
+        }
+        self.borders
     }
 
     pub fn border_type_for(&self, panel: &str) -> ratatui::widgets::BorderType {
-        self.panel_border_types
-            .get(panel)
-            .copied()
-            .unwrap_or(self.border_type)
+        let keys = if panel == "diff" {
+            vec!["diff", "main"]
+        } else if panel == "main" {
+            vec!["main", "diff"]
+        } else if panel == "commit_details" {
+            vec!["commit_details", "commits"]
+        } else {
+            vec![panel]
+        };
+        for key in keys {
+            if let Some(bt) = self.panel_border_types.get(key) {
+                return *bt;
+            }
+        }
+        self.border_type
     }
 
     pub fn parse_border_type(s: &str) -> (ratatui::widgets::BorderType, ratatui::widgets::Borders) {
