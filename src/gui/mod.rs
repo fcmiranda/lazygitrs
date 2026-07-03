@@ -3103,6 +3103,34 @@ impl Gui {
             return Ok(());
         }
 
+        if matches_key(key, &keybindings.universal.revert_block) {
+            if self.context_mgr.active() == ContextId::Files {
+                let hunk_idx = self
+                    .diff_view
+                    .selected_revert_hunk
+                    .or(self.diff_view.hovered_revert_hunk);
+                if let Some(hunk_idx) = hunk_idx {
+                    self.diff_view.selected_revert_hunk = Some(hunk_idx);
+                    self.show_hunk_context_menu(hunk_idx);
+                }
+            }
+            return Ok(());
+        }
+        if matches_key(key, &keybindings.universal.undo_revert_block) {
+            if self.context_mgr.active() == ContextId::Files
+                && !self.diff_view.revert_undo_stack.is_empty()
+            {
+                if let Err(err) = self.undo_last_revert_block() {
+                    self.popup = PopupState::Message {
+                        title: "Undo revert failed".to_string(),
+                        message: format!("{}", err),
+                        kind: MessageKind::Error,
+                    };
+                }
+            }
+            return Ok(());
+        }
+
         match key.code {
             KeyCode::Char('c') => {
                 if !self.diff_view.lines.is_empty() {
@@ -6579,6 +6607,11 @@ impl Gui {
                 let full_sidebar = self.screen_mode == ScreenMode::Full && !self.diff_focused;
 
                 if in_main && !self.diff_view.is_empty() && !full_sidebar {
+                    if self.try_handle_revert_block_click(main_panel, pl, mouse.column, mouse.row) {
+                        self.diff_focused = true;
+                        return;
+                    }
+
                     if let Some((line_idx, panel)) = self.diff_view.hovered_line {
                         // Compute the  button Y position: code row + note_count * 5
                         let content_width =
@@ -6751,10 +6784,6 @@ impl Gui {
                         }
                     }
 
-                    if self.try_handle_revert_block_click(main_panel, pl, mouse.column, mouse.row) {
-                        self.diff_focused = true;
-                        return;
-                    }
                     if let Some(panel) = pl.panel_at_x(mouse.column) {
                         self.diff_view.selection = Some(TextSelection {
                             panel,
@@ -7484,7 +7513,7 @@ impl Gui {
             return None;
         }
         let divider_x = layout.divider_x()?;
-        if col != divider_x {
+        if col != divider_x && col != divider_x + 1 {
             return None;
         }
         let (line_idx, chunk_idx) = self.diff_view.line_chunk_at_row(row, layout)?;

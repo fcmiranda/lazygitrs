@@ -1,0 +1,4 @@
+This is nested file 2.
+Also in the child subdirectory.
+Hello World from Nested 2!
+Different lines of content.

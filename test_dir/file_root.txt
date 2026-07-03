@@ -1,0 +1,5 @@
+This is a test file in the root of the test directory.
+We can add some lines to make a diff visible if staged/modified.
+Line 1
+Line 2
+Line 3

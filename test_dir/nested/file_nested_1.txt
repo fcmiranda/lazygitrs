@@ -1,0 +1,5 @@
+This is nested file 1.
+It resides in a child subdirectory.
+Hello World from Nested 1!
+More content here.
+An unstaged modification line.

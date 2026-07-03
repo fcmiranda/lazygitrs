@@ -1,0 +1,3 @@
+Content for file A
+Line 1
+Line 2
