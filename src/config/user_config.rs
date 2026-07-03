@@ -115,6 +115,8 @@ pub struct GuiConfig {
         default = "default_file_header_separator_char"
     )]
     pub file_header_separator_char: String,
+    #[serde(rename = "spinner", default = "default_spinner")]
+    pub spinner: Vec<String>,
 }
 
 fn default_side_by_side() -> bool {
@@ -123,6 +125,17 @@ fn default_side_by_side() -> bool {
 
 fn default_file_header_separator_char() -> String {
     "─".to_string()
+}
+
+fn default_spinner() -> Vec<String> {
+    vec![
+        "·".to_string(),
+        "✻".to_string(),
+        "✽".to_string(),
+        "✶".to_string(),
+        "✳".to_string(),
+        "✢".to_string(),
+    ]
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -154,6 +167,7 @@ impl Default for GuiConfig {
             border: BorderConfig::default(),
             side_by_side: true,
             file_header_separator_char: "─".to_string(),
+            spinner: default_spinner(),
         }
     }
 }

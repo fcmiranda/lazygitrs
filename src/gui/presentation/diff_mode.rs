@@ -20,6 +20,7 @@ pub fn render(
     theme: &Theme,
     diff_loading: bool,
     diff_loading_show: bool,
+    spinner_frame: usize,
 ) {
     let area = frame.area();
 
@@ -57,6 +58,7 @@ pub fn render(
         theme,
         diff_loading,
         diff_loading_show,
+        spinner_frame,
     );
 
     // Text selection highlight overlay and tooltip (must be before popups/dropdowns)
@@ -305,11 +307,21 @@ fn render_diff_panel(
     theme: &Theme,
     diff_loading: bool,
     diff_loading_show: bool,
+    spinner_frame: usize,
 ) {
     let focused = state.focus == DiffModeFocus::DiffExploration;
 
     if !diff_view.is_empty() {
-        side_by_side::render_diff(frame, area, diff_view, theme, focused, diff_loading, false);
+        side_by_side::render_diff(
+            frame,
+            area,
+            diff_view,
+            theme,
+            focused,
+            diff_loading,
+            false,
+            spinner_frame,
+        );
         side_by_side::render_diff_search_highlights(frame, area, diff_view, theme);
         side_by_side::render_diff_search_bar(frame, area, diff_view, theme);
     } else {

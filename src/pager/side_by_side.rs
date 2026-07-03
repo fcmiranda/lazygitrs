@@ -1228,6 +1228,7 @@ pub fn render_diff(
     focused: bool,
     diff_loading: bool,
     show_revert_markers: bool,
+    spinner_frame: usize,
 ) {
     let border_style = if focused {
         theme.active_border
@@ -1324,6 +1325,7 @@ pub fn render_diff(
             theme,
             visible_height,
             show_revert_markers,
+            spinner_frame,
         );
     } else if single_side.is_some() || is_new_file {
         // Single-panel mode: new file, old-only, or new-only
@@ -1359,6 +1361,7 @@ pub fn render_diff(
                 inner.x,       // div_x
                 content_width, // right_content_width — full width in single-panel mode
                 theme,
+                spinner_frame,
             );
 
             let default_hl = FileHighlighter::default();
@@ -1533,6 +1536,7 @@ pub fn render_diff(
                 div_x,
                 right_content_width,
                 theme,
+                spinner_frame,
             );
 
             let default_hl = FileHighlighter::default();
@@ -1861,6 +1865,7 @@ fn render_unified_diff_body(
     theme: &Theme,
     visible_height: usize,
     show_revert_markers: bool,
+    spinner_frame: usize,
 ) {
     const GUTTER_WIDTH: u16 = 5;
     const PREFIX_WIDTH: u16 = 2;
@@ -1898,6 +1903,7 @@ fn render_unified_diff_body(
             inner.x,
             content_width,
             theme,
+            spinner_frame,
         );
 
         let default_hl = FileHighlighter::default();
@@ -2361,6 +2367,7 @@ fn render_diff_annotations(
     div_x: u16,
     right_content_width: u16,
     theme: &Theme,
+    spinner_frame: usize,
 ) {
     let edit_active = state
         .inline_edit
@@ -2468,7 +2475,13 @@ fn render_diff_annotations(
                 };
                 let status_dot = match note.status {
                     crate::pager::NoteStatus::New => "●",
-                    crate::pager::NoteStatus::Sent => "◆",
+                    crate::pager::NoteStatus::Sent => {
+                        if theme.spinner_chars.is_empty() {
+                            "◆"
+                        } else {
+                            &theme.spinner_chars[(spinner_frame / 8) % theme.spinner_chars.len()]
+                        }
+                    }
                     crate::pager::NoteStatus::Addressed => "✓",
                 };
                 let status_color = match note.status {

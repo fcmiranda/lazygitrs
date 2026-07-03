@@ -797,6 +797,7 @@ impl Gui {
                         &theme,
                         self.diff_loading,
                         diff_loading_show,
+                        self.spinner_frame,
                     );
                     // Render popup overlay on top of diff mode (for ? help, errors, etc.)
                     if self.popup != PopupState::None {
@@ -1067,6 +1068,7 @@ impl Gui {
 
     fn apply_acp_notes(&mut self, ctx: crate::acp::AgentContext) {
         let mut lines_file = crate::pager::notes_store::load(self.git.repo_path());
+        let mut last_added_note_id = None;
 
         for file_ctx in ctx.files {
             for ann in file_ctx.annotations {
@@ -1076,7 +1078,7 @@ impl Gui {
                     ann.summary.clone()
                 };
 
-                let id = ann.id.unwrap_or_else(|| {
+                let id = ann.id.clone().unwrap_or_else(|| {
                     let line = ann
                         .new_range
                         .map(|(s, _)| s)
@@ -1109,7 +1111,7 @@ impl Gui {
                 lines_file
                     .notes
                     .push(crate::pager::notes_store::LinesEntry {
-                        id,
+                        id: id.clone(),
                         file: file_ctx.path.clone(),
                         line,
                         panel: panel.to_string(),
@@ -1122,11 +1124,19 @@ impl Gui {
                         tags: ann.tags.unwrap_or_default(),
                         confidence: ann.confidence,
                     });
+
+                last_added_note_id = Some(id);
             }
         }
 
         crate::pager::notes_store::save(self.git.repo_path(), lines_file);
         self.diff_view.load_notes(self.git.repo_path());
+
+        if let Some(ref note_id) = last_added_note_id {
+            self.diff_view.selected_note = Some(note_id.clone());
+            self.diff_focused = true;
+            self.ensure_note_visible(note_id);
+        }
     }
 
     /// Receive completed diff results from the background thread (non-blocking).

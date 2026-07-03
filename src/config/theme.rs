@@ -72,6 +72,8 @@ pub struct Theme {
     pub separator: Color,
     /// Character or string to repeat for the separator line.
     pub separator_char: String,
+    /// List of characters/strings for spinner animation frames.
+    pub spinner_chars: Vec<String>,
     /// Background for selected / highlighted items.
     pub selected_bg: Color,
     /// Background for popup overlays.
@@ -265,6 +267,7 @@ impl Theme {
         }
 
         theme.separator_char = config.file_header_separator_char.clone();
+        theme.spinner_chars = config.spinner.clone();
 
         theme
     }
@@ -321,6 +324,14 @@ impl Theme {
             text_strong: Color::White,
             separator: Color::DarkGray,
             separator_char: "─".to_string(),
+            spinner_chars: vec![
+                "·".to_string(),
+                "✻".to_string(),
+                "✽".to_string(),
+                "✶".to_string(),
+                "✳".to_string(),
+                "✢".to_string(),
+            ],
             selected_bg: Color::DarkGray,
             popup_border: Color::Cyan,
 
@@ -745,6 +756,7 @@ impl ThemeJson {
             text_strong,
             separator,
             separator_char: dark.separator_char.clone(),
+            spinner_chars: dark.spinner_chars.clone(),
             selected_bg,
             popup_border,
 

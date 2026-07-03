@@ -124,6 +124,7 @@ pub fn render(
                     true,
                     diff_loading_show,
                     show_revert_markers,
+                    spinner_frame,
                 );
                 side_by_side::render_diff_search_highlights(frame, fl.main_panel, diff_view, theme);
                 side_by_side::render_diff_search_bar(frame, fl.main_panel, diff_view, theme);
@@ -982,6 +983,7 @@ pub fn render(
                 diff_focused,
                 diff_loading_show,
                 show_revert_markers,
+                spinner_frame,
             );
             side_by_side::render_diff_search_highlights(frame, fl.main_panel, diff_view, theme);
             side_by_side::render_diff_search_bar(frame, fl.main_panel, diff_view, theme);
