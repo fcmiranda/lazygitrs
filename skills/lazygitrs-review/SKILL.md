@@ -62,6 +62,40 @@ You configure which architecture your AI uses during the **registration** step.
 
 ## API Endpoints
 
+### On Session Start (do this BEFORE any notes arrive!)
+
+**CRITICAL**: You must proactively self-register at the start of every session, *before* the user presses `S` on any note. If you wait until a note arrives, you will miss the inline push and the user will have to manually tell you to check.
+
+Steps to run at session start:
+
+1. **Detect lazygitrs**: Check if `.lazygitrs.port` exists in the repo root. If it does, lazygitrs is running.
+2. **Discover your real session ID**:
+   - For opencode: `opencode session list --format json 2>/dev/null | head -1` and extract the `"id"` field.
+   - For Antigravity (agy): Use your real internal Conversation UUID.
+   - For other CLIs: Use whatever unique session identifier your tool exposes.
+3. **Check the currently registered session**: `curl -s http://127.0.0.1:$PORT/session-api/session`
+4. **Conditionally force-register**:
+   - If no session is registered (`{"sessionId":null}`), register normally.
+   - If a session is registered but it's from a *different* CLI (e.g. `"cli":"antigravity"` while you're opencode), or a *different* sessionId than yours, **force-overwrite** by adding `"force": true` to your register call. This ensures *you* receive the inline pushes, not a stale session.
+   - If your session is already registered (same sessionId and cli), do nothing.
+5. **For opencode**: Always include `"serverUrl":"http://127.0.0.1:4096"` (or your actual port) so lazygitrs pushes prompts directly into your TUI via `POST /tui/append-prompt` + `POST /tui/submit-prompt`.
+
+#### Quick-start snippet (opencode)
+
+```bash
+PORT=$(cat .lazygitrs.port 2>/dev/null || echo 47657)
+# Discover real session ID
+SID=$(opencode session list --format json 2>/dev/null | python3 -c "import sys,json; print(json.load(sys.stdin)[0]['id'])" 2>/dev/null)
+# Check what's registered
+CURRENT=$(curl -s http://127.0.0.1:$PORT/session-api/session)
+# Force-register your session with inline push
+curl -s -X POST http://127.0.0.1:$PORT/session-api \
+  -H 'content-type: application/json' \
+  --data "{\"action\":\"register\",\"sessionId\":\"$SID\",\"cli\":\"opencode\",\"serverUrl\":\"http://127.0.0.1:4096\",\"force\":true}"
+```
+
+Run this at the **very start** of your session, right after the skill loads, so you're ready to receive notes before the user sends any.
+
 ### Register your session ID (do this first!)
 
 When your AI session starts, register your session ID so lazygitrs can target you when the user presses `S`:
