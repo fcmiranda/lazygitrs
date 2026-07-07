@@ -2504,11 +2504,19 @@ impl Gui {
 
         // Next/prev hunk with { and }
         if key.code == KeyCode::Char('{') {
-            self.diff_view.prev_hunk();
+            if self.context_mgr.active() == ContextId::Files {
+                self.diff_view.cycle_prev_revert_hunk();
+            } else {
+                self.diff_view.prev_hunk();
+            }
             return Ok(());
         }
         if key.code == KeyCode::Char('}') {
-            self.diff_view.next_hunk();
+            if self.context_mgr.active() == ContextId::Files {
+                self.diff_view.cycle_next_revert_hunk();
+            } else {
+                self.diff_view.next_hunk();
+            }
             return Ok(());
         }
 
