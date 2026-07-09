@@ -79,6 +79,7 @@ fn run_command(gui: &mut Gui, command: &str, show_output: bool) -> Result<()> {
     let result = cmd_builder
         .arg("-c")
         .arg(command)
+        .stdin(String::new())
         .cwd_path(gui.git.repo_path())
         .run()?;
 
