@@ -2076,7 +2076,12 @@ fn render_status_bar(
     }
 
     // Global hints (always last)
-    hints.extend([("q", "quit"), ("tab/1-5", "panels"), ("j/k", "nav")]);
+    hints.extend([
+        ("q", "quit"),
+        (":", "shell"),
+        ("tab/1-5", "panels"),
+        ("j/k", "nav"),
+    ]);
 
     let key_style = Style::default()
         .fg(_theme.text)

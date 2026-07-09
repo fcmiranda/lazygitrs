@@ -54,7 +54,9 @@ lazygitrs
 - [x] **Side-by-side diffs** with syntax highlighting by default, no pager hacks needed
 - [x] **Better diff navigation UX** — `[]` new/old only views, `{}` for hunk traveling, `hjkl←↑↓→` for line-by-line scrolling, supports mouse select/scroll too. Lots inspired by [lumen](https://github.com/jnsahaj/lumen)
 - [x] **Default GitHub conveniences** — copy repo url, open repo url, copy PR create url, open PR create, copy pr url, open pr. (The 'copy' variants are useful if you use different default browsers for work/personal.)
-- [x] **Branch Filtering** — better experience in the Commits tab, compare what actually matters.
+- [x] **Branch Filtering** — better experience in the Commits tab, compare what actually matters. Toggle commits log between all branches and HEAD-only (default shortcut: `a` in Commits panel).
+- [x] **Discard All Changes** — Press `D` (Shift+D) in the Files panel to permanently discard all local modifications (both tracked changes and untracked files/directories) across the entire repository.
+- [x] **Execute Shell Commands** — Press `:` (colon) globally to open a popup input prompt, allowing you to run arbitrary shell commands. Outputs are shown in a popup message, and commands are appended to the command log.
 - [x] **Built-in compare tool** — Again, inspired by lumen, but more built into the TUI. Pick a commit/branch A and a commit/branch B, then see how they differ.
 - [x] **Interactive rebasing** — inspired by gitlens, a clean and easy-to-use UI for pick, reword, edit, squash, fixup, drop and fast rebasing.
 - [x] **Commit Details** — Inspired by zed, just a small details panel about the commit that's easier to look at.

@@ -54,7 +54,9 @@ lazygitrs
 - [x] **Side-by-side diffs** with syntax highlighting by default, no pager hacks needed
 - [x] **Better diff navigation UX** — `[]` new/old only views, `{}` for hunk traveling, `hjkl←↑↓→` for line-by-line scrolling, supports mouse select/scroll too. Lots inspired by [lumen](https://github.com/jnsahaj/lumen)
 - [x] **Default GitHub conveniences** — copy repo url, open repo url, copy PR create url, open PR create, copy pr url, open pr. (The 'copy' variants are useful if you use different default browsers for work/personal.)
-- [x] **Branch Filtering** — better experience in the Commits tab, compare what actually matters.
+- [x] **Branch Filtering** — better experience in the Commits tab, compare what actually matters. Toggle commits log between all branches and HEAD-only (default shortcut: `a` in Commits panel).
+- [x] **Discard All Changes** — Press `D` (Shift+D) in the Files panel to permanently discard all local modifications (both tracked changes and untracked files/directories) across the entire repository.
+- [x] **Execute Shell Commands** — Press `:` (colon) globally to open a popup input prompt, allowing you to run arbitrary shell commands. Outputs are shown in a popup message, and commands are appended to the command log.
 - [x] **Built-in compare tool** — Again, inspired by lumen, but more built into the TUI. Pick a commit/branch A and a commit/branch B, then see how they differ.
 - [x] **Interactive rebasing** — inspired by gitlens, a clean and easy-to-use UI for pick, reword, edit, squash, fixup, drop and fast rebasing.
 - [x] **Commit Details** — Inspired by zed, just a small details panel about the commit that's easier to look at.
@@ -63,6 +65,11 @@ lazygitrs
   - [x] `git diff/compare` and then asks what branch/commit A and B, has quick search.
   - [x] `git rebase` and then asks rebase on top of what branch/commit.
   - [x] 🎨 Themes + Theme-Picker!
+- [x] **Universal AI Notes Architecture** — leave review comments on code diffs and instantly notify your AI CLI of choice to review or act on it. `lazygitrs` uses a dynamically registered `.lines.json` session architecture, supporting three transport layers to integrate with *any* AI tool on the market:
+  - **Subprocess Spawning** (`notifyCommand`): Spawns a background command (great for `agy`, `claude`, etc.)
+  - **HTTP Push** (`serverUrl`): Does an instant HTTP POST to local servers (great for `opencode`)
+  - **Server-Sent Events** (`SSE`): Real-time event streaming for wrapper scripts or IDE extensions.
+  - **Bidirectional Sync**: AI review annotations are posted back directly into the lazygitrs TUI diff view.
 
 ### Configuration
 
@@ -73,7 +80,38 @@ Persisted State lives at `~/.local/state/lazygitrs/state.yml` and `~/.local/stat
 **New config properties:**
 
 - `git.commit.generateCommand` — shell command for AI-generated commit messages. See [What's different](#whats-different) for examples.
+- `gui.border` — can be a string (`rounded`, `single`, `double`, `hidden`) or an object for granular borders:
+  ```yaml
+  gui:
+    border:
+      default: hidden
+      notes: rounded
+      files: rounded
+      branches: single
+      commits: hidden
+      stash: double
+      status: rounded
+      main: rounded
+  ```
+  Supported granular components: `notes`, `files`, `branches`, `commits`, `stash`, `status`, `main`, `commandLog`.
 - `~/.config/lazygitrs/themes/*.json` — drop custom theme files here. See [Themes](#themes).
+
+### Clearing AI Sessions
+
+If you need to clear or unregister an active AI session for the current repository, you can run the following command:
+
+```sh
+PORT=$(cat .lazygitrs.port 2>/dev/null || echo 47657)
+curl -s -X POST http://127.0.0.1:$PORT/session-api \
+  -H 'content-type: application/json' \
+  --data '{"action":"unregister"}'
+```
+
+To clear active sessions **globally** across all your repositories (and unregister the currently active one in the directory), you can now simply use the built-in CLI flag:
+
+```sh
+lazygitrs --clear-session
+```
 
 ### Themes
 

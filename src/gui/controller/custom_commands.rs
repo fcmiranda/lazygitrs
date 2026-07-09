@@ -168,3 +168,19 @@ fn context_id_to_name(ctx: ContextId) -> &'static str {
         ContextId::Staging => "staging",
     }
 }
+
+pub fn open_custom_command_prompt(gui: &mut Gui) -> Result<()> {
+    gui.popup = PopupState::Input {
+        title: "Execute Shell Command".to_string(),
+        textarea: crate::gui::popup::make_textarea(""),
+        on_confirm: Box::new(move |gui, input| {
+            if !input.trim().is_empty() {
+                run_command(gui, &input, true)?;
+            }
+            Ok(())
+        }),
+        is_commit: false,
+        confirm_focused: false,
+    };
+    Ok(())
+}

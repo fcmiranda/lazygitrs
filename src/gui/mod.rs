@@ -2367,6 +2367,10 @@ impl Gui {
             return self.handle_inline_edit_key(key);
         }
 
+        if matches_key(key, &keybindings.universal.custom_command_prompt) {
+            return controller::custom_commands::open_custom_command_prompt(self);
+        }
+
         // When diff panel is focused, handle diff-specific keys
         if self.diff_focused {
             return self.handle_diff_focused_key(key);
@@ -4837,6 +4841,10 @@ impl Gui {
                 HelpEntry {
                     key: "1-5".into(),
                     description: "Jump to panel".into(),
+                },
+                HelpEntry {
+                    key: kb.universal.custom_command_prompt.clone(),
+                    description: "Execute shell command".into(),
                 },
                 HelpEntry {
                     key: "?".into(),
