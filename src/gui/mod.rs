@@ -5802,7 +5802,7 @@ impl Gui {
                     action: Some(Box::new(move |gui| {
                         // Switch to the selected repo
                         let new_git = crate::git::GitCommands::new(std::path::Path::new(&p))?;
-                        let new_model = new_git.load_model()?;
+                        let new_model = new_git.load_model(DEFAULT_COMMIT_LIMIT)?;
                         gui.git = std::sync::Arc::new(new_git);
                         *gui.model.lock().unwrap() = new_model;
                         gui.needs_refresh = false;
@@ -8450,8 +8450,12 @@ impl Gui {
     }
 
     fn refresh(&mut self) -> Result<()> {
+        let commit_limit = {
+            let model = self.model.lock().unwrap();
+            model.commits.len().max(DEFAULT_COMMIT_LIMIT)
+        };
         self.reset_commit_pagination();
-        let new_model = self.git.load_model()?;
+        let new_model = self.git.load_model(commit_limit)?;
         let mut model = self.model.lock().unwrap();
         model.replace_keeping_file_order(new_model);
 
@@ -8459,12 +8463,13 @@ impl Gui {
         if !self.commit_branch_filter.is_empty() {
             if let Ok(filtered) = self
                 .git
-                .load_commits_for_branches(&self.commit_branch_filter, DEFAULT_COMMIT_LIMIT)
+                .load_commits_for_branches(&self.commit_branch_filter, commit_limit)
             {
                 model.commits = filtered;
             }
         }
-        self.commit_history_complete = model.commits.len() < DEFAULT_COMMIT_LIMIT;
+        self.commit_history_complete = model.commits.len() < commit_limit;
+        self.context_mgr.clamp_selections(&model);
 
         // Rebuild file tree inline to avoid borrow issues
         if self.show_file_tree {

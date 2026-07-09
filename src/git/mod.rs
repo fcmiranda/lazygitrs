@@ -149,7 +149,7 @@ impl GitCommands {
     ///
     /// Git commands are run in parallel using scoped threads since they are
     /// all independent reads against the same repo.
-    pub fn load_model(&self) -> Result<Model> {
+    pub fn load_model(&self, commit_limit: usize) -> Result<Model> {
         let mut model = Model::default();
 
         model.repo_name = self.repo_name();
@@ -160,7 +160,7 @@ impl GitCommands {
         std::thread::scope(|s| {
             let h_files = s.spawn(|| self.load_files());
             let h_branches = s.spawn(|| self.load_branches());
-            let h_commits = s.spawn(|| self.load_commits(DEFAULT_COMMIT_LIMIT));
+            let h_commits = s.spawn(|| self.load_commits(commit_limit));
             let h_stash = s.spawn(|| self.load_stash());
             let h_remotes = s.spawn(|| self.load_remotes());
             let h_tags = s.spawn(|| self.load_tags());
