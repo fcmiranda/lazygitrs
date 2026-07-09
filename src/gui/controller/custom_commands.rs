@@ -72,16 +72,41 @@ fn run_command(gui: &mut Gui, command: &str, show_output: bool) -> Result<()> {
     let is_zsh = shell.ends_with("zsh");
     let is_bash = shell.ends_with("bash");
 
-    let mut cmd_builder = CmdBuilder::new(&shell);
-    if is_zsh || is_bash {
-        cmd_builder = cmd_builder.arg("-i");
+    // Create a temporary script file
+    let temp_dir = std::env::temp_dir();
+    let temp_file = temp_dir.join(format!("lazygitrs-cmd-{}.sh", std::process::id()));
+
+    let mut script_content = String::new();
+    if is_zsh {
+        script_content.push_str("#!/bin/zsh\n");
+        script_content.push_str("setopt aliases\n");
+        script_content.push_str("[ -f ~/.dotfiles/main/git/.zsh/packages/git.zsh ] && source ~/.dotfiles/main/git/.zsh/packages/git.zsh >/dev/null 2>&1\n");
+        script_content.push_str("[ -f ~/.zshrc ] && source ~/.zshrc >/dev/null 2>&1\n");
+    } else if is_bash {
+        script_content.push_str("#!/bin/bash\n");
+        script_content.push_str("shopt -s expand_aliases\n");
+        script_content
+            .push_str("[ -f ~/.bash_aliases ] && source ~/.bash_aliases >/dev/null 2>&1\n");
+        script_content.push_str("[ -f ~/.bashrc ] && source ~/.bashrc >/dev/null 2>&1\n");
+    } else {
+        script_content.push_str("#!/bin/sh\n");
     }
-    let result = cmd_builder
-        .arg("-c")
-        .arg(command)
+    script_content.push_str(command);
+    script_content.push('\n');
+
+    std::fs::write(&temp_file, script_content)?;
+
+    // Execute the temporary script
+    let result = CmdBuilder::new(&shell)
+        .arg(&temp_file.to_string_lossy().to_string())
         .stdin(String::new())
         .cwd_path(gui.git.repo_path())
-        .run()?;
+        .run();
+
+    // Clean up temporary file
+    let _ = std::fs::remove_file(&temp_file);
+
+    let result = result?;
 
     if let Ok(mut log) = gui.command_log.lock() {
         log.push(format!("$ {}", command));
