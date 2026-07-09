@@ -354,8 +354,8 @@ impl Default for CommitsKeybinding {
             tag_commit: "T".into(),
             checkout_commit: "<space>".into(),
             reset_cherry_pick: "<c-q>".into(),
-            open_log_menu: "<c-l>".into(),
-            view_bisect_options: "b".into(),
+            open_log_menu: "b".into(),
+            view_bisect_options: "<c-b>".into(),
             interactive_rebase: "i".into(),
         }
     }

@@ -2029,7 +2029,7 @@ fn render_status_bar(
                     ("g", "reset"),
                     ("t", "revert"),
                     ("C", "cherry-pick"),
-                    ("ctrl+l", "filter branch"),
+                    ("b", "filter branch"),
                     ("a", "toggle log view"),
                 ]);
             }
