@@ -84,6 +84,7 @@ pub fn render(
     ai_button_hovered: bool,
     ai_configured: bool,
     grab_column_hovered: bool,
+    all_branches_log: bool,
 ) {
     let area = frame.area();
     let panel_count = SideWindow::ALL.len();
@@ -170,7 +171,13 @@ pub fn render(
                     ),
                 ])
             } else {
-                build_window_title(ctx_mgr.active_window(), ctx_id, ctx_mgr, theme)
+                build_window_title(
+                    ctx_mgr.active_window(),
+                    ctx_id,
+                    ctx_mgr,
+                    theme,
+                    all_branches_log,
+                )
             };
             let panel_key = context_panel_key(ctx_id);
             let block = Block::default()
@@ -455,7 +462,7 @@ pub fn render(
                 ),
             ])
         } else {
-            build_window_title(*window, ctx_id, ctx_mgr, theme)
+            build_window_title(*window, ctx_id, ctx_mgr, theme, all_branches_log)
         };
 
         let panel_key = context_panel_key(ctx_id);
@@ -1393,12 +1400,21 @@ fn build_window_title<'a>(
     active_ctx: ContextId,
     _ctx_mgr: &ContextManager,
     theme: &Theme,
+    all_branches_log: bool,
 ) -> Line<'a> {
     let tabs = window.tabs();
     let key = window.key_label();
 
     if tabs.len() == 1 {
-        return Line::from(format!(" {} {} ", key, tabs[0].title()));
+        let mut title_str = tabs[0].title().to_string();
+        if tabs[0] == ContextId::Commits {
+            if all_branches_log {
+                title_str.push_str(" (all)");
+            } else {
+                title_str.push_str(" (HEAD)");
+            }
+        }
+        return Line::from(format!(" {} {} ", key, title_str));
     }
 
     let mut spans = vec![Span::raw(format!(" {} ", key))];
@@ -1407,16 +1423,24 @@ fn build_window_title<'a>(
         if i > 0 {
             spans.push(Span::styled(" | ", Style::default().fg(theme.text_dimmed)));
         }
+        let mut title_str = ctx.title().to_string();
+        if *ctx == ContextId::Commits {
+            if all_branches_log {
+                title_str.push_str(" (all)");
+            } else {
+                title_str.push_str(" (HEAD)");
+            }
+        }
         if *ctx == active_ctx {
             spans.push(Span::styled(
-                ctx.title(),
+                title_str,
                 Style::default()
                     .fg(theme.accent)
                     .add_modifier(Modifier::BOLD),
             ));
         } else {
             spans.push(Span::styled(
-                ctx.title(),
+                title_str,
                 Style::default().fg(theme.text_dimmed),
             ));
         }
@@ -2006,6 +2030,7 @@ fn render_status_bar(
                     ("t", "revert"),
                     ("C", "cherry-pick"),
                     ("ctrl+l", "filter branch"),
+                    ("a", "toggle log view"),
                 ]);
             }
             ContextId::Stash => {

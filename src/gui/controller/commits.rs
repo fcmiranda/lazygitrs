@@ -141,6 +141,14 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) 
         return toggle_range_select(gui);
     }
 
+    // Toggle showing all branches vs HEAD only
+    if matches_key(key, &keybindings.status.all_branches_log_graph) {
+        gui.all_branches_log = !gui.all_branches_log;
+        gui.needs_refresh = true;
+        gui.context_mgr.set_selection(0);
+        return Ok(());
+    }
+
     Ok(())
 }
 

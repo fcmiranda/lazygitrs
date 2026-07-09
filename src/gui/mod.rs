@@ -288,6 +288,8 @@ pub struct Gui {
     pub sub_commits_parent_context: context::ContextId,
     /// Parent context to return to when pressing Esc from CommitFiles.
     pub commit_files_parent_context: Option<context::ContextId>,
+    /// Whether to show all branches in commits log or only HEAD.
+    pub all_branches_log: bool,
     /// Receiver for streamed model parts during initial load. Each git data
     /// type arrives independently so the UI can waterfall-display results.
     /// Set to `None` once all parts have been received.
@@ -548,6 +550,7 @@ impl Gui {
             remote_branches_name: String::new(),
             sub_commits_parent_context: context::ContextId::Branches,
             commit_files_parent_context: None,
+            all_branches_log: true,
             spinner_frame: 0,
             remote_op_label: None,
             remote_op_success_at: None,
@@ -899,6 +902,7 @@ impl Gui {
                             .trim()
                             .is_empty(),
                         self.grab_column_hovered,
+                        self.all_branches_log,
                     );
                     if self.popup == PopupState::None && self.ai_commit_generation_active() {
                         views::render_loading_overlay(
@@ -1480,10 +1484,11 @@ impl Gui {
         let git = Arc::clone(&self.git);
         let tx = self.commit_page_tx.clone();
         let branches = self.commit_branch_filter.clone();
+        let all = self.all_branches_log;
 
         std::thread::spawn(move || {
             let result = if branches.is_empty() {
-                git.load_commits_page(DEFAULT_COMMIT_LIMIT, len)
+                git.load_commits_page(DEFAULT_COMMIT_LIMIT, len, all)
             } else {
                 git.load_commits_for_branches_page(&branches, DEFAULT_COMMIT_LIMIT, len)
             };
@@ -5139,6 +5144,10 @@ impl Gui {
                         description: "Filter by branch".into(),
                     },
                     HelpEntry {
+                        key: kb.status.all_branches_log_graph.clone(),
+                        description: "Toggle log view (all branches / HEAD)".into(),
+                    },
+                    HelpEntry {
                         key: ".".into(),
                         description: "Toggle commit details panel".into(),
                     },
@@ -5802,7 +5811,8 @@ impl Gui {
                     action: Some(Box::new(move |gui| {
                         // Switch to the selected repo
                         let new_git = crate::git::GitCommands::new(std::path::Path::new(&p))?;
-                        let new_model = new_git.load_model(DEFAULT_COMMIT_LIMIT)?;
+                        let new_model =
+                            new_git.load_model(DEFAULT_COMMIT_LIMIT, gui.all_branches_log)?;
                         gui.git = std::sync::Arc::new(new_git);
                         *gui.model.lock().unwrap() = new_model;
                         gui.needs_refresh = false;
@@ -8455,7 +8465,7 @@ impl Gui {
             model.commits.len().max(DEFAULT_COMMIT_LIMIT)
         };
         self.reset_commit_pagination();
-        let new_model = self.git.load_model(commit_limit)?;
+        let new_model = self.git.load_model(commit_limit, self.all_branches_log)?;
         let mut model = self.model.lock().unwrap();
         model.replace_keeping_file_order(new_model);
 

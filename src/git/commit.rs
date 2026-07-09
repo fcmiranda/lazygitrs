@@ -7,14 +7,14 @@ use crate::model::{
 };
 
 impl GitCommands {
-    /// Load recent commits reachable from any ref.
-    pub fn load_commits(&self, limit: usize) -> Result<Vec<Commit>> {
-        self.load_commits_page(limit, 0)
+    /// Load recent commits reachable from refs.
+    pub fn load_commits(&self, limit: usize, all: bool) -> Result<Vec<Commit>> {
+        self.load_commits_page(limit, 0, all)
     }
 
-    /// Load a page of commits reachable from any ref.
-    pub fn load_commits_page(&self, limit: usize, skip: usize) -> Result<Vec<Commit>> {
-        self.load_commits_inner(limit, skip, true)
+    /// Load a page of commits reachable from refs.
+    pub fn load_commits_page(&self, limit: usize, skip: usize, all: bool) -> Result<Vec<Commit>> {
+        self.load_commits_inner(limit, skip, all)
     }
 
     /// Load commits reachable from a specific branch only.

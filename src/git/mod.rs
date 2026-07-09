@@ -149,7 +149,7 @@ impl GitCommands {
     ///
     /// Git commands are run in parallel using scoped threads since they are
     /// all independent reads against the same repo.
-    pub fn load_model(&self, commit_limit: usize) -> Result<Model> {
+    pub fn load_model(&self, commit_limit: usize, all_branches_log: bool) -> Result<Model> {
         let mut model = Model::default();
 
         model.repo_name = self.repo_name();
@@ -160,7 +160,7 @@ impl GitCommands {
         std::thread::scope(|s| {
             let h_files = s.spawn(|| self.load_files());
             let h_branches = s.spawn(|| self.load_branches());
-            let h_commits = s.spawn(|| self.load_commits(commit_limit));
+            let h_commits = s.spawn(|| self.load_commits(commit_limit, all_branches_log));
             let h_stash = s.spawn(|| self.load_stash());
             let h_remotes = s.spawn(|| self.load_remotes());
             let h_tags = s.spawn(|| self.load_tags());
@@ -224,7 +224,7 @@ impl GitCommands {
         spawn_part!(tx, self, Files, |g: &GitCommands| g.load_files());
         spawn_part!(tx, self, Branches, |g: &GitCommands| g.load_branches());
         spawn_part!(tx, self, Commits, |g: &GitCommands| g
-            .load_commits(DEFAULT_COMMIT_LIMIT));
+            .load_commits(DEFAULT_COMMIT_LIMIT, true));
         spawn_part!(tx, self, Stash, |g: &GitCommands| g.load_stash());
         spawn_part!(tx, self, Remotes, |g: &GitCommands| g.load_remotes());
         spawn_part!(tx, self, Tags, |g: &GitCommands| g.load_tags());
