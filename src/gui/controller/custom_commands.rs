@@ -68,8 +68,17 @@ fn execute_custom_command(gui: &mut Gui, cmd: &CustomCommand) -> Result<()> {
 }
 
 fn run_command(gui: &mut Gui, command: &str, show_output: bool) -> Result<()> {
-    let result = CmdBuilder::new("sh")
-        .args(&["-c", command])
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "sh".to_string());
+    let is_zsh = shell.ends_with("zsh");
+    let is_bash = shell.ends_with("bash");
+
+    let mut cmd_builder = CmdBuilder::new(&shell);
+    if is_zsh || is_bash {
+        cmd_builder = cmd_builder.arg("-i");
+    }
+    let result = cmd_builder
+        .arg("-c")
+        .arg(command)
         .cwd_path(gui.git.repo_path())
         .run()?;
 
