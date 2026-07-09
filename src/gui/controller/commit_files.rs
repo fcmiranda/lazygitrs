@@ -2,7 +2,7 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::config::KeybindingConfig;
-use crate::config::keybindings::parse_key;
+use crate::config::keybindings::{matches_key, parse_key};
 use crate::gui::Gui;
 use crate::gui::context::ContextId;
 use crate::gui::popup::{MenuItem, PopupState};
@@ -246,13 +246,5 @@ pub fn update_commit_file_tree_state(gui: &mut Gui) {
     } else {
         gui.commit_file_tree_nodes.clear();
         gui.context_mgr.commit_files_list_len_override = None;
-    }
-}
-
-fn matches_key(key: KeyEvent, binding: &str) -> bool {
-    if let Some(expected) = parse_key(binding) {
-        key.code == expected.code && key.modifiers == expected.modifiers
-    } else {
-        false
     }
 }

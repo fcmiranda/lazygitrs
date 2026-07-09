@@ -20,7 +20,7 @@ use crossterm::{cursor, execute};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
-use crate::config::keybindings::parse_key;
+use crate::config::keybindings::{matches_key, parse_key};
 use crate::config::{AppConfig, AppState};
 use crate::git::{DEFAULT_COMMIT_LIMIT, GitCommands, MODEL_PART_COUNT, ModelPart};
 use crate::model::Model;
@@ -8930,15 +8930,6 @@ fn read_clipboard() -> Option<String> {
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-}
-
-fn matches_key(key: KeyEvent, binding: &str) -> bool {
-    if let Some(expected) = parse_key(binding) {
-        // Compare code and modifiers, ignore kind/state
-        key.code == expected.code && key.modifiers == expected.modifiers
-    } else {
-        false
-    }
 }
 
 fn rect_contains(r: ratatui::layout::Rect, col: u16, row: u16) -> bool {

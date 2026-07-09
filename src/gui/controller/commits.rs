@@ -4,7 +4,7 @@ use anyhow::Result;
 use crossterm::event::KeyEvent;
 
 use crate::config::KeybindingConfig;
-use crate::config::keybindings::parse_key;
+use crate::config::keybindings::{matches_key, parse_key};
 use crate::git::rebase::RebaseAction;
 use crate::gui::Gui;
 use crate::gui::popup::{MenuItem, PopupState, make_textarea};
@@ -924,12 +924,4 @@ fn enter_interactive_rebase(gui: &mut Gui) -> Result<()> {
     drop(model);
 
     Ok(())
-}
-
-fn matches_key(key: KeyEvent, binding: &str) -> bool {
-    if let Some(expected) = parse_key(binding) {
-        key.code == expected.code && key.modifiers == expected.modifiers
-    } else {
-        false
-    }
 }

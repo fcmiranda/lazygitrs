@@ -445,3 +445,17 @@ pub fn parse_key(s: &str) -> Option<KeyEvent> {
 
     None
 }
+
+pub fn matches_key(key: KeyEvent, binding: &str) -> bool {
+    if let Some(expected) = parse_key(binding) {
+        let code_match = match (key.code, expected.code) {
+            (KeyCode::Char(c1), KeyCode::Char(c2)) => {
+                c1.to_ascii_lowercase() == c2.to_ascii_lowercase()
+            }
+            (code1, code2) => code1 == code2,
+        };
+        code_match && key.modifiers == expected.modifiers
+    } else {
+        false
+    }
+}
