@@ -241,6 +241,23 @@ function transformTheme(opencode: OpenCodeTheme, filename: string): LazygitrsThe
   };
 }
 
+function toToml(obj: Record<string, any>): string {
+  let lines: string[] = [];
+  for (const [k, v] of Object.entries(obj)) {
+    if (Array.isArray(v)) {
+      const listStr = v.map((x) => `"${x}"`).join(", ");
+      lines.push(`${k} = [${listStr}]`);
+    } else if (typeof v === "string") {
+      lines.push(`${k} = "${v}"`);
+    } else if (typeof v === "boolean") {
+      lines.push(`${k} = ${v}`);
+    } else if (typeof v === "number") {
+      lines.push(`${k} = ${v}`);
+    }
+  }
+  return lines.join("\n") + "\n";
+}
+
 // ── Main ────────────────────────────────────────────────────────────────
 
 async function main() {
@@ -274,9 +291,9 @@ async function main() {
     }
 
     const lazygitrsTheme = transformTheme(opencode, file.name);
-    const outPath = join(THEMES_DIR, file.name);
-    writeFileSync(outPath, JSON.stringify(lazygitrsTheme, null, 2) + "\n");
-    console.log(`  -> ${file.name}`);
+    const outPath = join(THEMES_DIR, file.name.replace(".json", ".toml"));
+    writeFileSync(outPath, toToml(lazygitrsTheme));
+    console.log(`  -> ${file.name.replace(".json", ".toml")}`);
     count++;
   }
 

@@ -429,12 +429,12 @@ impl Theme {
     }
 }
 
-// ── JSON theme format ────────────────────────────────────────────────────
+// ── TOML theme format ────────────────────────────────────────────────────
 
-/// JSON-serializable theme format. All fields except `id` and `name` are
+/// TOML-serializable theme format. All fields except `id` and `name` are
 /// optional — missing values are derived from semantic base colors.
 #[derive(Debug, Clone, Deserialize)]
-pub struct ThemeJson {
+pub struct ThemeToml {
     pub id: String,
     pub name: String,
 
@@ -489,8 +489,8 @@ pub struct ThemeJson {
     pub graph_colors: Option<Vec<String>>,
 }
 
-impl ThemeJson {
-    /// Convert this JSON theme into a full `Theme`, deriving any missing
+impl ThemeToml {
+    /// Convert this TOML theme into a full `Theme`, deriving any missing
     /// values from semantic base colors and the default dark theme.
     pub fn to_theme(&self) -> Theme {
         let dark = Theme::dark();
@@ -858,13 +858,13 @@ impl ColorTheme {
         // Try embedded themes (generated + custom built-in)
         for dir in &[&GENERATED_THEMES_DIR, &CUSTOM_THEMES_DIR] {
             for file in dir.files() {
-                if file.path().extension().and_then(|e| e.to_str()) != Some("json") {
+                if file.path().extension().and_then(|e| e.to_str()) != Some("toml") {
                     continue;
                 }
                 if let Some(contents) = file.contents_utf8() {
-                    if let Ok(theme_json) = serde_json::from_str::<ThemeJson>(contents) {
-                        if theme_json.id == self.id {
-                            return theme_json.to_theme();
+                    if let Ok(theme_toml) = toml::from_str::<ThemeToml>(contents) {
+                        if theme_toml.id == self.id {
+                            return theme_toml.to_theme();
                         }
                     }
                 }
@@ -903,15 +903,15 @@ pub fn load_color_themes() -> Vec<ColorTheme> {
     // 3. Embedded themes (generated + custom built-in)
     for dir in &[&GENERATED_THEMES_DIR, &CUSTOM_THEMES_DIR] {
         for file in dir.files() {
-            if file.path().extension().and_then(|e| e.to_str()) != Some("json") {
+            if file.path().extension().and_then(|e| e.to_str()) != Some("toml") {
                 continue;
             }
             if let Some(contents) = file.contents_utf8() {
-                if let Ok(theme_json) = serde_json::from_str::<ThemeJson>(contents) {
-                    if seen_ids.insert(theme_json.id.clone()) {
+                if let Ok(theme_toml) = toml::from_str::<ThemeToml>(contents) {
+                    if seen_ids.insert(theme_toml.id.clone()) {
                         themes.push(ColorTheme {
-                            name: theme_json.name.clone(),
-                            id: theme_json.id.clone(),
+                            name: theme_toml.name.clone(),
+                            id: theme_toml.id.clone(),
                         });
                     }
                 }
@@ -931,7 +931,7 @@ pub fn load_color_themes() -> Vec<ColorTheme> {
 
 use include_dir::{Dir, include_dir};
 
-/// All JSON files under `src/generated_themes/` are embedded at compile time.
+/// All TOML files under `src/generated_themes/` are embedded at compile time.
 /// No hardcoded list needed — adding/removing a file is all it takes.
 static GENERATED_THEMES_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/src/generated_themes");
 static CUSTOM_THEMES_DIR: Dir = include_dir!("$CARGO_MANIFEST_DIR/src/themes");
@@ -954,10 +954,10 @@ fn discover_user_themes() -> Option<Vec<(String, String)>> {
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("json") {
+                if path.extension().and_then(|e| e.to_str()) == Some("toml") {
                     if let Ok(contents) = std::fs::read_to_string(&path) {
-                        if let Ok(theme_json) = serde_json::from_str::<ThemeJson>(&contents) {
-                            result.push((theme_json.id.clone(), theme_json.name.clone()));
+                        if let Ok(theme_toml) = toml::from_str::<ThemeToml>(&contents) {
+                            result.push((theme_toml.id.clone(), theme_toml.name.clone()));
                         }
                     }
                 }
@@ -980,11 +980,11 @@ fn load_user_theme(id: &str) -> Option<Theme> {
         if let Ok(entries) = std::fs::read_dir(&dir) {
             for entry in entries.flatten() {
                 let path = entry.path();
-                if path.extension().and_then(|e| e.to_str()) == Some("json") {
+                if path.extension().and_then(|e| e.to_str()) == Some("toml") {
                     if let Ok(contents) = std::fs::read_to_string(&path) {
-                        if let Ok(theme_json) = serde_json::from_str::<ThemeJson>(&contents) {
-                            if theme_json.id == id {
-                                return Some(theme_json.to_theme());
+                        if let Ok(theme_toml) = toml::from_str::<ThemeToml>(&contents) {
+                            if theme_toml.id == id {
+                                return Some(theme_toml.to_theme());
                             }
                         }
                     }
