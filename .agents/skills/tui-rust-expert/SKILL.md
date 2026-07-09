@@ -38,3 +38,5 @@ You are a senior Rust engineer specialized in building high-performance, beautif
 - Provide modular code. Instead of one massive `main.rs`, structure the app logically (e.g., `ui.rs`, `app.rs`, `events.rs`, `tui.rs`).
 - Use `anyhow` or `thiserror` for error handling.
 - Write clear, idiomatic, and safe Rust code. Avoid `unwrap()` and `expect()` in production logic; handle errors explicitly.
+- **Keybindings Documentation**: When implementing or modifying keybindings, always document/add them to both the Help popup list (`HelpSection` in `src/gui/mod.rs`) and the bottom status bar hints (`render_status_bar` in `src/gui/views.rs`).
+- **Local Installation**: After implementing a feature or fixing a bug, run `cargo install --path .` to install the updated binary locally.
