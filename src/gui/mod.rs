@@ -4230,14 +4230,35 @@ impl Gui {
                     KeyCode::Enter => {
                         let popup = std::mem::replace(&mut self.popup, PopupState::None);
                         if let PopupState::Checklist {
-                            items, on_confirm, ..
+                            items,
+                            selected,
+                            search,
+                            on_confirm,
+                            ..
                         } = popup
                         {
-                            let checked: Vec<String> = items
-                                .into_iter()
+                            let mut checked: Vec<String> = items
+                                .iter()
                                 .filter(|it| it.checked)
-                                .map(|it| it.label)
+                                .map(|it| it.label.clone())
                                 .collect();
+                            if checked.is_empty() {
+                                let visible_indices: Vec<usize> = items
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(_, it)| {
+                                        search.is_empty()
+                                            || it
+                                                .label
+                                                .to_lowercase()
+                                                .contains(&search.to_lowercase())
+                                    })
+                                    .map(|(i, _)| i)
+                                    .collect();
+                                if let Some(&real_idx) = visible_indices.get(selected) {
+                                    checked.push(items[real_idx].label.clone());
+                                }
+                            }
                             if let Err(e) = on_confirm(self, checked) {
                                 self.popup = PopupState::Message {
                                     title: "Error".to_string(),

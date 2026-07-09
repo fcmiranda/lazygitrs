@@ -11,10 +11,15 @@ use crate::gui::popup::{MenuItem, PopupState, make_textarea};
 use crate::os::platform::Platform;
 
 pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) -> Result<()> {
-    // Esc: cancel range select first, then clear clipboard
+    // Esc: cancel range select first, then clear branch filter, then clear clipboard
     if key.code == crossterm::event::KeyCode::Esc {
         if gui.range_select_anchor.is_some() {
             gui.range_select_anchor = None;
+            return Ok(());
+        }
+        if !gui.commit_branch_filter.is_empty() {
+            gui.commit_branch_filter.clear();
+            gui.needs_refresh = true;
             return Ok(());
         }
         if !gui.cherry_pick_clipboard.is_empty() {
@@ -787,16 +792,18 @@ fn show_branch_filter_menu(gui: &mut Gui) -> Result<()> {
 
     let current_filter = &gui.commit_branch_filter;
 
-    let items: Vec<ChecklistItem> = branches
-        .into_iter()
-        .map(|name| {
-            let checked = current_filter.contains(&name);
-            ChecklistItem {
-                label: name,
-                checked,
-            }
-        })
-        .collect();
+    let mut items = vec![ChecklistItem {
+        label: "<Clear Filter>".to_string(),
+        checked: current_filter.is_empty(),
+    }];
+
+    for name in branches {
+        let checked = current_filter.contains(&name);
+        items.push(ChecklistItem {
+            label: name,
+            checked,
+        });
+    }
 
     gui.popup = PopupState::Checklist {
         title: "Filter commits by branch".to_string(),
@@ -804,7 +811,11 @@ fn show_branch_filter_menu(gui: &mut Gui) -> Result<()> {
         selected: 0,
         search: String::new(),
         on_confirm: Box::new(|gui: &mut Gui, checked: Vec<String>| {
-            gui.commit_branch_filter = checked;
+            let filtered_checked: Vec<String> = checked
+                .into_iter()
+                .filter(|val| val != "<Clear Filter>")
+                .collect();
+            gui.commit_branch_filter = filtered_checked;
             gui.needs_refresh = true;
             gui.context_mgr.set_selection(0);
             Ok(())
