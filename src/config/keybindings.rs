@@ -341,7 +341,7 @@ impl Default for CommitsKeybinding {
             rename_commit: "r".into(),
             rename_commit_with_editor: "R".into(),
             view_reset_options: "g".into(),
-            mark_commit_as_fixup: "f".into(),
+            mark_commit_as_fixup: "<c-f>".into(),
             create_fixup_commit: "F".into(),
             squash_above_commits: "S".into(),
             move_down_commit: "<c-j>".into(),
@@ -354,8 +354,8 @@ impl Default for CommitsKeybinding {
             tag_commit: "T".into(),
             checkout_commit: "<space>".into(),
             reset_cherry_pick: "<c-q>".into(),
-            open_log_menu: "b".into(),
-            view_bisect_options: "<c-b>".into(),
+            open_log_menu: "f".into(),
+            view_bisect_options: "b".into(),
             interactive_rebase: "i".into(),
         }
     }
