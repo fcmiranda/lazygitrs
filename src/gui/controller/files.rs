@@ -158,6 +158,9 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) 
 
     // Copy to clipboard
     if key.code == KeyCode::Char('y') {
+        if gui.diff_view.selected_note.is_some() {
+            return gui.copy_selected_note();
+        }
         return copy_to_clipboard_menu(gui);
     }
 

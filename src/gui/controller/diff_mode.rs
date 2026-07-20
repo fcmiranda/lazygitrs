@@ -358,6 +358,9 @@ fn handle_commit_files_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
             gui.needs_diff_refresh = true;
         }
         KeyCode::Char('y') => {
+            if gui.diff_view.selected_note.is_some() {
+                return gui.copy_selected_note();
+            }
             return show_commit_file_copy_menu(gui);
         }
         _ => {}

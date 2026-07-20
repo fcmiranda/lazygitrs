@@ -353,6 +353,9 @@ pub struct DiffViewState {
     pub hovered_line: Option<(usize, DiffPanel)>,
     /// Id of the note currently selected via keyboard (for highlight).
     pub selected_note: Option<String>,
+    /// Active yank flash for notes: (note_id, instant_when_yanked).
+    /// Flashes a Neovim-style `highlight.on_yank` inverse color for ~450ms when copied.
+    pub note_yank_flash: Option<(String, std::time::Instant)>,
     /// Active inline note editor.
     pub inline_edit: Option<InlineEdit>,
     /// Whether note boxes are visible (toggled with `t`).
@@ -388,6 +391,7 @@ impl Default for DiffViewState {
             revert_undo_high_water: 0,
             hovered_line: None,
             selected_note: None,
+            note_yank_flash: None,
             inline_edit: None,
             notes_visible: true,
         }
@@ -2457,12 +2461,22 @@ fn render_diff_annotations(
                 (div_x + divider_width, right_content_width + gutter_width)
             };
             let is_selected = state.selected_note.as_deref() == Some(&note.id);
-            let border_fg = if is_selected {
-                theme.accent_secondary
+            let is_yank_flashing = state
+                .note_yank_flash
+                .as_ref()
+                .map(|(id, ts)| id == &note.id && ts.elapsed().as_millis() < 500)
+                .unwrap_or(false);
+
+            let (border_fg, text_fg) = if is_yank_flashing {
+                let yank_gold = Color::Rgb(250, 204, 21); // Bright Neovim Yank Gold (#facc15)
+                (yank_gold, yank_gold)
+            } else if is_selected {
+                (theme.accent_secondary, theme.accent_secondary)
             } else {
-                theme.text_dimmed
+                (theme.text_dimmed, theme.accent_secondary)
             };
-            let border_mod = if is_selected {
+
+            let border_mod = if is_yank_flashing || is_selected {
                 Modifier::BOLD
             } else {
                 Modifier::empty()
@@ -2484,15 +2498,19 @@ fn render_diff_annotations(
                     }
                     crate::pager::NoteStatus::Addressed => "✓",
                 };
-                let status_color = match note.status {
-                    crate::pager::NoteStatus::New => theme.text_dimmed,
-                    crate::pager::NoteStatus::Sent => theme.accent,
-                    crate::pager::NoteStatus::Addressed => theme.accent_secondary,
+                let status_color = if is_yank_flashing {
+                    text_fg
+                } else {
+                    match note.status {
+                        crate::pager::NoteStatus::New => theme.text_dimmed,
+                        crate::pager::NoteStatus::Sent => theme.accent,
+                        crate::pager::NoteStatus::Addressed => theme.accent_secondary,
+                    }
                 };
                 let title_spans = vec![
                     ratatui::text::Span::styled(
                         title_prefix,
-                        Style::default().fg(border_fg).add_modifier(border_mod),
+                        Style::default().fg(text_fg).add_modifier(border_mod),
                     ),
                     ratatui::text::Span::styled(
                         status_dot,
@@ -2501,26 +2519,31 @@ fn render_diff_annotations(
                             .add_modifier(Modifier::BOLD),
                     ),
                 ];
+                let hint_fg = if is_yank_flashing {
+                    text_fg
+                } else {
+                    theme.text_dimmed
+                };
                 let mut bottom_spans = vec![ratatui::text::Span::styled(
                     " [d] del ",
-                    Style::default().fg(theme.text_dimmed),
+                    Style::default().fg(hint_fg),
                 )];
                 if note.source == crate::pager::NoteSource::User {
                     bottom_spans.insert(
                         0,
-                        ratatui::text::Span::styled(
-                            " [e] edit ",
-                            Style::default().fg(theme.text_dimmed),
-                        ),
+                        ratatui::text::Span::styled(" [e] edit ", Style::default().fg(hint_fg)),
                     );
                     if note.status == crate::pager::NoteStatus::New {
+                        let send_fg = if is_yank_flashing {
+                            text_fg
+                        } else {
+                            theme.accent
+                        };
                         bottom_spans.insert(
                             0,
                             ratatui::text::Span::styled(
                                 " [S] send ",
-                                Style::default()
-                                    .fg(theme.accent)
-                                    .add_modifier(Modifier::BOLD),
+                                Style::default().fg(send_fg).add_modifier(Modifier::BOLD),
                             ),
                         );
                     }
@@ -2535,7 +2558,6 @@ fn render_diff_annotations(
                             .alignment(ratatui::layout::Alignment::Right),
                     )
             };
-            let text_fg = theme.accent_secondary;
             let widget = ratatui::widgets::Paragraph::new(note.text.as_str())
                 .style(Style::default().fg(text_fg).add_modifier(Modifier::BOLD));
             ratatui::widgets::Widget::render(

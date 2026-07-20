@@ -2852,6 +2852,37 @@ impl Gui {
         // Note actions take priority over text selection
         if self.diff_view.selected_note.is_some() {
             match key.code {
+                KeyCode::Char('y') => {
+                    self.copy_selected_note()?;
+                    return Ok(());
+                }
+                KeyCode::Enter | KeyCode::Char('o') => {
+                    if let Some(ref note_id) = self.diff_view.selected_note.clone() {
+                        let lines_file = crate::pager::notes_store::load(self.git.repo_path());
+                        if let Some(note) = lines_file.notes.iter().find(|n| &n.id == note_id) {
+                            let content = if let Some(ref rationale) = note.rationale {
+                                format!("{}\n\n{}", note.comment, rationale)
+                            } else {
+                                note.comment.clone()
+                            };
+                            let author = if note.author.is_empty() {
+                                "unknown".to_string()
+                            } else {
+                                note.author.clone()
+                            };
+                            let full_details = format!(
+                                "File: {} (line {})\nAuthor: {}\nCreated: {}\nStatus: {:?}\n\n{}",
+                                note.file, note.line, author, note.created_at, note.status, content
+                            );
+                            self.popup = PopupState::Message {
+                                title: format!("Note Details [{}]", note.file),
+                                message: full_details,
+                                kind: crate::gui::popup::MessageKind::Info,
+                            };
+                        }
+                    }
+                    return Ok(());
+                }
                 KeyCode::Char('e') => {
                     if let Some(ref note_id) = self.diff_view.selected_note.clone() {
                         for (i, dl) in self.diff_view.lines.iter().enumerate() {
@@ -2900,6 +2931,10 @@ impl Gui {
                             }
                         }
                     }
+                    return Ok(());
+                }
+                KeyCode::Esc => {
+                    self.diff_view.selected_note = None;
                     return Ok(());
                 }
                 _ => {}
@@ -3374,6 +3409,42 @@ impl Gui {
                 self.diff_view.scroll_offset = max;
             }
             _ => {}
+        }
+        Ok(())
+    }
+
+    pub fn copy_selected_note(&mut self) -> Result<()> {
+        if let Some(ref note_id) = self.diff_view.selected_note.clone() {
+            let mut content_to_copy = None;
+            for dl in &self.diff_view.lines {
+                if let Some(note) = dl.comment_notes.iter().find(|n| &n.id == note_id) {
+                    let c = match &note.rationale {
+                        Some(r) if !note.text.contains(r.as_str()) => {
+                            format!("{}\n\n{}", note.text, r)
+                        }
+                        _ => note.text.clone(),
+                    };
+                    content_to_copy = Some(c);
+                    break;
+                }
+            }
+            if content_to_copy.is_none() {
+                let lines_file = crate::pager::notes_store::load(self.git.repo_path());
+                if let Some(note) = lines_file.notes.iter().find(|n| &n.id == note_id) {
+                    let c = match &note.rationale {
+                        Some(r) if !note.comment.contains(r.as_str()) => {
+                            format!("{}\n\n{}", note.comment, r)
+                        }
+                        _ => note.comment.clone(),
+                    };
+                    content_to_copy = Some(c);
+                }
+            }
+            if let Some(content) = content_to_copy {
+                let _ = Platform::copy_to_clipboard(&content);
+                self.diff_view.note_yank_flash = Some((note_id.clone(), std::time::Instant::now()));
+                self.diff_view.selection = None;
+            }
         }
         Ok(())
     }
@@ -4945,7 +5016,11 @@ impl Gui {
                     },
                     HelpEntry {
                         key: "y".into(),
-                        description: "Copy to clipboard menu".into(),
+                        description: "Copy to clipboard / note content".into(),
+                    },
+                    HelpEntry {
+                        key: "<enter> / o".into(),
+                        description: "View full note details popup".into(),
                     },
                     HelpEntry {
                         key: "{/}".into(),

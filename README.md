@@ -1,6 +1,6 @@
 # lazygitrs
 
-A faster, memory-safe, more ergonomic slopfork of lazygit (🦀 rust btw).
+A faster, memory-safe, and highly ergonomic slopfork of lazygit (🦀 rust btw).
 
 This is mostly a "for me" tool — built for my own workflow. Not saying you shouldn't use it, but don't expect it to be a community project. But hey, it works for me!
 
@@ -72,6 +72,7 @@ lazygitrs
   - **HTTP Push** (`serverUrl`): Does an instant HTTP POST to local servers (great for `opencode`)
   - **Server-Sent Events** (`SSE`): Real-time event streaming for wrapper scripts or IDE extensions.
   - **Bidirectional Sync**: AI review annotations are posted back directly into the lazygitrs TUI diff view.
+  - **Note Interactions & Clipboard**: Press `y` on any selected note to copy its text directly to system clipboard (with cross-platform support for Wayland `wl-copy`, X11 `xclip`/`xsel`, macOS `pbcopy`, Windows `clip`, and terminal OSC 52) featuring a Neovim-style 500ms Yank Flash highlight. Press `<Enter>` or `o` to view full note details.
 
 ### Configuration
 

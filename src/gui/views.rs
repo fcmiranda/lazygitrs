@@ -1973,6 +1973,13 @@ fn render_status_bar(
         hints.push(("m", "continue/abort cherry-pick"));
     }
 
+    if diff_view.selected_note.is_some() {
+        hints.insert(0, ("enter/o", "view note details"));
+        hints.insert(1, ("y", "copy note"));
+        hints.insert(2, ("S", "send to AI"));
+        emphasized.push("enter/o");
+    }
+
     if diff_focused && !diff_view.is_empty() {
         // Diff-focused hint set: only the diff-relevant keys, kept tight.
         // Revert-related keys are grouped together at the front so users see
