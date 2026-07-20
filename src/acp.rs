@@ -47,6 +47,53 @@ pub struct AgentAnnotation {
     #[serde(rename = "createdAt")]
     pub created_at: Option<String>,
 }
+fn validate_agent_context(ctx: &AgentContext) -> Result<(), String> {
+    if ctx.files.is_empty() {
+        return Err("Payload 'files' array cannot be empty.".to_string());
+    }
+    for file in &ctx.files {
+        if file.path.trim().is_empty() {
+            return Err("File entry missing required 'path' field.".to_string());
+        }
+        if file.annotations.is_empty() {
+            return Err(format!(
+                "File '{}' has an empty 'annotations' array.",
+                file.path
+            ));
+        }
+        for ann in &file.annotations {
+            if ann.summary.trim().is_empty() {
+                return Err(format!(
+                    "Annotation in '{}' is missing required 'summary' field.",
+                    file.path
+                ));
+            }
+            if ann.new_range.is_none() && ann.old_range.is_none() {
+                return Err(format!(
+                    "Annotation '{}' in '{}' is missing required line range. Specify 'newRange': [start_line, end_line] or 'oldRange': [start_line, end_line].",
+                    ann.summary, file.path
+                ));
+            }
+            if let Some((start, end)) = ann.new_range {
+                if start == 0 || end < start {
+                    return Err(format!(
+                        "Annotation '{}' in '{}' has invalid 'newRange': [{}, {}]. Line numbers must be >= 1 and end >= start.",
+                        ann.summary, file.path, start, end
+                    ));
+                }
+            }
+            if let Some((start, end)) = ann.old_range {
+                if start == 0 || end < start {
+                    return Err(format!(
+                        "Annotation '{}' in '{}' has invalid 'oldRange': [{}, {}]. Line numbers must be >= 1 and end >= start.",
+                        ann.summary, file.path, start, end
+                    ));
+                }
+            }
+        }
+    }
+    Ok(())
+}
 
 /// Shared session ID registered by an AI CLI so the TUI can target the
 /// correct session when spawning the notify command.
@@ -495,6 +542,9 @@ async fn handle_acp_post(
 
     // Try to parse as AgentContext (the primary push path).
     if let Ok(ctx) = serde_json::from_value::<AgentContext>(payload.clone()) {
+        if let Err(err_msg) = validate_agent_context(&ctx) {
+            return Json(serde_json::json!({"status": "error", "error": err_msg}));
+        }
         let _ = state.tx.send(AcpEvent::ApplyNotes(ctx));
         return Json(serde_json::json!({"status": "ok"}));
     }
@@ -502,6 +552,9 @@ async fn handle_acp_post(
     // Fallback: nested "context" object.
     if let Some(context) = payload.get("context") {
         if let Ok(ctx) = serde_json::from_value::<AgentContext>(context.clone()) {
+            if let Err(err_msg) = validate_agent_context(&ctx) {
+                return Json(serde_json::json!({"status": "error", "error": err_msg}));
+            }
             let _ = state.tx.send(AcpEvent::ApplyNotes(ctx));
             return Json(serde_json::json!({"status": "ok"}));
         }

@@ -121,6 +121,8 @@ To clear active sessions **globally** across all your repositories (and unregist
 lazygitrs --clear-session
 ```
 
+> **Note on Background Execution:** Leaving `lazygitrs` running in background (e.g. in a detached tmux session `_lazygitrs-<workspace>`) consumes ~0% CPU and ~15MB RAM, providing instant reconnection when starting a new AI session.
+
 ### Themes
 
 lazygitrs ships with 30+ built-in color themes (Catppuccin, Dracula, Tokyo Night, Gruvbox, Nord, White, etc.) defined in TOML format and sourced from [OpenCode](https://opencode.ai)'s TUI theme collection.
