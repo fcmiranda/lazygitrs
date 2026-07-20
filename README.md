@@ -53,14 +53,16 @@ lazygitrs
 
 - [x] **Side-by-side diffs** with syntax highlighting by default, no pager hacks needed
 - [x] **Better diff navigation UX** — `[]` new/old only views, `{}` for hunk traveling, `hjkl←↑↓→` for line-by-line scrolling, supports mouse select/scroll too. Lots inspired by [lumen](https://github.com/jnsahaj/lumen)
+- [x] **Hunk Reverting & Undo (`<Enter>` / `u`)** — Revert hovered/selected diff blocks with `<Enter>`, and undo block reverts with `u`. Cycle selections using `{` and `}`.
 - [x] **Default GitHub conveniences** — copy repo url, open repo url, copy PR create url, open PR create, copy pr url, open pr. (The 'copy' variants are useful if you use different default browsers for work/personal.)
-- [x] **Branch Filtering** — better experience in the Commits tab, compare what actually matters. Toggle commits log between all branches and HEAD-only (default shortcut: `a` in Commits panel).
+- [x] **Enhanced Commits Panel & Branch Filtering** — Filter commits by branch via interactive checklist menu (`f` in Commits panel) with `<Clear Filter>` support. Toggle commits view between all branches and HEAD-only (`a`). Quick bisect options (`b`) and fixup shortcuts (`<c-f>` / `F`). Cherry-pick copy (`C`) and paste (`V`).
 - [x] **Discard All Changes** — Press `D` (Shift+D) in the Files panel to permanently discard all local modifications (both tracked changes and untracked files/directories) across the entire repository.
-- [x] **Execute Shell Commands** — Press `:` (colon) globally to open a popup input prompt, allowing you to run arbitrary shell commands. Outputs are shown in a popup message, and commands are appended to the command log.
-- [x] **Built-in compare tool** — Again, inspired by lumen, but more built into the TUI. Pick a commit/branch A and a commit/branch B, then see how they differ.
-- [x] **Interactive rebasing** — inspired by gitlens, a clean and easy-to-use UI for pick, reword, edit, squash, fixup, drop and fast rebasing.
+- [x] **Execute Shell Commands** — Press `:` (colon) globally to open a popup input prompt, allowing you to run arbitrary shell commands. Executes via temporary shell scripts so aliases and shell functions work smoothly without TTY hangs.
+- [x] **Draggable Layout & Navigation** — Drag vertical divider columns to dynamically resize sidebar/diff panels at 60 FPS without repository reloads. Navigate parent/child trees and diffs with `,`, `.`, `/`, `<`, `>`.
+- [x] **Built-in compare tool** — Inspired by lumen, but more built into the TUI. Pick a commit/branch A and a commit/branch B, then see how they differ.
+- [x] **Interactive rebasing** — Inspired by gitlens, a clean and easy-to-use UI for pick, reword, edit, squash, fixup, drop and fast rebasing.
 - [x] **Commit Details** — Inspired by zed, just a small details panel about the commit that's easier to look at.
-- [x] **Command Palette** — easily access stuff like:
+- [x] **Command Palette** — Easily access stuff like:
   - [ ] `git reset` and then asks, what branch/commit, has quick search.
   - [x] `git diff/compare` and then asks what branch/commit A and B, has quick search.
   - [x] `git rebase` and then asks rebase on top of what branch/commit.
@@ -76,6 +78,12 @@ lazygitrs
 Config goes in `~/.config/lazygitrs/config.yml` or `~/.config/lazygit/config.yml` — both work, using either only won't break anything so you can reference the [original lazygit config guide](https://github.com/jesseduffield/lazygit/blob/master/docs/Config.md).
 
 Persisted State lives at `~/.local/state/lazygitrs/state.yml` and `~/.local/state/lazygitrs/commit_message_history` you won't need to touch this.
+
+**CLI Options:**
+
+- `lazygitrs --config <PATH>` — Load configuration from custom YAML file.
+- `lazygitrs --print-default-config` — Print the default configuration file.
+- `lazygitrs --clear-session` — Clear/unregister active AI session globally.
 
 **New config properties:**
 
@@ -94,7 +102,7 @@ Persisted State lives at `~/.local/state/lazygitrs/state.yml` and `~/.local/stat
       main: rounded
   ```
   Supported granular components: `notes`, `files`, `branches`, `commits`, `stash`, `status`, `main`, `commandLog`.
-- `~/.config/lazygitrs/themes/*.json` — drop custom theme files here. See [Themes](#themes).
+- `~/.config/lazygitrs/themes/*.toml` — drop custom theme files here (or `~/.config/lazygit/themes/*.toml`). See [Themes](#themes).
 
 ### Clearing AI Sessions
 
@@ -115,23 +123,21 @@ lazygitrs --clear-session
 
 ### Themes
 
-lazygitrs ships with 30+ built-in color themes (Catppuccin, Dracula, Tokyo Night, Gruvbox, Nord, etc.) sourced from [OpenCode](https://opencode.ai)'s TUI theme collection.
+lazygitrs ships with 30+ built-in color themes (Catppuccin, Dracula, Tokyo Night, Gruvbox, Nord, White, etc.) defined in TOML format and sourced from [OpenCode](https://opencode.ai)'s TUI theme collection.
 
-**Unlike original lazygit, you can switch themes without touching any config file** — just press `?` > **Color Themes** > Enter. Your choice is saved automatically.
+**Unlike original lazygit, you can switch themes without touching any config file** — just press `?` > **Color Themes** > Enter. Your choice is saved automatically. User themes placed in `~/.config/lazygit/themes/` or `~/.config/lazygitrs/themes/` take priority over embedded built-in themes.
 
-**Custom themes:** Drop a `.json` file into `~/.config/lazygitrs/themes/` and it appears in the picker. Start by copying an existing theme from `src/generated_themes/` and tweaking the colors. The format is a flat JSON with all fields optional (unset values are derived from semantic base colors like `primary`, `success`, `error`):
+**Custom themes:** Drop a `.toml` file into `~/.config/lazygitrs/themes/` (or `~/.config/lazygit/themes/`) and it appears in the picker. Start by copying an existing theme from `src/generated_themes/` or `src/themes/` and tweaking the colors. The format is TOML with all fields optional (unset values are derived from semantic base colors like `primary`, `success`, `error`):
 
-```json
-{
-  "id": "my-theme",
-  "name": "My Custom Theme",
-  "primary": "#ff6600",
-  "success": "#00ff88",
-  "error": "#ff3333",
-  "warning": "#ffcc00",
-  "text_strong": "#ffffff",
-  "background": "#1a1a2e"
-}
+```toml
+id = "my-theme"
+name = "My Custom Theme"
+primary = "#ff6600"
+success = "#00ff88"
+error = "#ff3333"
+warning = "#ffcc00"
+text_strong = "#ffffff"
+background = "#1a1a2e"
 ```
 
 To refresh the built-in generated themes from OpenCode upstream: `bun run scripts/gen-themes.ts`
