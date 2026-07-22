@@ -8007,164 +8007,160 @@ impl Gui {
             file, line, note_text
         );
 
-        // 1. Try TUI push (opencode /tui/append-prompt + /tui/submit-prompt).
-        let server_url = self
-            .acp_server_url
-            .lock()
-            .map(|g| g.clone())
-            .unwrap_or(None)
-            .or_else(|| {
-                crate::pager::notes_store::load(self.git.repo_path())
-                    .session
-                    .filter(|s| !s.server_url.is_empty())
-                    .map(|s| s.server_url)
-            });
-
-        if let Some(ref url) = server_url {
-            if self.push_prompt_to_tui(url, &prompt) {
-                self.mark_note_sent(&note_id);
-                return;
-            }
-        }
-
-        // 2. Try SSE — if there are connected listeners, push the event.
-        let sse_payload = serde_json::json!({
-            "type": "note-sent",
-            "noteId": note_id,
-            "file": file,
-            "line": line,
-            "note": note_text,
-            "prompt": prompt,
-        })
-        .to_string();
-
-        let sse_delivered =
-            self.sse_tx.receiver_count() > 0 && self.sse_tx.send(sse_payload).is_ok();
-
-        // Update note status → Sent.
+        // Update note status -> Sent.
         self.mark_note_sent(&note_id);
 
-        if sse_delivered {
-            return;
-        }
+        // Build the prompt that tells the AI to check the notes endpoint.
+        let prompt = format!(
+            "A review note was created in lazygitrs on file '{}' at line {}:\n\n\"{}\"\n\n\
+             Load the lazygitrs-review skill if available. \
+             Fetch all notes with: PORT=$(cat .lazygitrs.port) && curl -s http://127.0.0.1:$PORT/session-api/notes\n\
+             Review the note above and respond by POSTing your annotations to \
+             http://127.0.0.1:$PORT/session-api using the AgentContext JSON format:\n\
+             {{\"version\":1,\"files\":[{{\"path\":\"...\",\"annotations\":[{{\"summary\":\"...\",\"rationale\":\"...\",\"newRange\":[L,L]}}]}}]}}",
+            file, line, note_text
+        );
 
-        // 3. Fallback: spawn the notifyCommand if configured by the active session.
-        let notify_command = self
-            .acp_notify_command
-            .lock()
-            .map(|g| g.clone())
-            .unwrap_or(None)
-            .or_else(|| {
-                crate::pager::notes_store::load(self.git.repo_path())
-                    .session
-                    .filter(|s| !s.notify_command.is_empty())
-                    .map(|s| s.notify_command)
-            })
-            .or_else(|| {
-                if let Ok(home) = std::env::var("HOME") {
-                    let global_path =
-                        std::path::PathBuf::from(home).join(".lazygitrs_active_session.json");
-                    if let Ok(data) = std::fs::read_to_string(&global_path) {
-                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&data) {
-                            if let Some(cmd) = json.get("notifyCommand").and_then(|v| v.as_str()) {
-                                if !cmd.is_empty() {
-                                    return Some(cmd.to_string());
-                                }
-                            }
-                        }
-                    }
-                }
-                None
-            });
+        let repo_path = self.git.repo_path().to_path_buf();
+        let acp_server_url = Arc::clone(&self.acp_server_url);
+        let acp_notify_command = Arc::clone(&self.acp_notify_command);
+        let acp_session_id = Arc::clone(&self.acp_session_id);
+        let sse_tx = self.sse_tx.clone();
 
-        let cmd_template = match notify_command {
-            Some(cmd) if !cmd.is_empty() => cmd,
-            _ => return,
-        };
-
-        // Expand the command template.
-        let session_id = self
-            .acp_session_id
-            .lock()
-            .map(|g| g.clone())
-            .unwrap_or(None)
-            .or_else(|| {
-                crate::pager::notes_store::load(self.git.repo_path())
-                    .session
-                    .map(|s| s.session_id)
-            })
-            .or_else(|| {
-                if let Ok(home) = std::env::var("HOME") {
-                    let global_path =
-                        std::path::PathBuf::from(home).join(".lazygitrs_active_session.json");
-                    if let Ok(data) = std::fs::read_to_string(&global_path) {
-                        if let Ok(json) = serde_json::from_str::<serde_json::Value>(&data) {
-                            if let Some(sid) = json.get("sessionId").and_then(|v| v.as_str()) {
-                                if !sid.is_empty() {
-                                    return Some(sid.to_string());
-                                }
-                            }
-                        }
-                    }
-                }
-                None
-            })
-            .unwrap_or_default();
-        let workspace_path = self.git.repo_path().to_string_lossy().to_string();
-        let cmd_str = cmd_template
-            .replace("{{session_id}}", &session_id)
-            .replace("{{workspace_path}}", &shell_escape_arg(&workspace_path))
-            .replace("{{prompt}}", &shell_escape_arg(&prompt));
-
-        crate::os::cmd::log_command(&cmd_str);
-        let log_path = self.git.repo_path().join(".lazygitrs-ai-notify.log");
-        match std::fs::File::create(&log_path) {
-            Ok(log_file) => {
-                let stderr_file = log_file.try_clone().unwrap_or_else(|_| {
-                    std::fs::OpenOptions::new()
-                        .write(true)
-                        .open("/dev/null")
-                        .unwrap()
+        std::thread::spawn(move || {
+            // 1. Try TUI push (opencode /tui/append-prompt + /tui/submit-prompt).
+            let server_url = acp_server_url
+                .lock()
+                .map(|g| g.clone())
+                .unwrap_or(None)
+                .or_else(|| {
+                    crate::pager::notes_store::load(&repo_path)
+                        .session
+                        .filter(|s| !s.server_url.is_empty())
+                        .map(|s| s.server_url)
                 });
-                match std::process::Command::new("sh")
-                    .arg("-c")
-                    .arg(&cmd_str)
-                    .stdout(std::process::Stdio::from(log_file))
-                    .stderr(std::process::Stdio::from(stderr_file))
-                    .spawn()
-                {
-                    Ok(_) => {}
-                    Err(e) => {
-                        self.show_error(
-                            "AI Notes Error",
-                            anyhow::anyhow!("Failed to spawn AI CLI: {}", e),
-                        );
-                    }
+
+            if let Some(ref url) = server_url {
+                if Self::push_prompt_to_tui(url, &prompt) {
+                    return;
                 }
             }
-            Err(_) => {
-                match std::process::Command::new("sh")
+
+            // 2. Try SSE — if there are connected listeners, push the event.
+            let sse_payload = serde_json::json!({
+                "type": "note-sent",
+                "noteId": note_id,
+                "file": file,
+                "line": line,
+                "note": note_text,
+                "prompt": prompt,
+            })
+            .to_string();
+
+            let sse_delivered = sse_tx.receiver_count() > 0 && sse_tx.send(sse_payload).is_ok();
+
+            if sse_delivered {
+                return;
+            }
+
+            // 3. Fallback: spawn the notifyCommand if configured by the active session.
+            let notify_command = acp_notify_command
+                .lock()
+                .map(|g| g.clone())
+                .unwrap_or(None)
+                .or_else(|| {
+                    crate::pager::notes_store::load(&repo_path)
+                        .session
+                        .filter(|s| !s.notify_command.is_empty())
+                        .map(|s| s.notify_command)
+                })
+                .or_else(|| {
+                    if let Ok(home) = std::env::var("HOME") {
+                        let global_path =
+                            std::path::PathBuf::from(home).join(".lazygitrs_active_session.json");
+                        if let Ok(data) = std::fs::read_to_string(&global_path) {
+                            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&data) {
+                                if let Some(cmd) =
+                                    json.get("notifyCommand").and_then(|v| v.as_str())
+                                {
+                                    if !cmd.is_empty() {
+                                        return Some(cmd.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    None
+                });
+
+            let cmd_template = match notify_command {
+                Some(cmd) if !cmd.is_empty() => cmd,
+                _ => return,
+            };
+
+            // Expand the command template.
+            let session_id = acp_session_id
+                .lock()
+                .map(|g| g.clone())
+                .unwrap_or(None)
+                .or_else(|| {
+                    crate::pager::notes_store::load(&repo_path)
+                        .session
+                        .map(|s| s.session_id)
+                })
+                .or_else(|| {
+                    if let Ok(home) = std::env::var("HOME") {
+                        let global_path =
+                            std::path::PathBuf::from(home).join(".lazygitrs_active_session.json");
+                        if let Ok(data) = std::fs::read_to_string(&global_path) {
+                            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&data) {
+                                if let Some(sid) = json.get("sessionId").and_then(|v| v.as_str()) {
+                                    if !sid.is_empty() {
+                                        return Some(sid.to_string());
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    None
+                })
+                .unwrap_or_default();
+            let workspace_path = repo_path.to_string_lossy().to_string();
+            let cmd_str = cmd_template
+                .replace("{{session_id}}", &session_id)
+                .replace("{{workspace_path}}", &shell_escape_arg(&workspace_path))
+                .replace("{{prompt}}", &shell_escape_arg(&prompt));
+
+            crate::os::cmd::log_command(&cmd_str);
+            let log_path = repo_path.join(".lazygitrs-ai-notify.log");
+            let _ = match std::fs::File::create(&log_path) {
+                Ok(log_file) => {
+                    let stderr_file = log_file.try_clone().unwrap_or_else(|_| {
+                        std::fs::OpenOptions::new()
+                            .write(true)
+                            .open("/dev/null")
+                            .unwrap()
+                    });
+                    std::process::Command::new("sh")
+                        .arg("-c")
+                        .arg(&cmd_str)
+                        .stdout(std::process::Stdio::from(log_file))
+                        .stderr(std::process::Stdio::from(stderr_file))
+                        .spawn()
+                }
+                Err(_) => std::process::Command::new("sh")
                     .arg("-c")
                     .arg(&cmd_str)
                     .stdout(std::process::Stdio::null())
                     .stderr(std::process::Stdio::null())
-                    .spawn()
-                {
-                    Ok(_) => {}
-                    Err(e) => {
-                        self.show_error(
-                            "AI Notes Error",
-                            anyhow::anyhow!("Failed to spawn AI CLI: {}", e),
-                        );
-                    }
-                }
-            }
-        }
+                    .spawn(),
+            };
+        });
     }
 
     /// Push a prompt to the AI CLI's TUI via its HTTP server.
     /// Returns `true` on success.
-    fn push_prompt_to_tui(&self, server_url: &str, prompt: &str) -> bool {
+    fn push_prompt_to_tui(server_url: &str, prompt: &str) -> bool {
         let append_url = format!("{}/tui/append-prompt", server_url);
         let submit_url = format!("{}/tui/submit-prompt", server_url);
 
