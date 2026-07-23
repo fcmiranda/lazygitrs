@@ -2546,6 +2546,19 @@ fn render_diff_annotations(
                                 Style::default().fg(send_fg).add_modifier(Modifier::BOLD),
                             ),
                         );
+                    } else {
+                        let reset_fg = if is_yank_flashing {
+                            text_fg
+                        } else {
+                            theme.accent
+                        };
+                        bottom_spans.insert(
+                            0,
+                            ratatui::text::Span::styled(
+                                " [r] reset ",
+                                Style::default().fg(reset_fg).add_modifier(Modifier::BOLD),
+                            ),
+                        );
                     }
                 }
                 ratatui::widgets::Block::default()

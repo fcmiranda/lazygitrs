@@ -1977,6 +1977,7 @@ fn render_status_bar(
         hints.insert(0, ("enter/o", "view note details"));
         hints.insert(1, ("y", "copy note"));
         hints.insert(2, ("S", "send to AI"));
+        hints.insert(3, ("r", "reset status"));
         emphasized.push("enter/o");
     }
 

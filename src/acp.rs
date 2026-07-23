@@ -123,6 +123,7 @@ struct AppState {
 pub enum AcpEvent {
     ApplyNotes(AgentContext),
     Navigate(NavigateContext),
+    RefreshNotes,
 }
 
 #[derive(Deserialize, Debug, Clone)]
@@ -535,6 +536,21 @@ async fn handle_acp_post(
                 }
                 let _ = state.tx.send(AcpEvent::Navigate(nav));
                 return Json(serde_json::json!({"status": "ok"}));
+            }
+            "reset" => {
+                if let Some(note_id) = payload.get("noteId").and_then(|v| v.as_str()) {
+                    let mut lines_file = crate::pager::notes_store::load(&state.repo_path);
+                    if let Some(entry) = lines_file.notes.iter_mut().find(|c| c.id == note_id) {
+                        entry.status = crate::pager::NoteStatus::New;
+                        crate::pager::notes_store::save(&state.repo_path, lines_file);
+                        let _ = state.tx.send(AcpEvent::RefreshNotes);
+                        return Json(serde_json::json!({"status": "ok"}));
+                    }
+                    return Json(serde_json::json!({"status": "error", "error": "note not found"}));
+                }
+                return Json(
+                    serde_json::json!({"status": "error", "error": "missing noteId field"}),
+                );
             }
             _ => {}
         }

@@ -1035,6 +1035,9 @@ impl Gui {
                 crate::acp::AcpEvent::ApplyNotes(ctx) => {
                     self.apply_acp_notes(ctx);
                 }
+                crate::acp::AcpEvent::RefreshNotes => {
+                    self.diff_view.load_notes(self.git.repo_path());
+                }
                 crate::acp::AcpEvent::Navigate(nav) => {
                     // NOTE: Implemented the navigation endpoint (inspired by hunk).
                     let mut found_idx = None;
@@ -2914,6 +2917,12 @@ impl Gui {
                 KeyCode::Char('S') => {
                     if let Some(ref note_id) = self.diff_view.selected_note.clone() {
                         self.notify_ai_for_note(note_id.clone());
+                    }
+                    return Ok(());
+                }
+                KeyCode::Char('r') | KeyCode::Char('R') => {
+                    if let Some(ref note_id) = self.diff_view.selected_note.clone() {
+                        self.reset_note_status(note_id);
                     }
                     return Ok(());
                 }
@@ -5587,6 +5596,10 @@ impl Gui {
                     description: "Send selected note to AI".into(),
                 },
                 HelpEntry {
+                    key: "r/R".into(),
+                    description: "Reset note status to New".into(),
+                },
+                HelpEntry {
                     key: "".into(),
                     description: "Click to add note on a line".into(),
                 },
@@ -6868,10 +6881,19 @@ impl Gui {
                                             && n.source == crate::pager::NoteSource::User
                                             && n.status == crate::pager::NoteStatus::New
                                     });
+                                let has_reset = self.diff_view.lines[line_idx]
+                                    .comment_notes
+                                    .iter()
+                                    .any(|n| {
+                                        n.id == note_id
+                                            && n.source == crate::pager::NoteSource::User
+                                            && n.status != crate::pager::NoteStatus::New
+                                    });
 
                                 if is_user_note {
                                     let edit_start = panel_end_x.saturating_sub(19);
                                     let send_start = panel_end_x.saturating_sub(29);
+                                    let reset_start = panel_end_x.saturating_sub(30);
                                     if mouse.column >= del_start && mouse.column < panel_end_x {
                                         self.delete_note(note_id);
                                     } else if mouse.column >= edit_start && mouse.column < del_start
@@ -6886,6 +6908,11 @@ impl Gui {
                                         && mouse.column < edit_start
                                     {
                                         self.notify_ai_for_note(note_id);
+                                    } else if has_reset
+                                        && mouse.column >= reset_start
+                                        && mouse.column < edit_start
+                                    {
+                                        self.reset_note_status(&note_id);
                                     } else {
                                         self.diff_view.selected_note = Some(note_id);
                                     }
@@ -8203,6 +8230,16 @@ impl Gui {
         let mut lines_file = crate::pager::notes_store::load(self.git.repo_path());
         if let Some(entry) = lines_file.notes.iter_mut().find(|c| c.id == note_id) {
             entry.status = crate::pager::NoteStatus::Sent;
+        }
+        crate::pager::notes_store::save(self.git.repo_path(), lines_file);
+        self.diff_view.load_notes(self.git.repo_path());
+    }
+
+    /// Reset a note's status back to `New` in `.lines.json` and reload the diff view.
+    fn reset_note_status(&mut self, note_id: &str) {
+        let mut lines_file = crate::pager::notes_store::load(self.git.repo_path());
+        if let Some(entry) = lines_file.notes.iter_mut().find(|c| c.id == note_id) {
+            entry.status = crate::pager::NoteStatus::New;
         }
         crate::pager::notes_store::save(self.git.repo_path(), lines_file);
         self.diff_view.load_notes(self.git.repo_path());
