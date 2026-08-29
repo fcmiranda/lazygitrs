@@ -36,6 +36,11 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) 
         return delete_branch(gui);
     }
 
+    // w: create sibling worktree for selected branch
+    if key.code == KeyCode::Char('w') {
+        return create_worktree_from_branch(gui);
+    }
+
     if matches_key(key, &keybindings.branches.merge_into_current_branch) {
         return merge_branch(gui);
     }
@@ -720,6 +725,62 @@ fn open_in_browser_menu(gui: &mut Gui) -> Result<()> {
             items,
             selected: 0,
             loading_index: None,
+        };
+    }
+    Ok(())
+}
+
+fn create_worktree_from_branch(gui: &mut Gui) -> Result<()> {
+    let selected = gui.context_mgr.selected_active();
+    let model = gui.model.lock().unwrap();
+    if let Some(branch) = model.branches.get(selected) {
+        let branch_name = branch.name.clone();
+        drop(model);
+
+        let target_path = gui.git.resolve_worktree_sibling_path(&branch_name);
+        let path_display = target_path.display().to_string();
+
+        gui.popup = PopupState::Confirm {
+            title: "Create worktree".to_string(),
+            message: format!(
+                "Create sibling worktree for branch '{}' at:\n{}?",
+                branch_name, path_display
+            ),
+            on_confirm: Box::new(move |gui| {
+                match gui.git.add_worktree(&branch_name, None, None) {
+                    Ok(created_path) => {
+                        gui.needs_refresh = true;
+                        let created_display = created_path.display().to_string();
+                        let b_name = branch_name.clone();
+
+                        gui.popup = PopupState::Confirm {
+                            title: "Switch to worktree".to_string(),
+                            message: format!(
+                                "Worktree created for '{}' at:\n{}\n\nOpen lazygitrs in new worktree?",
+                                b_name, created_display
+                            ),
+                            on_confirm: Box::new(move |gui| {
+                                let exe =
+                                    std::env::current_exe().unwrap_or_else(|_| "lazygitrs".into());
+                                std::process::Command::new(exe)
+                                    .arg("--path")
+                                    .arg(&created_display)
+                                    .spawn()?;
+                                gui.should_quit = true;
+                                Ok(())
+                            }),
+                        };
+                    }
+                    Err(e) => {
+                        gui.popup = PopupState::Message {
+                            title: "Create worktree error".to_string(),
+                            message: format!("{}", e),
+                            kind: MessageKind::Error,
+                        };
+                    }
+                }
+                Ok(())
+            }),
         };
     }
     Ok(())

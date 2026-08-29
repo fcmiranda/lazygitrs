@@ -2026,6 +2026,7 @@ fn render_status_bar(
                 hints.extend([
                     ("space", "checkout"),
                     ("n", "new"),
+                    ("w", "worktree"),
                     ("d", "delete"),
                     ("M", "merge"),
                     ("r", "rebase"),

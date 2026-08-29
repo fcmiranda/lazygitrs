@@ -5115,6 +5115,10 @@ impl Gui {
                         description: "New branch".into(),
                     },
                     HelpEntry {
+                        key: "w".into(),
+                        description: "Create worktree for branch".into(),
+                    },
+                    HelpEntry {
                         key: "d".into(),
                         description: "Delete branch".into(),
                     },

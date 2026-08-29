@@ -58,23 +58,53 @@ fn switch_worktree(gui: &mut Gui) -> Result<()> {
 
 fn create_worktree(gui: &mut Gui) -> Result<()> {
     gui.popup = PopupState::Input {
-        title: "New worktree (path branch)".to_string(),
-        textarea: make_textarea("path branch-name"),
+        title: "New worktree branch name".to_string(),
+        textarea: make_textarea(""),
         on_confirm: Box::new(|gui, input| {
             let parts: Vec<&str> = input.split_whitespace().collect();
-            if parts.len() >= 2 {
-                gui.git.create_worktree(parts[0], parts[1])?;
-                gui.needs_refresh = true;
-            } else if parts.len() == 1 {
-                // If only path given, create with new branch based on dir name
-                let path = parts[0];
-                let branch = std::path::Path::new(path)
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| "worktree".to_string());
+            if parts.is_empty() {
+                return Ok(());
+            }
 
-                gui.git.create_worktree_new_branch(path, &branch)?;
-                gui.needs_refresh = true;
+            let branch = parts[0];
+            let base = if parts.len() >= 2 {
+                Some(parts[1])
+            } else {
+                None
+            };
+
+            match gui.git.add_worktree(branch, base, None) {
+                Ok(target_path) => {
+                    gui.needs_refresh = true;
+                    let path_display = target_path.display().to_string();
+                    let branch_name = branch.to_string();
+
+                    // Prompt to switch to newly created worktree
+                    gui.popup = PopupState::Confirm {
+                        title: "Switch to worktree".to_string(),
+                        message: format!(
+                            "Worktree created for '{}' at:\n{}\n\nOpen lazygitrs in new worktree?",
+                            branch_name, path_display
+                        ),
+                        on_confirm: Box::new(move |gui| {
+                            let exe =
+                                std::env::current_exe().unwrap_or_else(|_| "lazygitrs".into());
+                            std::process::Command::new(exe)
+                                .arg("--path")
+                                .arg(&path_display)
+                                .spawn()?;
+                            gui.should_quit = true;
+                            Ok(())
+                        }),
+                    };
+                }
+                Err(e) => {
+                    gui.popup = PopupState::Message {
+                        title: "Create worktree error".to_string(),
+                        message: format!("{}", e),
+                        kind: crate::gui::popup::MessageKind::Error,
+                    };
+                }
             }
             Ok(())
         }),
