@@ -753,23 +753,12 @@ fn create_worktree_from_branch(gui: &mut Gui) -> Result<()> {
                         let created_display = created_path.display().to_string();
                         let b_name = branch_name.clone();
 
-                        gui.popup = PopupState::Confirm {
-                            title: "Switch to worktree".to_string(),
-                            message: format!(
-                                "Worktree created for '{}' at:\n{}\n\nOpen lazygitrs in new worktree?",
-                                b_name, created_display
-                            ),
-                            on_confirm: Box::new(move |gui| {
-                                let exe =
-                                    std::env::current_exe().unwrap_or_else(|_| "lazygitrs".into());
-                                std::process::Command::new(exe)
-                                    .arg("--path")
-                                    .arg(&created_display)
-                                    .spawn()?;
-                                gui.should_quit = true;
-                                Ok(())
-                            }),
-                        };
+                        crate::gui::controller::worktrees::show_worktree_action_menu(
+                            gui,
+                            &b_name,
+                            &created_display,
+                            "Worktree created",
+                        );
                     }
                     Err(e) => {
                         gui.popup = PopupState::Message {

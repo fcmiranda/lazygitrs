@@ -2066,7 +2066,12 @@ fn render_status_bar(
                 hints.extend([("n", "new"), ("d", "delete"), ("P", "push")]);
             }
             ContextId::Worktrees => {
-                hints.extend([("space", "switch"), ("n", "new"), ("d", "remove")]);
+                hints.extend([
+                    ("space", "switch"),
+                    ("t", "tmux"),
+                    ("n", "new"),
+                    ("d", "remove"),
+                ]);
             }
             ContextId::Submodules => {
                 hints.extend([

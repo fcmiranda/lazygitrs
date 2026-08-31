@@ -3,12 +3,17 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::config::KeybindingConfig;
 use crate::gui::Gui;
-use crate::gui::popup::{PopupState, make_textarea};
+use crate::gui::popup::{MenuItem, MessageKind, PopupState, make_textarea};
 
 pub fn handle_key(gui: &mut Gui, key: KeyEvent, _keybindings: &KeybindingConfig) -> Result<()> {
-    // Switch to worktree
+    // Switch to worktree (action menu)
     if key.code == KeyCode::Char(' ') {
         return switch_worktree(gui);
+    }
+
+    // Direct open in Tmux session
+    if key.code == KeyCode::Char('t') {
+        return open_selected_in_tmux(gui);
     }
 
     // Create new worktree
@@ -24,6 +29,92 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent, _keybindings: &KeybindingConfig)
     Ok(())
 }
 
+pub fn open_in_tmux_session(path: &str) -> Result<()> {
+    let target_path = path.to_string();
+    let session_name = std::path::Path::new(path)
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "worktree".to_string());
+
+    // 1. Try sesh connect if sesh is available
+    let sesh_status = std::process::Command::new("sesh")
+        .arg("connect")
+        .arg(&target_path)
+        .status();
+
+    if let Ok(status) = sesh_status {
+        if status.success() {
+            return Ok(());
+        }
+    }
+
+    // 2. Fallback to tmux commands
+    if std::env::var_os("TMUX").is_some() {
+        let _ = std::process::Command::new("tmux")
+            .args(["new-session", "-d", "-s", &session_name, "-c", &target_path])
+            .status();
+        let _ = std::process::Command::new("tmux")
+            .args(["switch-client", "-t", &session_name])
+            .status();
+    } else {
+        let _ = std::process::Command::new("tmux")
+            .args(["new-session", "-A", "-s", &session_name, "-c", &target_path])
+            .spawn();
+    }
+    Ok(())
+}
+
+pub fn show_worktree_action_menu(gui: &mut Gui, branch_name: &str, path: &str, title_prefix: &str) {
+    let b_name = branch_name.to_string();
+    let p_for_tmux = path.to_string();
+    let p_for_exe = path.to_string();
+
+    let items = vec![
+        MenuItem {
+            label: "Open in new Tmux session".to_string(),
+            description: format!("Create/switch Tmux session for {}", path),
+            key: Some("t".to_string()),
+            action: Some(Box::new(move |gui| {
+                let _ = open_in_tmux_session(&p_for_tmux);
+                gui.popup = PopupState::None;
+                gui.needs_refresh = true;
+                Ok(())
+            })),
+        },
+        MenuItem {
+            label: "Open lazygitrs in current terminal".to_string(),
+            description: "Launch new lazygitrs instance here".to_string(),
+            key: Some("o".to_string()),
+            action: Some(Box::new(move |gui| {
+                let exe = std::env::current_exe().unwrap_or_else(|_| "lazygitrs".into());
+                std::process::Command::new(exe)
+                    .arg("--path")
+                    .arg(&p_for_exe)
+                    .spawn()?;
+                gui.should_quit = true;
+                Ok(())
+            })),
+        },
+        MenuItem {
+            label: "Stay in current worktree".to_string(),
+            description: "Keep current session active".to_string(),
+            key: Some("s".to_string()),
+            action: Some(Box::new(move |gui| {
+                gui.popup = PopupState::None;
+                gui.needs_refresh = true;
+                Ok(())
+            })),
+        },
+    ];
+
+    gui.popup = PopupState::Menu {
+        title: format!("{}: {}", title_prefix, b_name),
+        items,
+        selected: 0,
+        loading_index: None,
+    };
+}
+
 fn switch_worktree(gui: &mut Gui) -> Result<()> {
     let selected = gui.context_mgr.selected_active();
     let model = gui.model.lock().unwrap();
@@ -35,23 +126,20 @@ fn switch_worktree(gui: &mut Gui) -> Result<()> {
         let branch = wt.branch.clone();
         drop(model);
 
-        gui.popup = PopupState::Confirm {
-            title: "Switch worktree".to_string(),
-            message: format!(
-                "Open lazygitrs in worktree '{}' ({})?\nThis will launch a new instance.",
-                branch, path
-            ),
-            on_confirm: Box::new(move |gui| {
-                // Spawn a new lazygitrs instance in the worktree directory
-                let exe = std::env::current_exe().unwrap_or_else(|_| "lazygitrs".into());
-                std::process::Command::new(exe)
-                    .arg("--path")
-                    .arg(&path)
-                    .spawn()?;
-                gui.should_quit = true;
-                Ok(())
-            }),
-        };
+        show_worktree_action_menu(gui, &branch, &path, "Switch worktree");
+    }
+    Ok(())
+}
+
+fn open_selected_in_tmux(gui: &mut Gui) -> Result<()> {
+    let selected = gui.context_mgr.selected_active();
+    let model = gui.model.lock().unwrap();
+    if let Some(wt) = model.worktrees.get(selected) {
+        let path = wt.path.clone();
+        drop(model);
+
+        open_in_tmux_session(&path)?;
+        gui.needs_refresh = true;
     }
     Ok(())
 }
@@ -79,30 +167,14 @@ fn create_worktree(gui: &mut Gui) -> Result<()> {
                     let path_display = target_path.display().to_string();
                     let branch_name = branch.to_string();
 
-                    // Prompt to switch to newly created worktree
-                    gui.popup = PopupState::Confirm {
-                        title: "Switch to worktree".to_string(),
-                        message: format!(
-                            "Worktree created for '{}' at:\n{}\n\nOpen lazygitrs in new worktree?",
-                            branch_name, path_display
-                        ),
-                        on_confirm: Box::new(move |gui| {
-                            let exe =
-                                std::env::current_exe().unwrap_or_else(|_| "lazygitrs".into());
-                            std::process::Command::new(exe)
-                                .arg("--path")
-                                .arg(&path_display)
-                                .spawn()?;
-                            gui.should_quit = true;
-                            Ok(())
-                        }),
-                    };
+                    // Prompt action menu with Tmux option
+                    show_worktree_action_menu(gui, &branch_name, &path_display, "Worktree created");
                 }
                 Err(e) => {
                     gui.popup = PopupState::Message {
                         title: "Create worktree error".to_string(),
                         message: format!("{}", e),
-                        kind: crate::gui::popup::MessageKind::Error,
+                        kind: MessageKind::Error,
                     };
                 }
             }

@@ -5053,6 +5053,10 @@ impl Gui {
                         description: "Switch to worktree".into(),
                     },
                     HelpEntry {
+                        key: "t".into(),
+                        description: "Open in Tmux session".into(),
+                    },
+                    HelpEntry {
                         key: "n".into(),
                         description: "Create worktree".into(),
                     },
