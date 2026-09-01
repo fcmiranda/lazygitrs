@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::sync::Arc;
 
 use anyhow::Result;
 use crossterm::event::KeyEvent;
@@ -7,21 +8,21 @@ use crate::config::KeybindingConfig;
 use crate::config::keybindings::{matches_key, parse_key};
 use crate::git::rebase::RebaseAction;
 use crate::gui::Gui;
-use crate::gui::popup::{MenuItem, PopupState, make_textarea};
+use crate::gui::popup::{
+    BodySoftWrap, ChecklistItem, CommitInputFocus, CommitInputKind, ListPickerItem, MenuItem,
+    MessageKind, PopupState, make_textarea,
+};
+use crate::model::Branch;
 use crate::os::platform::Platform;
 
 pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) -> Result<()> {
-    // Esc: cancel range select first, then clear branch filter, then clear clipboard
+    // Esc: cancel range select first, then clear clipboard
     if key.code == crossterm::event::KeyCode::Esc {
         if gui.range_select_anchor.is_some() {
             gui.range_select_anchor = None;
             return Ok(());
         }
-        if !gui.commit_branch_filter.is_empty() {
-            gui.commit_branch_filter.clear();
-            gui.needs_refresh = true;
-            return Ok(());
-        }
+
         if !gui.cherry_pick_clipboard.is_empty() {
             gui.cherry_pick_clipboard.clear();
             return Ok(());
@@ -131,9 +132,9 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent, keybindings: &KeybindingConfig) 
         return copy_to_clipboard_menu(gui);
     }
 
-    // Filter by branch
+    // Open commit filtering menu
     if matches_key(key, &keybindings.commits.open_log_menu) {
-        return show_branch_filter_menu(gui);
+        return show_filtering_menu(gui);
     }
 
     // Interactive rebase
@@ -183,28 +184,41 @@ fn reword_commit(gui: &mut Gui) -> Result<()> {
     let model = gui.model.lock().unwrap();
     if let Some(commit) = model.commits.get(selected) {
         let hash = commit.hash.clone();
-        let current_msg = commit.name.clone();
+        let old_message = gui.git.commit_message_full(&hash)?;
+        let (summary, body) = super::super::split_commit_message(&old_message);
         let is_head = selected == 0;
         drop(model);
 
-        let mut ta = make_textarea("");
-        ta.insert_str(&current_msg);
-        gui.popup = PopupState::Input {
-            title: "Reword commit".to_string(),
-            textarea: ta,
+        let mut summary_textarea = crate::gui::popup::make_commit_summary_textarea();
+        summary_textarea.insert_str(&summary);
+        let mut body_textarea = crate::gui::popup::make_commit_body_textarea();
+        let body_state = BodySoftWrap::from_text(body);
+        body_state.render_into(&mut body_textarea, gui.commit_body_wrap_width());
+
+        gui.popup = PopupState::CommitInput {
+            kind: CommitInputKind::Reword,
+            summary_textarea,
+            body_textarea,
+            body_state,
+            focus: CommitInputFocus::Summary,
             on_confirm: Box::new(move |gui, message| {
                 if !message.is_empty() {
+                    let message = message.to_string();
+                    let hash = hash.clone();
                     if is_head {
-                        gui.git.reword_commit(&hash, message)?;
+                        gui.start_remote_op("Reword", "Rewording commit...", move |git| {
+                            git.reword_commit(&hash, &message)?;
+                            Ok(())
+                        });
                     } else {
-                        gui.git.reword_commit_rebase(&hash, message)?;
+                        gui.start_remote_op("Reword", "Rewording commit...", move |git| {
+                            git.reword_commit_rebase(&hash, &message)?;
+                            Ok(())
+                        });
                     }
-                    gui.needs_refresh = true;
                 }
                 Ok(())
             }),
-            is_commit: false,
-            confirm_focused: false,
         };
     }
     Ok(())
@@ -216,50 +230,71 @@ fn show_reset_menu(gui: &mut Gui) -> Result<()> {
     if let Some(commit) = model.commits.get(selected) {
         let hash = commit.hash.clone();
         drop(model);
-
-        let h1 = hash.clone();
-        let h2 = hash.clone();
-        let h3 = hash.clone();
-
-        gui.popup = PopupState::Menu {
-            title: "Reset to this commit".to_string(),
-            items: vec![
-                MenuItem {
-                    label: "Soft reset".to_string(),
-                    description: "Keep changes staged".to_string(),
-                    key: Some("s".to_string()),
-                    action: Some(Box::new(move |gui| {
-                        gui.git.reset_to_commit(&h1, "--soft")?;
-                        gui.needs_refresh = true;
-                        Ok(())
-                    })),
-                },
-                MenuItem {
-                    label: "Mixed reset".to_string(),
-                    description: "Keep changes unstaged".to_string(),
-                    key: Some("m".to_string()),
-                    action: Some(Box::new(move |gui| {
-                        gui.git.reset_to_commit(&h2, "--mixed")?;
-                        gui.needs_refresh = true;
-                        Ok(())
-                    })),
-                },
-                MenuItem {
-                    label: "Hard reset".to_string(),
-                    description: "Discard all changes".to_string(),
-                    key: Some("h".to_string()),
-                    action: Some(Box::new(move |gui| {
-                        gui.git.reset_to_commit(&h3, "--hard")?;
-                        gui.needs_refresh = true;
-                        Ok(())
-                    })),
-                },
-            ],
-            selected: 0,
-            loading_index: None,
-        };
+        return show_reset_menu_for_ref(gui, &hash);
     }
     Ok(())
+}
+
+/// Shared soft/mixed/hard reset options for a branch, tag, or commit ref.
+/// Used by contextual `g` handlers and the global `G` reset picker.
+pub fn show_reset_menu_for_ref(gui: &mut Gui, ref_name: &str) -> Result<()> {
+    let ref_name = ref_name.trim();
+    if ref_name.is_empty() {
+        return Ok(());
+    }
+
+    let display = reset_ref_display(ref_name);
+    let r1 = ref_name.to_string();
+    let r2 = ref_name.to_string();
+    let r3 = ref_name.to_string();
+
+    gui.popup = PopupState::Menu {
+        title: format!("Reset current branch to {}", display),
+        items: vec![
+            MenuItem {
+                label: "Soft reset".to_string(),
+                description: "Keep changes staged".to_string(),
+                key: Some("s".to_string()),
+                action: Some(Box::new(move |gui| {
+                    gui.git.reset_to_commit(&r1, "--soft")?;
+                    gui.needs_refresh = true;
+                    Ok(())
+                })),
+            },
+            MenuItem {
+                label: "Mixed reset".to_string(),
+                description: "Keep changes unstaged".to_string(),
+                key: Some("m".to_string()),
+                action: Some(Box::new(move |gui| {
+                    gui.git.reset_to_commit(&r2, "--mixed")?;
+                    gui.needs_refresh = true;
+                    Ok(())
+                })),
+            },
+            MenuItem {
+                label: "Hard reset".to_string(),
+                description: "Discard all changes".to_string(),
+                key: Some("h".to_string()),
+                action: Some(Box::new(move |gui| {
+                    gui.git.reset_to_commit(&r3, "--hard")?;
+                    gui.needs_refresh = true;
+                    Ok(())
+                })),
+            },
+        ],
+        selected: 0,
+        loading_index: None,
+    };
+    Ok(())
+}
+
+fn reset_ref_display(ref_name: &str) -> String {
+    // Shorten bare commit hashes for the menu title; keep branch/tag names intact.
+    if ref_name.len() >= 12 && ref_name.chars().all(|c| c.is_ascii_hexdigit()) {
+        ref_name.chars().take(7).collect()
+    } else {
+        ref_name.to_string()
+    }
 }
 
 fn cherry_pick_copy(gui: &mut Gui) -> Result<()> {
@@ -272,9 +307,17 @@ fn cherry_pick_copy(gui: &mut Gui) -> Result<()> {
 
     let model = gui.model.lock().unwrap();
     let mut added = 0;
+    let mut removed = 0;
     for i in lo..=hi {
         if let Some(commit) = model.commits.get(i) {
-            if !gui.cherry_pick_clipboard.contains(&commit.hash) {
+            if let Some(index) = gui
+                .cherry_pick_clipboard
+                .iter()
+                .position(|hash| hash == &commit.hash)
+            {
+                gui.cherry_pick_clipboard.remove(index);
+                removed += 1;
+            } else {
                 gui.cherry_pick_clipboard.push(commit.hash.clone());
                 added += 1;
             }
@@ -286,14 +329,30 @@ fn cherry_pick_copy(gui: &mut Gui) -> Result<()> {
     gui.range_select_anchor = None;
 
     let n = gui.cherry_pick_clipboard.len();
-    gui.popup = PopupState::Message {
-        title: "Cherry-pick".to_string(),
-        message: format!(
+    let message = match (added, removed) {
+        (0, removed) => format!(
+            "Uncopied {} commit{} ({} total)",
+            removed,
+            if removed == 1 { "" } else { "s" },
+            n,
+        ),
+        (added, 0) => format!(
             "Copied {} commit{} ({} total)",
             added,
             if added == 1 { "" } else { "s" },
             n,
         ),
+        (added, removed) => format!(
+            "Copied {} and uncopied {} commit{} ({} total)",
+            added,
+            removed,
+            if added + removed == 1 { "" } else { "s" },
+            n,
+        ),
+    };
+    gui.popup = PopupState::Message {
+        title: "Cherry-pick".to_string(),
+        message,
         kind: crate::gui::popup::MessageKind::Info,
     };
     Ok(())
@@ -320,6 +379,14 @@ fn paste_commits(gui: &mut Gui) -> Result<()> {
 
     let n = gui.cherry_pick_clipboard.len();
     let mut hashes = gui.cherry_pick_clipboard.clone();
+    let target_branch = {
+        let model = gui.model.lock().unwrap();
+        if model.head_branch_name.is_empty() {
+            "detached HEAD".to_string()
+        } else {
+            format!("branch '{}'", model.head_branch_name)
+        }
+    };
     // The clipboard stores commits newest-first (matching the visual list order).
     // git cherry-pick applies commits in argument order, so we must reverse to
     // apply oldest-first and preserve the intended history.
@@ -328,9 +395,10 @@ fn paste_commits(gui: &mut Gui) -> Result<()> {
     gui.popup = PopupState::Confirm {
         title: "Cherry-pick".to_string(),
         message: format!(
-            "Cherry-pick {} copied commit{} onto this branch?",
+            "Cherry-pick {} copied commit{} onto {}?",
             n,
-            if n == 1 { "" } else { "s" }
+            if n == 1 { "" } else { "s" },
+            target_branch,
         ),
         on_confirm: Box::new(move |gui| {
             gui.git.cherry_pick(&hashes)?;
@@ -443,9 +511,12 @@ fn drop_commit(gui: &mut Gui) -> Result<()> {
 
 /// Open the Interactive Rebase planner with the user's current commit
 /// selection pre-marked with `action`. Selection comes from range-select
-/// (`v`) when active; otherwise it's just the focused commit. The rebase
-/// base is the parent of the oldest selected commit, so unselected newer
-/// commits are kept as `pick`.
+/// (`v`) when active; otherwise it's just the focused commit.
+///
+/// The rebase base is the *real first-parent* of the oldest selected commit
+/// (not `commits[idx+1]`). The commits panel is loaded with `git log --all`,
+/// so adjacent rows are not necessarily related — using list index as parent
+/// previously marked/stopped on the wrong commit.
 fn apply_action_to_selection(gui: &mut Gui, action: RebaseAction) -> Result<()> {
     let selected = gui.context_mgr.selected_active();
     let (lo, hi) = if let Some(anchor) = gui.range_select_anchor {
@@ -456,31 +527,113 @@ fn apply_action_to_selection(gui: &mut Gui, action: RebaseAction) -> Result<()> 
 
     let model = gui.model.lock().unwrap();
 
-    if model.commits.get(lo).is_none() {
+    if model.commits.get(lo).is_none() || model.commits.get(hi).is_none() {
         return Ok(());
     }
 
-    let base_idx = hi + 1;
-    let base_commit = match model.commits.get(base_idx) {
-        Some(c) => c.clone(),
-        None => {
+    // Newest-first list: higher index = older. Collect selected hashes and
+    // resolve the oldest selected commit's real first-parent as the base.
+    let selected_hashes: HashSet<String> = model.commits[lo..=hi]
+        .iter()
+        .map(|c| c.hash.clone())
+        .collect();
+    let oldest = &model.commits[hi];
+    let base_hash = match oldest.parents.first() {
+        Some(p) if !p.is_empty() => p.clone(),
+        _ => {
             drop(model);
             gui.popup = PopupState::Message {
                 title: "Interactive rebase".to_string(),
-                message: "Cannot rebase past the oldest visible commit.".to_string(),
+                message: "Cannot rebase the root commit (no parent).".to_string(),
                 kind: crate::gui::popup::MessageKind::Error,
             };
             return Ok(());
         }
     };
-
-    let commits_to_rebase: Vec<_> = model.commits[0..=hi].to_vec();
     let branch_name = model.head_branch_name.clone();
-    let selected_hashes: HashSet<String> = model.commits[lo..=hi]
+
+    // Prefer the model copy of the base when present; otherwise synthesize.
+    let base_from_model = model
+        .commits
         .iter()
-        .map(|c| c.hash.clone())
-        .collect();
+        .find(|c| {
+            c.hash == base_hash || base_hash.starts_with(&c.hash) || c.hash.starts_with(&base_hash)
+        })
+        .cloned();
     drop(model);
+
+    // Only include commits reachable from HEAD above the base. This excludes
+    // unrelated `--all` commits that happen to sit between selected rows.
+    let rebase_hashes = match gui.git.rebase_commit_range(&base_hash) {
+        Ok(h) => h,
+        Err(e) => {
+            gui.popup = PopupState::Message {
+                title: "Interactive rebase".to_string(),
+                message: format!("Failed to determine rebase range: {e}"),
+                kind: crate::gui::popup::MessageKind::Error,
+            };
+            return Ok(());
+        }
+    };
+    if rebase_hashes.is_empty() {
+        gui.popup = PopupState::Message {
+            title: "Interactive rebase".to_string(),
+            message: "Nothing to rebase above the selected commit.".to_string(),
+            kind: crate::gui::popup::MessageKind::Error,
+        };
+        return Ok(());
+    }
+
+    // Resolve each hash in the HEAD range to a Commit. Prefer the already-
+    // loaded model entry; fall back to git metadata for commits outside the
+    // currently loaded page (pagination / deep history).
+    let model_commits = {
+        let model = gui.model.lock().unwrap();
+        model.commits.clone()
+    };
+    let mut commits_to_rebase = Vec::with_capacity(rebase_hashes.len());
+    for hash in &rebase_hashes {
+        if let Some(c) = model_commits.iter().find(|c| &c.hash == hash) {
+            commits_to_rebase.push(c.clone());
+        } else {
+            let msg = gui.git.commit_subject(hash).unwrap_or_default();
+            let author = gui.git.commit_author_name(hash).unwrap_or_default();
+            commits_to_rebase.push(synthetic_commit(hash, &msg, &author));
+        }
+    }
+
+    if commits_to_rebase.is_empty() {
+        gui.popup = PopupState::Message {
+            title: "Interactive rebase".to_string(),
+            message: "Selected commit is not reachable from HEAD — cannot rebase it.".to_string(),
+            kind: crate::gui::popup::MessageKind::Error,
+        };
+        return Ok(());
+    }
+
+    // Ensure at least one selected commit is in the range (guards against
+    // selecting a commit that is not an ancestor of HEAD).
+    if !commits_to_rebase
+        .iter()
+        .any(|c| selected_hashes.contains(&c.hash))
+    {
+        gui.popup = PopupState::Message {
+            title: "Interactive rebase".to_string(),
+            message: "Selected commit is not on the current branch tip — cannot rebase it."
+                .to_string(),
+            kind: crate::gui::popup::MessageKind::Error,
+        };
+        return Ok(());
+    }
+
+    let base_commit = match base_from_model {
+        Some(c) => c,
+        None => {
+            let msg = gui.git.commit_subject(&base_hash).unwrap_or_default();
+            let author = gui.git.commit_author_name(&base_hash).unwrap_or_default();
+            synthetic_commit(&base_hash, &msg, &author)
+        }
+    };
 
     gui.range_select_anchor = None;
 
@@ -493,9 +646,35 @@ fn apply_action_to_selection(gui: &mut Gui, action: RebaseAction) -> Result<()> 
         }
     }
 
-    gui.rebase_mode.selected = lo;
+    // Focus the first (newest-first) selected entry in the planner.
+    if let Some(idx) = gui
+        .rebase_mode
+        .entries
+        .iter()
+        .position(|e| selected_hashes.contains(&e.hash))
+    {
+        gui.rebase_mode.selected = idx;
+    }
 
     Ok(())
+}
+
+fn synthetic_commit(hash: &str, message: &str, author: &str) -> crate::model::Commit {
+    use crate::model::commit::{CommitStatus, Divergence};
+    crate::model::Commit {
+        hash: hash.to_string(),
+        name: message.to_string(),
+        status: CommitStatus::Pushed,
+        action: String::new(),
+        tags: Vec::new(),
+        refs: Vec::new(),
+        extra_info: String::new(),
+        author_name: author.to_string(),
+        author_email: String::new(),
+        unix_timestamp: 0,
+        parents: Vec::new(),
+        divergence: Divergence::None,
+    }
 }
 
 fn move_commit_up(gui: &mut Gui) -> Result<()> {
@@ -562,8 +741,10 @@ fn amend_to_commit(gui: &mut Gui) -> Result<()> {
                 title: "Amend".to_string(),
                 message: "Amend staged changes to HEAD commit?".to_string(),
                 on_confirm: Box::new(|gui| {
-                    gui.git.amend_commit()?;
-                    gui.needs_refresh = true;
+                    gui.start_remote_op("Amend", "Amending commit...", |git| {
+                        git.amend_commit()?;
+                        Ok(())
+                    });
                     Ok(())
                 }),
             };
@@ -577,9 +758,12 @@ fn amend_to_commit(gui: &mut Gui) -> Result<()> {
                 title: "Amend to commit".to_string(),
                 message: format!("Amend staged changes to commit {}?", short),
                 on_confirm: Box::new(move |gui| {
-                    gui.git.create_fixup_commit(&hash)?;
-                    gui.git.rebase_autosquash(&format!("{}^", hash))?;
-                    gui.needs_refresh = true;
+                    let hash = hash.clone();
+                    gui.start_remote_op("Amend", "Amending commit...", move |git| {
+                        git.create_fixup_commit(&hash)?;
+                        git.rebase_autosquash(&format!("{}^", hash))?;
+                        Ok(())
+                    });
                     Ok(())
                 }),
             };
@@ -594,19 +778,69 @@ fn checkout_commit(gui: &mut Gui) -> Result<()> {
     if let Some(commit) = model.commits.get(selected) {
         let hash = commit.hash.clone();
         let short = commit.short_hash().to_string();
+        let branch_names = branches_at_commit(&hash, &model.branches, &model.head_branch_name);
         drop(model);
 
-        gui.popup = PopupState::Confirm {
-            title: "Checkout commit".to_string(),
-            message: format!("Checkout commit {}? (detached HEAD)", short),
-            on_confirm: Box::new(move |gui| {
+        let mut items = vec![MenuItem {
+            label: format!("Checkout commit {} as detached head", short),
+            description: String::new(),
+            key: Some("d".to_string()),
+            action: Some(Box::new(move |gui| {
                 gui.git.checkout_branch(&hash)?;
                 gui.needs_refresh = true;
                 Ok(())
-            }),
+            })),
+        }];
+
+        if branch_names.is_empty() {
+            items.push(MenuItem {
+                label: "Checkout branch".to_string(),
+                description: "No branches found at selected commit.".to_string(),
+                key: Some("1".to_string()),
+                action: None,
+            });
+        } else {
+            items.extend(
+                branch_names
+                    .into_iter()
+                    .enumerate()
+                    .map(|(index, name)| MenuItem {
+                        label: format!("Checkout branch '{}'", name),
+                        description: String::new(),
+                        key: checkout_branch_key(index),
+                        action: Some(Box::new(move |gui| {
+                            gui.git.checkout_branch(&name)?;
+                            gui.needs_refresh = true;
+                            Ok(())
+                        })),
+                    }),
+            );
+        }
+
+        gui.popup = PopupState::Menu {
+            title: "Checkout branch or commit".to_string(),
+            items,
+            selected: 0,
+            loading_index: None,
         };
     }
     Ok(())
+}
+
+fn branches_at_commit(commit_hash: &str, branches: &[Branch], current_branch: &str) -> Vec<String> {
+    branches
+        .iter()
+        .filter(|branch| {
+            branch.name != current_branch
+                && !branch.hash.is_empty()
+                && (branch.hash == commit_hash || commit_hash.starts_with(&branch.hash))
+        })
+        .map(|branch| branch.name.clone())
+        .collect()
+}
+
+fn checkout_branch_key(index: usize) -> Option<String> {
+    (index < 9).then(|| (index + 1).to_string())
 }
 
 fn open_commit_in_browser_menu(gui: &mut Gui) -> Result<()> {
@@ -783,6 +1017,321 @@ pub fn copy_commit_to_clipboard_menu_for(
     }
 }
 
+pub fn show_files_filtering_menu(gui: &mut Gui) -> Result<()> {
+    let selected = gui.context_mgr.selected_active();
+    let selected_path = if gui.show_file_tree {
+        gui.file_tree_nodes
+            .get(selected)
+            .map(|node| node.path.clone())
+    } else {
+        let model = gui.model.lock().unwrap();
+        model
+            .files
+            .get(selected)
+            .map(|file| file.current_path().to_string())
+    };
+
+    show_file_path_filtering_menu(gui, selected_path)
+}
+
+pub fn show_file_path_filtering_menu(gui: &mut Gui, selected_path: Option<String>) -> Result<()> {
+    let mut items = Vec::new();
+    if let Some(path) = selected_path {
+        let label = format!("Filter by path: '{path}'");
+        items.push(MenuItem {
+            label,
+            description: String::new(),
+            key: None,
+            action: Some(Box::new(move |gui| {
+                gui.commit_path_filter = Some(path.clone());
+                apply_commit_filters_and_focus(gui)
+            })),
+        });
+    }
+    items.push(filter_menu_item(
+        &path_filter_menu_label(gui),
+        show_path_filter_input,
+    ));
+    items.push(filter_menu_item(
+        &author_filter_menu_label(gui),
+        show_author_filter_input,
+    ));
+
+    if gui.commit_path_filter.is_some() || !gui.commit_author_filter.is_empty() {
+        items.push(filter_menu_item("Reset filters", |gui| {
+            gui.commit_path_filter = None;
+            gui.commit_author_filter.clear();
+            apply_commit_filters_and_focus(gui)
+        }));
+    }
+
+    gui.popup = PopupState::Menu {
+        title: filter_commits_menu_title(gui),
+        items,
+        selected: 0,
+        loading_index: None,
+    };
+    Ok(())
+}
+
+pub fn show_filtering_menu(gui: &mut Gui) -> Result<()> {
+    use crate::gui::context::ContextId;
+
+    let active = gui.context_mgr.active();
+    let selected = gui.context_mgr.selected_active();
+    let (selected_author, selected_branch) = {
+        let model = gui.model.lock().unwrap();
+        match active {
+            ContextId::Commits => {
+                let author = model
+                    .commits
+                    .get(selected)
+                    .map(|commit| format!("{} <{}>", commit.author_name, commit.author_email));
+                let branch = model
+                    .commits
+                    .get(selected)
+                    .and_then(|commit| {
+                        model
+                            .branches
+                            .iter()
+                            .find(|branch| branch.hash == commit.hash)
+                    })
+                    .map(|branch| branch.name.clone());
+                (author, branch)
+            }
+            ContextId::BranchCommits => {
+                let author = model
+                    .sub_commits
+                    .get(selected)
+                    .map(|commit| format!("{} <{}>", commit.author_name, commit.author_email));
+                let branch = matches!(
+                    gui.sub_commits_parent_context,
+                    ContextId::Branches | ContextId::RemoteBranches
+                )
+                .then(|| gui.branch_commits_name.clone())
+                .filter(|name| !name.is_empty());
+                (author, branch)
+            }
+            ContextId::Branches => (
+                None,
+                model
+                    .branches
+                    .get(selected)
+                    .map(|branch| branch.name.clone()),
+            ),
+            _ => (None, None),
+        }
+    };
+
+    let mut items = Vec::new();
+    if let Some(author) = selected_author {
+        let label = format!("Filter by author: '{author}'");
+        items.push(MenuItem {
+            label,
+            description: String::new(),
+            key: None,
+            action: Some(Box::new(move |gui| {
+                apply_author_filters(gui, vec![author.clone()])?;
+                gui.context_mgr
+                    .set_active(crate::gui::context::ContextId::Commits);
+                Ok(())
+            })),
+        });
+    }
+    if let Some(branch) = selected_branch {
+        let label = format!("Filter by branch: '{branch}'");
+        items.push(MenuItem {
+            label,
+            description: String::new(),
+            key: None,
+            action: Some(Box::new(move |gui| {
+                gui.commit_branch_filter = vec![branch.clone()];
+                apply_commit_filters_and_focus(gui)
+            })),
+        });
+    }
+    items.push(filter_menu_item(
+        &path_filter_menu_label(gui),
+        show_path_filter_input,
+    ));
+    items.push(filter_menu_item(
+        &branch_filter_menu_label(gui),
+        show_branch_filter_menu,
+    ));
+    items.push(filter_menu_item(
+        &author_filter_menu_label(gui),
+        show_author_filter_input,
+    ));
+
+    if gui.commit_path_filter.is_some()
+        || !gui.commit_author_filter.is_empty()
+        || !gui.commit_branch_filter.is_empty()
+    {
+        items.push(filter_menu_item("Reset filters", |gui| {
+            gui.commit_path_filter = None;
+            gui.commit_author_filter.clear();
+            gui.commit_branch_filter.clear();
+            apply_commit_filters_and_focus(gui)
+        }));
+    }
+
+    gui.popup = PopupState::Menu {
+        title: filter_commits_menu_title(gui),
+        items,
+        selected: 0,
+        loading_index: None,
+    };
+    Ok(())
+}
+
+fn show_path_filter_input(gui: &mut Gui) -> Result<()> {
+    // Don't block the UI on `git ls-files` / log --name-only — load async.
+    if gui.filter_paths_rx.is_some() {
+        return Ok(());
+    }
+    let (tx, rx) = std::sync::mpsc::channel();
+    gui.filter_paths_rx = Some(rx);
+    gui.popup = PopupState::Message {
+        title: "Filter by path".to_string(),
+        message: "Loading paths…".to_string(),
+        kind: MessageKind::Info,
+    };
+    let git = Arc::clone(&gui.git);
+    std::thread::spawn(move || {
+        let _ = tx.send(git.load_commit_filter_paths());
+    });
+    Ok(())
+}
+
+fn show_author_filter_input(gui: &mut Gui) -> Result<()> {
+    let authors = {
+        let model = gui.model.lock().unwrap();
+        model
+            .commit_filter_authors
+            .values()
+            .map(|author| format!("{} <{}>", author.name, author.email))
+            .collect::<Vec<_>>()
+    };
+    let mut authors = authors;
+    authors.sort_by_key(|author| author.to_lowercase());
+    let selected_authors = &gui.commit_author_filter;
+    let items = authors
+        .into_iter()
+        .map(|author| ChecklistItem {
+            checked: selected_authors.contains(&author),
+            label: author,
+            is_free_entry: false,
+        })
+        .collect();
+    gui.popup = PopupState::Checklist {
+        title: "Filter by author".to_string(),
+        items,
+        selected: 0,
+        search_textarea: crate::gui::popup::make_checklist_search_textarea(),
+        free_entry_category: Some("[author]".to_string()),
+        on_confirm: Box::new(|gui, authors| apply_author_filters(gui, authors)),
+    };
+    Ok(())
+}
+
+fn apply_author_filters(gui: &mut Gui, authors: Vec<String>) -> Result<()> {
+    gui.commit_author_filter = authors
+        .into_iter()
+        .map(|author| author.trim().to_string())
+        .filter(|author| !author.is_empty())
+        .collect();
+    apply_commit_filters_and_focus(gui)
+}
+
+pub(crate) fn apply_commit_filters_and_focus(gui: &mut Gui) -> Result<()> {
+    apply_commit_filters(gui)?;
+    gui.context_mgr
+        .set_active(crate::gui::context::ContextId::Commits);
+    Ok(())
+}
+
+pub(crate) fn nonempty_for_filter(value: &str) -> Option<String> {
+    nonempty(value)
+}
+
+fn nonempty(value: &str) -> Option<String> {
+    let value = value.trim();
+    (!value.is_empty()).then(|| value.to_string())
+}
+
+fn filter_menu_item(label: &str, action: fn(&mut Gui) -> Result<()>) -> MenuItem {
+    MenuItem {
+        label: label.to_string(),
+        description: String::new(),
+        key: None,
+        action: Some(Box::new(action)),
+    }
+}
+
+fn active_commit_filter_summary(gui: &Gui) -> Option<String> {
+    let mut parts = Vec::new();
+    if let Some(path) = gui
+        .commit_path_filter
+        .as_deref()
+        .filter(|path| !path.is_empty())
+    {
+        parts.push(format!("path: {path}"));
+    }
+    if !gui.commit_author_filter.is_empty() {
+        parts.push(format!("author: {}", gui.commit_author_filter.join(", ")));
+    }
+    if !gui.commit_branch_filter.is_empty() {
+        parts.push(format!("branch: {}", gui.commit_branch_filter.join(", ")));
+    }
+    if parts.is_empty() {
+        None
+    } else {
+        Some(parts.join(" | "))
+    }
+}
+
+fn filter_commits_menu_title(gui: &Gui) -> String {
+    match active_commit_filter_summary(gui) {
+        Some(summary) => format!("Filter commits ({summary})"),
+        None => "Filter commits".to_string(),
+    }
+}
+
+fn path_filter_menu_label(gui: &Gui) -> String {
+    match gui.commit_path_filter.as_deref() {
+        Some(path) if !path.is_empty() => format!("Enter path to filter by: '{path}'"),
+        _ => "Enter path to filter by".to_string(),
+    }
+}
+
+fn author_filter_menu_label(gui: &Gui) -> String {
+    if gui.commit_author_filter.is_empty() {
+        "Enter author to filter by".to_string()
+    } else {
+        format!(
+            "Enter author to filter by: '{}'",
+            gui.commit_author_filter.join(", ")
+        )
+    }
+}
+
+fn branch_filter_menu_label(gui: &Gui) -> String {
+    if gui.commit_branch_filter.is_empty() {
+        "Enter branches to filter by".to_string()
+    } else {
+        format!(
+            "Enter branches to filter by: '{}'",
+            gui.commit_branch_filter.join(", ")
+        )
+    }
+}
+
+fn apply_commit_filters(gui: &mut Gui) -> Result<()> {
+    // Scoped async commit reload — matches lazygit (no full model refresh).
+    gui.reload_filtered_commits_async();
+    Ok(())
+}
+
 fn show_branch_filter_menu(gui: &mut Gui) -> Result<()> {
     use crate::gui::popup::ChecklistItem;
 
@@ -792,34 +1341,28 @@ fn show_branch_filter_menu(gui: &mut Gui) -> Result<()> {
 
     let current_filter = &gui.commit_branch_filter;
 
-    let mut items = vec![ChecklistItem {
-        label: "<Clear Filter>".to_string(),
-        checked: current_filter.is_empty(),
-    }];
-
-    for name in branches {
-        let checked = current_filter.contains(&name);
-        items.push(ChecklistItem {
-            label: name,
-            checked,
-        });
-    }
+    let items: Vec<ChecklistItem> = branches
+        .into_iter()
+        .map(|name| {
+            let checked = current_filter.contains(&name);
+            ChecklistItem {
+                label: name,
+                checked,
+                is_free_entry: false,
+            }
+        })
+        .collect();
 
     gui.popup = PopupState::Checklist {
         title: "Filter commits by branch".to_string(),
         items,
         selected: 0,
-        search: String::new(),
+        search_textarea: crate::gui::popup::make_checklist_search_textarea(),
         on_confirm: Box::new(|gui: &mut Gui, checked: Vec<String>| {
-            let filtered_checked: Vec<String> = checked
-                .into_iter()
-                .filter(|val| val != "<Clear Filter>")
-                .collect();
-            gui.commit_branch_filter = filtered_checked;
-            gui.needs_refresh = true;
-            gui.context_mgr.set_selection(0);
-            Ok(())
+            gui.commit_branch_filter = checked;
+            apply_commit_filters_and_focus(gui)
         }),
+        free_entry_category: None,
     };
 
     Ok(())
@@ -935,4 +1478,77 @@ fn enter_interactive_rebase(gui: &mut Gui) -> Result<()> {
     drop(model);
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{branches_at_commit, checkout_branch_key, nonempty, reset_ref_display};
+    use crate::model::Branch;
+
+    fn branch(name: &str, hash: &str) -> Branch {
+        Branch {
+            name: name.to_string(),
+            hash: hash.to_string(),
+            recency: String::new(),
+            pushables: String::new(),
+            pullables: String::new(),
+            upstream: None,
+            head: false,
+        }
+    }
+
+    #[test]
+    fn finds_local_branches_at_commit_in_model_order() {
+        let branches = vec![
+            branch("other", "9999999"),
+            branch("feature", "b838172"),
+            branch("release", "b838172aabbccdd"),
+        ];
+
+        assert_eq!(
+            branches_at_commit("b838172aabbccdd", &branches, "main"),
+            vec!["feature", "release"]
+        );
+    }
+
+    #[test]
+    fn excludes_the_current_branch_and_empty_hashes() {
+        let branches = vec![
+            branch("main", "b838172"),
+            branch("feature", "b838172"),
+            branch("invalid", ""),
+        ];
+
+        assert_eq!(
+            branches_at_commit("b838172aabbccdd", &branches, "main"),
+            vec!["feature"]
+        );
+    }
+
+    #[test]
+    fn assigns_number_shortcuts_to_the_first_nine_branches() {
+        assert_eq!(checkout_branch_key(0).as_deref(), Some("1"));
+        assert_eq!(checkout_branch_key(8).as_deref(), Some("9"));
+        assert_eq!(checkout_branch_key(9), None);
+    }
+
+    #[test]
+    fn reset_ref_display_shortens_full_hashes_but_keeps_names() {
+        assert_eq!(reset_ref_display("b838172aabbccdd1122334455"), "b838172");
+        assert_eq!(reset_ref_display("main"), "main");
+        assert_eq!(reset_ref_display("v1.2.3"), "v1.2.3");
+        // Short hashes and non-hex strings are left as-is.
+        assert_eq!(reset_ref_display("b838172"), "b838172");
+        assert_eq!(reset_ref_display("feature/foo"), "feature/foo");
+    }
+
+    #[test]
+    fn trims_nonempty_filter_values() {
+        assert_eq!(nonempty("  src/main.rs  "), Some("src/main.rs".to_string()));
+    }
+
+    #[test]
+    fn treats_blank_filter_values_as_unset() {
+        assert_eq!(nonempty("   "), None);
+    }
 }

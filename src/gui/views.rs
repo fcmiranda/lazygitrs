@@ -11,7 +11,6 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use crate::config::{AppConfig, Theme};
-use crate::git::GitCommands;
 use crate::model::Model;
 use crate::model::commit::{Commit, CommitStat};
 use crate::model::file_tree::{CommitFileTreeNode, FileTreeNode};
@@ -20,7 +19,7 @@ use crate::pager::side_by_side::{self, DiffPanel, DiffPanelLayout, DiffViewLayou
 use super::ScreenMode;
 use super::context::{ContextId, ContextManager, SideWindow};
 use super::layout::{self, LayoutState};
-use super::popup::{CommitInputFocus, PopupState};
+use super::popup::{CommitInputFocus, PopupState, list_picker_matching_indices};
 use super::presentation;
 
 fn context_panel_key(ctx_id: ContextId) -> &'static str {
@@ -48,6 +47,7 @@ pub fn render(
     config: &AppConfig,
     theme: &Theme,
     diff_view: &mut DiffViewState,
+    commit_list_cache: &mut presentation::commits::CommitListCache,
     screen_mode: ScreenMode,
     show_file_tree: bool,
     file_tree_nodes: &[FileTreeNode],
@@ -57,7 +57,7 @@ pub fn render(
     search_textarea: Option<&tui_textarea::TextArea<'_>>,
     command_log: &[String],
     show_command_log: bool,
-    commit_branch_filter: &[String],
+    active_commit_filters: &[String],
     show_commit_file_tree: bool,
     commit_file_tree_nodes: &[CommitFileTreeNode],
     commit_files_collapsed_dirs: &HashSet<String>,
@@ -74,10 +74,7 @@ pub fn render(
     diff_loading: bool,
     diff_loading_show: bool,
     commit_stats: &Arc<Mutex<HashMap<String, CommitStat>>>,
-    commit_stats_inflight: &Arc<Mutex<std::collections::HashSet<String>>>,
     commit_messages: &Arc<Mutex<HashMap<String, String>>>,
-    commit_messages_inflight: &Arc<Mutex<std::collections::HashSet<String>>>,
-    git: &Arc<GitCommands>,
     commit_details_scroll: &mut u16,
     commit_details_scroll_hash: &mut String,
     show_commit_details: bool,
@@ -161,8 +158,8 @@ pub fn render(
                 build_commit_files_title(ctx_id, commit_files_hash, commit_files_message, theme)
             } else if ctx_id == ContextId::BranchCommits {
                 build_branch_commits_title(branch_commits_name, theme)
-            } else if ctx_id == ContextId::Commits && !commit_branch_filter.is_empty() {
-                let filter_label = commit_branch_filter.join(", ");
+            } else if ctx_id == ContextId::Commits && !active_commit_filters.is_empty() {
+                let filter_label = active_commit_filters.join(", ");
                 Line::from(vec![
                     Span::raw(" Commits "),
                     Span::styled(
@@ -197,6 +194,7 @@ pub fn render(
                             theme,
                             file_tree_nodes,
                             collapsed_dirs,
+                            fl.main_panel.width.saturating_sub(2) as usize,
                         );
                         render_list_ctx(
                             frame,
@@ -210,7 +208,11 @@ pub fn render(
                             ctx_id,
                         );
                     } else {
-                        let items = presentation::files::render_file_list(model, theme);
+                        let items = presentation::files::render_file_list(
+                            model,
+                            theme,
+                            fl.main_panel.width.saturating_sub(2) as usize,
+                        );
                         render_list_ctx(
                             frame,
                             fl.main_panel,
@@ -298,23 +300,21 @@ pub fn render(
                     );
                 }
                 ContextId::Commits => {
-                    let items = presentation::commits::render_commit_list(
-                        model,
-                        theme,
-                        cherry_pick_clipboard,
-                    );
                     let range = range_select_anchor.map(|a| (a.min(selected), a.max(selected)));
-                    render_list_with_range_ctx(
+                    render_commit_list_ctx(
                         frame,
                         fl.main_panel,
                         block,
-                        items,
+                        model,
+                        theme,
+                        cherry_pick_clipboard,
                         selected,
                         true,
-                        theme,
                         range,
                         ctx_mgr,
                         ctx_id,
+                        commit_list_cache,
+                        false,
                     );
                 }
                 ContextId::Stash => {
@@ -332,17 +332,20 @@ pub fn render(
                     );
                 }
                 ContextId::BranchCommits => {
-                    let items = presentation::commits::render_sub_commit_list(model, theme);
-                    render_list_ctx(
+                    render_commit_list_ctx(
                         frame,
                         fl.main_panel,
                         block,
-                        items,
+                        model,
+                        theme,
+                        &[],
                         selected,
                         true,
-                        theme,
+                        None,
                         ctx_mgr,
                         ctx_id,
+                        commit_list_cache,
+                        true,
                     );
                 }
                 ContextId::CommitFiles | ContextId::StashFiles | ContextId::BranchCommitFiles => {
@@ -352,6 +355,7 @@ pub fn render(
                             theme,
                             commit_file_tree_nodes,
                             commit_files_collapsed_dirs,
+                            fl.main_panel.width.saturating_sub(2) as usize,
                         );
                         render_list_ctx(
                             frame,
@@ -365,8 +369,11 @@ pub fn render(
                             ctx_id,
                         );
                     } else {
-                        let items =
-                            presentation::commit_files::render_commit_file_list(model, theme);
+                        let items = presentation::commit_files::render_commit_file_list(
+                            model,
+                            theme,
+                            fl.main_panel.width.saturating_sub(2) as usize,
+                        );
                         render_list_ctx(
                             frame,
                             fl.main_panel,
@@ -385,6 +392,12 @@ pub fn render(
                     frame.render_widget(widget, fl.main_panel);
                 }
             }
+            // Highlight `/` search matches on the full-mode list.
+            if let Some((query, _, _)) = search_state {
+                if !query.is_empty() {
+                    render_list_search_highlights(frame, fl.main_panel, query, theme);
+                }
+            }
         }
         // Full-mode details strip (sidebar-focused only) — compact, above sidebar.
         if let (Some(details_rect), Some(commit)) = (fl.commit_details_panel, current_commit) {
@@ -397,10 +410,7 @@ pub fn render(
                 details_rect,
                 commit,
                 commit_stats,
-                commit_stats_inflight,
                 commit_messages,
-                commit_messages_inflight,
-                git,
                 theme,
                 true,
                 commit_details_scroll,
@@ -414,6 +424,7 @@ pub fn render(
             theme,
             model,
             diff_focused,
+            !cherry_pick_clipboard.is_empty(),
         );
         // Render text selection highlight overlay and tooltip (must be before popup)
         render_selection_overlay(frame, diff_view, fl.main_panel, theme);
@@ -451,9 +462,9 @@ pub fn render(
         // Build title with tab indicators for multi-tab windows
         let title = if *window == SideWindow::Commits
             && ctx_id == ContextId::Commits
-            && !commit_branch_filter.is_empty()
+            && !active_commit_filters.is_empty()
         {
-            let filter_label = commit_branch_filter.join(", ");
+            let filter_label = active_commit_filters.join(", ");
             Line::from(vec![
                 Span::raw(" Commits "),
                 Span::styled(
@@ -486,12 +497,17 @@ pub fn render(
                         theme,
                         file_tree_nodes,
                         collapsed_dirs,
+                        rect.width.saturating_sub(2) as usize,
                     );
                     render_list_ctx(
                         frame, rect, block, items, selected, is_active, theme, ctx_mgr, ctx_id,
                     );
                 } else {
-                    let items = presentation::files::render_file_list(model, theme);
+                    let items = presentation::files::render_file_list(
+                        model,
+                        theme,
+                        rect.width.saturating_sub(2) as usize,
+                    );
                     render_list_ctx(
                         frame, rect, block, items, selected, is_active, theme, ctx_mgr, ctx_id,
                     );
@@ -551,6 +567,7 @@ pub fn render(
                             theme,
                             commit_file_tree_nodes,
                             commit_files_collapsed_dirs,
+                            rect.width.saturating_sub(2) as usize,
                         );
                         render_list_ctx(
                             frame,
@@ -564,8 +581,11 @@ pub fn render(
                             ContextId::BranchCommitFiles,
                         );
                     } else {
-                        let items =
-                            presentation::commit_files::render_commit_file_list(model, theme);
+                        let items = presentation::commit_files::render_commit_file_list(
+                            model,
+                            theme,
+                            rect.width.saturating_sub(2) as usize,
+                        );
                         render_list_ctx(
                             frame,
                             rect,
@@ -586,17 +606,20 @@ pub fn render(
                         .borders(theme.borders_for("commits"))
                         .border_type(theme.border_type_for("commits"))
                         .border_style(border_style);
-                    let items = presentation::commits::render_sub_commit_list(model, theme);
-                    render_list_ctx(
+                    render_commit_list_ctx(
                         frame,
                         rect,
                         bc_block,
-                        items,
+                        model,
+                        theme,
+                        &[],
                         bc_selected,
                         is_active,
-                        theme,
+                        None,
                         ctx_mgr,
                         ContextId::BranchCommits,
+                        commit_list_cache,
+                        true,
                     );
                 } else {
                     let items = presentation::branches::render_branch_list(
@@ -633,6 +656,7 @@ pub fn render(
                             theme,
                             commit_file_tree_nodes,
                             commit_files_collapsed_dirs,
+                            rect.width.saturating_sub(2) as usize,
                         );
                         render_list_ctx(
                             frame,
@@ -646,8 +670,11 @@ pub fn render(
                             ContextId::BranchCommitFiles,
                         );
                     } else {
-                        let items =
-                            presentation::commit_files::render_commit_file_list(model, theme);
+                        let items = presentation::commit_files::render_commit_file_list(
+                            model,
+                            theme,
+                            rect.width.saturating_sub(2) as usize,
+                        );
                         render_list_ctx(
                             frame,
                             rect,
@@ -670,17 +697,20 @@ pub fn render(
                         .borders(theme.borders_for("commits"))
                         .border_type(theme.border_type_for("commits"))
                         .border_style(border_style);
-                    let items = presentation::commits::render_sub_commit_list(model, theme);
-                    render_list_ctx(
+                    render_commit_list_ctx(
                         frame,
                         rect,
                         bc_block,
-                        items,
+                        model,
+                        theme,
+                        &[],
                         bc_selected,
                         is_active,
-                        theme,
+                        None,
                         ctx_mgr,
                         ContextId::BranchCommits,
+                        commit_list_cache,
+                        true,
                     );
                 } else if ctx_mgr.active() == ContextId::RemoteBranches {
                     let rb_selected = ctx_mgr.selected(ContextId::RemoteBranches);
@@ -734,6 +764,7 @@ pub fn render(
                             theme,
                             commit_file_tree_nodes,
                             commit_files_collapsed_dirs,
+                            rect.width.saturating_sub(2) as usize,
                         );
                         render_list_ctx(
                             frame,
@@ -747,8 +778,11 @@ pub fn render(
                             ContextId::BranchCommitFiles,
                         );
                     } else {
-                        let items =
-                            presentation::commit_files::render_commit_file_list(model, theme);
+                        let items = presentation::commit_files::render_commit_file_list(
+                            model,
+                            theme,
+                            rect.width.saturating_sub(2) as usize,
+                        );
                         render_list_ctx(
                             frame,
                             rect,
@@ -769,17 +803,20 @@ pub fn render(
                         .borders(theme.borders_for("commits"))
                         .border_type(theme.border_type_for("commits"))
                         .border_style(border_style);
-                    let items = presentation::commits::render_sub_commit_list(model, theme);
-                    render_list_ctx(
+                    render_commit_list_ctx(
                         frame,
                         rect,
                         bc_block,
-                        items,
+                        model,
+                        theme,
+                        &[],
                         bc_selected,
                         is_active,
-                        theme,
+                        None,
                         ctx_mgr,
                         ContextId::BranchCommits,
+                        commit_list_cache,
+                        true,
                     );
                 } else {
                     let items = presentation::tags::render_tag_list(model, theme);
@@ -809,6 +846,7 @@ pub fn render(
                             theme,
                             commit_file_tree_nodes,
                             commit_files_collapsed_dirs,
+                            rect.width.saturating_sub(2) as usize,
                         );
                         render_list_ctx(
                             frame,
@@ -822,8 +860,11 @@ pub fn render(
                             ContextId::CommitFiles,
                         );
                     } else {
-                        let items =
-                            presentation::commit_files::render_commit_file_list(model, theme);
+                        let items = presentation::commit_files::render_commit_file_list(
+                            model,
+                            theme,
+                            rect.width.saturating_sub(2) as usize,
+                        );
                         render_list_ctx(
                             frame,
                             rect,
@@ -837,19 +878,25 @@ pub fn render(
                         );
                     }
                 } else {
-                    let items = presentation::commits::render_commit_list(
-                        model,
-                        theme,
-                        cherry_pick_clipboard,
-                    );
                     let range = if is_active {
                         range_select_anchor.map(|a| (a.min(selected), a.max(selected)))
                     } else {
                         None
                     };
-                    render_list_with_range_ctx(
-                        frame, rect, block, items, selected, is_active, theme, range, ctx_mgr,
+                    render_commit_list_ctx(
+                        frame,
+                        rect,
+                        block,
+                        model,
+                        theme,
+                        cherry_pick_clipboard,
+                        selected,
+                        is_active,
+                        range,
+                        ctx_mgr,
                         ctx_id,
+                        commit_list_cache,
+                        false,
                     );
                 }
             }
@@ -874,6 +921,7 @@ pub fn render(
                             theme,
                             commit_file_tree_nodes,
                             commit_files_collapsed_dirs,
+                            rect.width.saturating_sub(2) as usize,
                         );
                         render_list_ctx(
                             frame,
@@ -887,8 +935,11 @@ pub fn render(
                             ContextId::CommitFiles,
                         );
                     } else {
-                        let items =
-                            presentation::commit_files::render_commit_file_list(model, theme);
+                        let items = presentation::commit_files::render_commit_file_list(
+                            model,
+                            theme,
+                            rect.width.saturating_sub(2) as usize,
+                        );
                         render_list_ctx(
                             frame,
                             rect,
@@ -929,6 +980,7 @@ pub fn render(
                             theme,
                             commit_file_tree_nodes,
                             commit_files_collapsed_dirs,
+                            rect.width.saturating_sub(2) as usize,
                         );
                         render_list_ctx(
                             frame,
@@ -942,8 +994,11 @@ pub fn render(
                             ContextId::StashFiles,
                         );
                     } else {
-                        let items =
-                            presentation::commit_files::render_commit_file_list(model, theme);
+                        let items = presentation::commit_files::render_commit_file_list(
+                            model,
+                            theme,
+                            rect.width.saturating_sub(2) as usize,
+                        );
                         render_list_ctx(
                             frame,
                             rect,
@@ -966,6 +1021,16 @@ pub fn render(
             _ => {
                 let widget = Paragraph::new("").block(block);
                 frame.render_widget(widget, rect);
+            }
+        }
+    }
+
+    // Highlight `/` search matches on the active list (lazygit-style substring).
+    // Applied after list widgets paint so selection styles stay intact.
+    if let Some((query, _, _)) = search_state {
+        if !query.is_empty() {
+            if let Some(list_rect) = fl.side_panels.get(active_panel_index).copied() {
+                render_list_search_highlights(frame, list_rect, query, theme);
             }
         }
     }
@@ -1055,10 +1120,7 @@ pub fn render(
             details_rect,
             commit,
             commit_stats,
-            commit_stats_inflight,
             commit_messages,
-            commit_messages_inflight,
-            git,
             theme,
             true,
             commit_details_scroll,
@@ -1128,6 +1190,7 @@ pub fn render(
             theme,
             model,
             diff_focused,
+            !cherry_pick_clipboard.is_empty(),
         );
     }
 
@@ -1289,11 +1352,97 @@ fn clamped_popup_height(line_count: usize, fixed_rows: u16, area_height: u16) ->
     line_rows.saturating_add(fixed_rows).min(area_height)
 }
 
+fn centered_popup_x_width(area: Rect) -> (u16, u16) {
+    let popup_width = (area.width * 60 / 100).min(60).max(30).min(area.width);
+    let x = (area.width.saturating_sub(popup_width)) / 2;
+    (x, popup_width)
+}
+
+/// Returns the menu option index under `(col, row)`, matching `render_popup` layout.
+pub fn menu_item_at(popup: &PopupState, area: Rect, col: u16, row: u16) -> Option<usize> {
+    let PopupState::Menu { items, .. } = popup else {
+        return None;
+    };
+    if items.is_empty() || area.width < 4 || area.height < 4 {
+        return None;
+    }
+    let (x, popup_width) = centered_popup_x_width(area);
+    // Matches `PopupState::Menu` in `render_popup`.
+    let height = (items.len() as u16 + 2).min(area.height.saturating_sub(4));
+    if height < 3 {
+        return None;
+    }
+    let y = (area.height.saturating_sub(height)) / 2;
+    if col < x || col >= x + popup_width {
+        return None;
+    }
+    let list_start = y + 1; // below top border
+    let list_rows = (height - 2) as usize; // exclude borders
+    if row < list_start || row >= list_start + list_rows as u16 {
+        return None;
+    }
+    let idx = (row - list_start) as usize;
+    if idx < items.len() && idx < list_rows {
+        Some(idx)
+    } else {
+        None
+    }
+}
+
+/// Returns the visible checklist option index under `(col, row)`.
+pub fn checklist_item_at(popup: &PopupState, area: Rect, col: u16, row: u16) -> Option<usize> {
+    let PopupState::Checklist {
+        items,
+        search_textarea,
+        ..
+    } = popup
+    else {
+        return None;
+    };
+    let search = search_textarea.lines().join("");
+    if area.width < 4 || area.height < 4 {
+        return None;
+    }
+    let (x, popup_width) = centered_popup_x_width(area);
+    let visible_count = items
+        .iter()
+        .filter(|it| {
+            it.is_free_entry
+                || search.is_empty()
+                || it.label.to_lowercase().contains(&search.to_lowercase())
+        })
+        .count();
+    // Matches `PopupState::Checklist` in `render_popup`.
+    let content_lines = visible_count.max(1);
+    let height = (content_lines as u16 + 6)
+        .min(area.height.saturating_sub(4))
+        .max(8.min(area.height));
+    if height < 3 {
+        return None;
+    }
+    let y = (area.height.saturating_sub(height)) / 2;
+    if col < x || col >= x + popup_width {
+        return None;
+    }
+    // inner.y = y+1; list starts at inner.y+2 (after search + separator)
+    let list_start = y + 1 + 2;
+    let inner_height = height.saturating_sub(2);
+    let list_height = inner_height.saturating_sub(3); // search + sep + hint
+    if list_height == 0 {
+        return None;
+    }
+    if row < list_start || row >= list_start + list_height {
+        return None;
+    }
+    let idx = (row - list_start) as usize;
+    if idx < visible_count { Some(idx) } else { None }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{command_log_geometry, render_popup};
+    use super::{checklist_item_at, command_log_geometry, menu_item_at, render_popup};
     use crate::config::Theme;
-    use crate::gui::popup::{MessageKind, PopupState};
+    use crate::gui::popup::{ChecklistItem, MenuItem, MessageKind, PopupState};
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use ratatui::layout::Rect;
@@ -1343,6 +1492,85 @@ mod tests {
                 );
             })
             .expect("long popup message should render without panicking");
+    }
+
+    fn sample_menu() -> PopupState {
+        PopupState::Menu {
+            title: "Copy".to_string(),
+            items: vec![
+                MenuItem {
+                    label: "commit hash".to_string(),
+                    description: String::new(),
+                    key: Some("c".to_string()),
+                    action: None,
+                },
+                MenuItem {
+                    label: "commit message".to_string(),
+                    description: String::new(),
+                    key: Some("m".to_string()),
+                    action: None,
+                },
+                MenuItem {
+                    label: "author name".to_string(),
+                    description: String::new(),
+                    key: Some("a".to_string()),
+                    action: None,
+                },
+            ],
+            selected: 0,
+            loading_index: None,
+        }
+    }
+
+    #[test]
+    fn menu_item_at_hits_first_and_second_options() {
+        let area = Rect::new(0, 0, 80, 24);
+        let popup = sample_menu();
+        // height = 3 items + 2 borders = 5; y = (24-5)/2 = 9; list starts at y+1 = 10
+        let x = (area
+            .width
+            .saturating_sub((area.width * 60 / 100).min(60).max(30)))
+            / 2
+            + 2;
+        assert_eq!(menu_item_at(&popup, area, x, 10), Some(0));
+        assert_eq!(menu_item_at(&popup, area, x, 11), Some(1));
+        assert_eq!(menu_item_at(&popup, area, x, 12), Some(2));
+        assert_eq!(menu_item_at(&popup, area, x, 9), None); // border
+        assert_eq!(menu_item_at(&popup, area, x, 13), None); // below
+    }
+
+    #[test]
+    fn checklist_item_at_skips_search_and_separator() {
+        let area = Rect::new(0, 0, 80, 30);
+        let popup = PopupState::Checklist {
+            title: "Pick".to_string(),
+            items: vec![
+                ChecklistItem {
+                    label: "one".to_string(),
+                    checked: false,
+                    is_free_entry: false,
+                },
+                ChecklistItem {
+                    label: "two".to_string(),
+                    checked: true,
+                    is_free_entry: false,
+                },
+            ],
+            selected: 0,
+            search_textarea: crate::gui::popup::make_checklist_search_textarea(),
+            free_entry_category: None,
+            on_confirm: Box::new(|_gui, _ids| Ok(())),
+        };
+        // height = max(8, 2+6)=8; y=(30-8)/2=11; list_start=y+1+2=14
+        let x = (area
+            .width
+            .saturating_sub((area.width * 60 / 100).min(60).max(30)))
+            / 2
+            + 2;
+        assert_eq!(checklist_item_at(&popup, area, x, 14), Some(0));
+        assert_eq!(checklist_item_at(&popup, area, x, 15), Some(1));
+        assert_eq!(checklist_item_at(&popup, area, x, 12), None); // search row
+        assert_eq!(checklist_item_at(&popup, area, x, 13), None); // separator
     }
 }
 
@@ -1781,6 +2009,148 @@ fn render_list_with_range_ctx(
     ctx_mgr.set_scroll_offset(ctx, so);
 }
 
+#[allow(clippy::too_many_arguments)]
+fn render_commit_list_ctx(
+    frame: &mut Frame,
+    rect: Rect,
+    block: Block<'_>,
+    model: &Model,
+    theme: &crate::config::Theme,
+    cherry_picked: &[String],
+    selected: usize,
+    is_active: bool,
+    range: Option<(usize, usize)>,
+    ctx_mgr: &mut ContextManager,
+    ctx: ContextId,
+    cache: &mut presentation::commits::CommitListCache,
+    sub_commits: bool,
+) {
+    let total_len = if sub_commits {
+        model.sub_commits.len()
+    } else {
+        model.commits.len()
+    };
+    if total_len == 0 {
+        frame.render_widget(block, rect);
+        return;
+    }
+
+    let visible_height = block.inner(rect).height as usize;
+    if visible_height == 0 {
+        frame.render_widget(block, rect);
+        return;
+    }
+
+    let mut offset = ctx_mgr.scroll_offset(ctx);
+    if !ctx_mgr.viewport_manually_scrolled {
+        super::scroll::ensure_visible(selected, &mut offset, visible_height);
+    }
+    offset = offset.min(total_len.saturating_sub(visible_height));
+    ctx_mgr.set_scroll_offset(ctx, offset);
+
+    let items = if sub_commits {
+        presentation::commits::render_sub_commit_list_window(
+            model,
+            theme,
+            offset,
+            visible_height,
+            cache,
+        )
+    } else {
+        presentation::commits::render_commit_list_window(
+            model,
+            theme,
+            cherry_picked,
+            offset,
+            visible_height,
+            cache,
+        )
+    };
+    let visible_items: Vec<ListItem> = items
+        .into_iter()
+        .enumerate()
+        .map(|(i, item)| {
+            let idx = offset + i;
+            if is_active && idx == selected {
+                item.style(theme.selected_line)
+            } else if is_active && range.is_some_and(|(lo, hi)| idx >= lo && idx <= hi) {
+                item.style(Style::default().bg(theme.selected_bg))
+            } else {
+                item
+            }
+        })
+        .collect();
+
+    frame.render_widget(List::new(visible_items).block(block), rect);
+}
+
+/// Highlight contiguous `/` search matches in a list panel (lazygit-style).
+/// Scans already-painted buffer cells so item styling (selection, colors) is preserved.
+fn render_list_search_highlights(
+    frame: &mut Frame,
+    area: Rect,
+    query: &str,
+    theme: &crate::config::Theme,
+) {
+    if query.is_empty() || area.width < 3 || area.height < 3 {
+        return;
+    }
+
+    let query_lower: Vec<char> = query.to_lowercase().chars().collect();
+    if query_lower.is_empty() {
+        return;
+    }
+
+    let highlight = theme.search_match;
+    let buf = frame.buffer_mut();
+    let buf_area = *buf.area();
+
+    let inner_x = area.x + 1;
+    let inner_end_x = area.x + area.width.saturating_sub(1);
+    let inner_y = area.y + 1;
+    let inner_end_y = area.y + area.height.saturating_sub(1);
+
+    for y in inner_y..inner_end_y {
+        if y >= buf_area.y + buf_area.height {
+            break;
+        }
+
+        let mut row_chars: Vec<(u16, char)> = Vec::new();
+        for x in inner_x..inner_end_x.min(buf_area.x + buf_area.width) {
+            if let Some(cell) = buf.cell((x, y)) {
+                let ch = cell.symbol().chars().next().unwrap_or(' ');
+                row_chars.push((x, ch));
+            }
+        }
+        if row_chars.is_empty() {
+            continue;
+        }
+
+        let row_text: String = row_chars.iter().map(|(_, c)| *c).collect();
+        let row_lower = row_text.to_lowercase();
+        let row_lower_chars: Vec<char> = row_lower.chars().collect();
+
+        let mut start = 0usize;
+        while start + query_lower.len() <= row_lower_chars.len() {
+            let is_match = row_lower_chars[start..start + query_lower.len()]
+                .iter()
+                .zip(query_lower.iter())
+                .all(|(a, b)| a == b);
+            if is_match {
+                for i in 0..query_lower.len() {
+                    let (x, _) = row_chars[start + i];
+                    if let Some(cell) = buf.cell_mut((x, y)) {
+                        cell.set_style(highlight);
+                    }
+                }
+                start += query_lower.len();
+            } else {
+                start += 1;
+            }
+        }
+    }
+}
+
 fn render_list_with_range_raw(
     frame: &mut Frame,
     rect: Rect,
@@ -1960,6 +2330,7 @@ fn render_status_bar(
     _theme: &crate::config::Theme,
     model: &Model,
     diff_focused: bool,
+    has_copied_commits: bool,
 ) {
     let mut hints: Vec<(&str, &str)> = Vec::new();
     let mut emphasized: Vec<&str> = Vec::new();
@@ -2008,18 +2379,44 @@ fn render_status_bar(
             DiffViewLayout::SideBySide => "unified view",
             DiffViewLayout::Unified => "split view",
         };
-        hints.push(("v", view_layout_hint));
+        hints.push(("\\", view_layout_hint));
     } else {
         // Sidebar-focused: context-specific hints.
+        let view_layout_hint = match diff_view.view_layout {
+            DiffViewLayout::SideBySide => "unified view",
+            DiffViewLayout::Unified => "split view",
+        };
         match ctx_mgr.active() {
             ContextId::Files => {
                 hints.extend([
                     ("c", "commit"),
                     ("a", "stage all"),
                     ("space", "toggle"),
+                    ("\\", view_layout_hint),
                     ("d", "discard"),
                     ("e", "edit"),
                     ("o", "open"),
+                ]);
+            }
+            ContextId::CommitFiles | ContextId::StashFiles | ContextId::BranchCommitFiles => {
+                hints.extend([
+                    ("enter", "focus diff"),
+                    ("\\", view_layout_hint),
+                    ("y", "copy"),
+                ]);
+            }
+            ContextId::BranchCommits => {
+                hints.extend([
+                    ("enter", "commit files"),
+                    ("\\", view_layout_hint),
+                    (".", "details"),
+                ]);
+            }
+            ContextId::Reflog => {
+                hints.extend([
+                    ("enter", "commit files"),
+                    ("\\", view_layout_hint),
+                    (".", "details"),
                 ]);
             }
             ContextId::Branches => {
@@ -2033,22 +2430,32 @@ fn render_status_bar(
                 ]);
             }
             ContextId::Commits => {
+                if has_copied_commits {
+                    hints.push(("V", "paste (cherry-pick)"));
+                }
                 hints.extend([
+                    ("C", "copy (cherry-pick)"),
                     ("r", "reword"),
                     ("g", "reset"),
                     ("t", "revert"),
-                    ("C", "cherry-pick"),
-                    ("f", "filter branch"),
+                    ("\\", view_layout_hint),
+                    ("ctrl+s", "filter branch"),
                     ("a", "toggle log view"),
                 ]);
             }
             ContextId::Stash => {
-                hints.extend([("g", "pop"), ("space", "apply"), ("d", "drop")]);
+                hints.extend([
+                    ("g", "pop"),
+                    ("space", "apply"),
+                    ("d", "drop"),
+                    ("\\", view_layout_hint),
+                ]);
             }
             ContextId::Remotes => {
                 hints.extend([
                     ("enter", "branches"),
                     ("f", "fetch"),
+                    ("e", "edit"),
                     ("P", "push"),
                     ("p", "pull"),
                 ]);
@@ -2450,16 +2857,30 @@ pub fn render_loading_overlay(
     message: &str,
     hint: Option<(&str, &str)>,
 ) {
-    if area.width < 4 || area.height < 4 {
+    if area.width < 4 || area.height < 3 {
         return;
     }
 
-    let popup_width = (area.width * 60 / 100).min(60).max(30).min(area.width);
-    let x = (area.width.saturating_sub(popup_width)) / 2;
+    // Compact bottom-right toast: spinner + short label, no large modal.
     let spinner = SPINNER_CHARS[(spinner_frame / 8) % SPINNER_CHARS.len()];
-    let height = 8u16;
-    let ly = (area.height.saturating_sub(height)) / 2;
-    let popup_rect = Rect::new(x, ly, popup_width, height);
+    let label = if message.is_empty() {
+        title.to_string()
+    } else if message.len() <= 40 {
+        message.to_string()
+    } else {
+        // Prefer title when message is long (e.g. "Pushing branch to remote...").
+        title.to_string()
+    };
+    let content = format!(" {spinner} {label} ");
+    let mut width = (content.chars().count() as u16)
+        .saturating_add(2)
+        .min(area.width);
+    width = width.max(12).min(area.width.saturating_sub(2).max(1));
+    let height = if hint.is_some() { 4u16 } else { 3u16 };
+    let height = height.min(area.height);
+    let x = area.width.saturating_sub(width).saturating_sub(1);
+    let y = area.height.saturating_sub(height).saturating_sub(1);
+    let popup_rect = Rect::new(x, y, width, height);
     frame.render_widget(Clear, popup_rect);
 
     let block = Block::default()
@@ -2468,35 +2889,23 @@ pub fn render_loading_overlay(
         .border_type(theme.border_type_for("popup"))
         .border_style(Style::default().fg(theme.accent_secondary));
 
-    let mut text = vec![
-        Line::from(""),
-        Line::from(vec![
-            Span::styled(
-                format!(" {} ", spinner),
-                Style::default().fg(theme.accent_secondary),
-            ),
-            Span::styled(
-                message.to_string(),
-                Style::default()
-                    .fg(theme.accent_secondary)
-                    .add_modifier(Modifier::BOLD),
-            ),
-        ]),
-        Line::from(""),
-    ];
+    let mut text = vec![Line::from(vec![
+        Span::styled(format!(" {spinner} "), Style::default().fg(theme.accent)),
+        Span::styled(
+            label,
+            Style::default()
+                .fg(theme.accent)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ])];
     if let Some((key, desc)) = hint {
         text.push(Line::from(vec![
             Span::styled(
-                format!(" {}", key),
+                format!(" {key}"),
                 Style::default().fg(theme.text).add_modifier(Modifier::BOLD),
             ),
-            Span::styled(format!(" {}", desc), Style::default().fg(theme.text_dimmed)),
+            Span::styled(format!(" {desc}"), Style::default().fg(theme.text_dimmed)),
         ]));
-    } else {
-        text.push(Line::from(Span::styled(
-            format!(" {} Please wait...", spinner),
-            Style::default().fg(theme.text_dimmed),
-        )));
     }
 
     let widget = Paragraph::new(text).block(block);
@@ -2742,6 +3151,7 @@ pub fn render_popup(
             }
         }
         PopupState::CommitInput {
+            kind,
             summary_textarea,
             body_textarea,
             focus,
@@ -2749,7 +3159,10 @@ pub fn render_popup(
         } => {
             // Two-field commit editor: summary (1 line) + body (multi-line)
             // Layout: border, summary label, summary input, body label, body textarea, hint, border
-            let ta_height = 16u16;
+            let ta_height = 16u16.min(area.height);
+            if ta_height < 3 || popup_width < 3 {
+                return;
+            }
             let ta_y = (area.height.saturating_sub(ta_height)) / 2;
             let ta_rect = Rect::new(x, ta_y, popup_width, ta_height);
             frame.render_widget(Clear, ta_rect);
@@ -2759,7 +3172,7 @@ pub fn render_popup(
                 CommitInputFocus::Body => theme.popup_border,
             };
             let outer = Block::default()
-                .title(" Commit message ")
+                .title(format!(" {} ", kind.title()))
                 .borders(theme.borders_for("popup"))
                 .border_type(theme.border_type_for("popup"))
                 .border_style(Style::default().fg(border_color));
@@ -2928,15 +3341,20 @@ pub fn render_popup(
             title,
             items,
             selected,
-            search,
+            search_textarea,
+            free_entry_category,
             ..
         } => {
-            // Filter items by search query
+            let search = search_textarea.lines().join("");
+            // Filter items by search query. Free-entry rows always remain
+            // visible because they represent the current typed value.
             let visible: Vec<(usize, &super::popup::ChecklistItem)> = items
                 .iter()
                 .enumerate()
                 .filter(|(_, it)| {
-                    search.is_empty() || it.label.to_lowercase().contains(&search.to_lowercase())
+                    it.is_free_entry
+                        || search.is_empty()
+                        || it.label.to_lowercase().contains(&search.to_lowercase())
                 })
                 .collect();
 
@@ -2961,21 +3379,9 @@ pub fn render_popup(
             if inner.height < 3 {
                 // Too small, skip
             } else {
-                // Search bar row
+                // Search bar row (TextArea for cursor + word/line edits)
                 let search_area = Rect::new(inner.x, inner.y, inner.width, 1);
-                let search_display = if search.is_empty() {
-                    Line::from(Span::styled(
-                        " Type to filter...",
-                        Style::default().fg(theme.text_dimmed),
-                    ))
-                } else {
-                    Line::from(vec![
-                        Span::styled(" ", Style::default().fg(theme.accent_secondary)),
-                        Span::styled(search.clone(), Style::default().fg(theme.accent_secondary)),
-                        Span::styled("▏", Style::default().fg(theme.accent_secondary)),
-                    ])
-                };
-                frame.render_widget(Paragraph::new(search_display), search_area);
+                frame.render_widget(search_textarea, search_area);
 
                 // Separator line
                 let sep_area = Rect::new(inner.x, inner.y + 1, inner.width, 1);
@@ -3001,13 +3407,21 @@ pub fn render_popup(
                             theme.text_dimmed
                         };
                         let is_selected = vi == *selected;
+                        let category = if item.is_free_entry {
+                            free_entry_category
+                                .as_deref()
+                                .map(|c| format!("  {c}"))
+                                .unwrap_or_default()
+                        } else {
+                            String::new()
+                        };
 
                         let line = Line::from(vec![
                             Span::raw("  "),
                             Span::styled(check_sym, Style::default().fg(check_color)),
                             Span::raw("  "),
                             Span::styled(
-                                item.label.clone(),
+                                format!("{}{}", item.label, category),
                                 if is_selected {
                                     Style::default()
                                         .fg(theme.text_strong)
@@ -3066,7 +3480,7 @@ pub fn render_popup(
                 frame.render_widget(Paragraph::new(hint), hint_area);
             }
         }
-        PopupState::Help {
+        PopupState::CommandPalette {
             sections,
             selected,
             search_textarea,
@@ -3077,10 +3491,10 @@ pub fn render_popup(
             let search_lower = search.to_lowercase();
             let has_search = !search_lower.is_empty();
 
-            // Build flat display list: (is_header, key, description, is_match)
-            let mut display: Vec<(bool, String, String)> = Vec::new();
+            // Build flat display list: (is_header, key, description, executable)
+            let mut display: Vec<(bool, String, String, bool)> = Vec::new();
             for section in sections {
-                let visible_entries: Vec<&super::popup::HelpEntry> = if has_search {
+                let visible_entries: Vec<&super::popup::CommandEntry> = if has_search {
                     section
                         .entries
                         .iter()
@@ -3094,9 +3508,19 @@ pub fn render_popup(
                 };
 
                 if !visible_entries.is_empty() {
-                    display.push((true, section.title.clone(), String::new()));
+                    display.push((true, section.title.clone(), String::new(), false));
                     for entry in visible_entries {
-                        display.push((false, entry.key.clone(), entry.description.clone()));
+                        let key = if entry.key.is_empty() && entry.is_executable() {
+                            "▸".into()
+                        } else {
+                            entry.key.clone()
+                        };
+                        display.push((
+                            false,
+                            key,
+                            entry.description.clone(),
+                            entry.is_executable(),
+                        ));
                     }
                 }
             }
@@ -3114,7 +3538,7 @@ pub fn render_popup(
             frame.render_widget(Clear, popup_rect);
 
             let block = Block::default()
-                .title(" Keybindings ")
+                .title(" Command Palette ")
                 .borders(theme.borders_for("popup"))
                 .border_type(theme.border_type_for("popup"))
                 .border_style(Style::default().fg(theme.accent));
@@ -3162,7 +3586,7 @@ pub fn render_popup(
             let so = *scroll_offset;
             let effective_scroll = if so > max_scroll { max_scroll } else { so };
 
-            let visible_display: Vec<&(bool, String, String)> = display
+            let visible_display: Vec<&(bool, String, String, bool)> = display
                 .iter()
                 .skip(effective_scroll)
                 .take(list_height)
@@ -3170,7 +3594,7 @@ pub fn render_popup(
 
             // Count non-header entries before scroll offset to track selection
             let mut entry_idx = 0usize;
-            for (is_header, _, _) in display.iter().take(effective_scroll) {
+            for (is_header, _, _, _) in display.iter().take(effective_scroll) {
                 if !is_header {
                     entry_idx += 1;
                 }
@@ -3179,7 +3603,7 @@ pub fn render_popup(
             let key_col_width = 14usize;
 
             let mut list_items: Vec<ListItem> = Vec::new();
-            for (is_header, key_or_title, desc) in visible_display {
+            for (is_header, key_or_title, desc, executable) in visible_display {
                 if *is_header {
                     let line = Line::from(vec![Span::styled(
                         format!(" {} ", key_or_title),
@@ -3199,6 +3623,8 @@ pub fn render_popup(
                         Style::default()
                             .fg(theme.accent_secondary)
                             .add_modifier(Modifier::BOLD)
+                    } else if !executable {
+                        Style::default().fg(theme.text_dimmed)
                     } else {
                         Style::default().fg(theme.accent)
                     };
@@ -3207,6 +3633,8 @@ pub fn render_popup(
                         Style::default()
                             .fg(theme.text_strong)
                             .add_modifier(Modifier::BOLD)
+                    } else if !executable {
+                        Style::default().fg(theme.text_dimmed)
                     } else {
                         Style::default().fg(theme.text)
                     };
@@ -3262,6 +3690,8 @@ pub fn render_popup(
                 Span::styled(": navigate  ", Style::default().fg(theme.text_dimmed)),
                 Span::styled("type", Style::default().fg(theme.accent_secondary)),
                 Span::styled(": search  ", Style::default().fg(theme.text_dimmed)),
+                Span::styled("enter", Style::default().fg(theme.accent_secondary)),
+                Span::styled(": execute  ", Style::default().fg(theme.text_dimmed)),
                 Span::styled("esc", Style::default().fg(theme.accent_secondary)),
                 Span::styled(": close", Style::default().fg(theme.text_dimmed)),
             ]);
@@ -3280,6 +3710,24 @@ pub fn render_popup(
                 &[
                     ("↑↓", "navigate"),
                     ("type", "jump to"),
+                    ("enter", "select"),
+                    ("esc", "cancel"),
+                ],
+            );
+        }
+        PopupState::ListPicker { title, core, .. } => {
+            render_list_picker(
+                frame,
+                area,
+                theme,
+                core,
+                title,
+                70,
+                72,
+                36,
+                &[
+                    ("↑↓", "navigate"),
+                    ("type", "filter / free entry"),
                     ("enter", "select"),
                     ("esc", "cancel"),
                 ],
@@ -3392,23 +3840,43 @@ fn render_list_picker(
     hints: &[(&str, &str)],
 ) {
     let search = core.search_textarea.lines().join("");
-    let search_lower = search.to_lowercase();
+    let search_lower = search.trim().to_lowercase();
+    let matching = list_picker_matching_indices(&core.items, &search);
 
-    // Build display rows: interleave category headers with items
-    let has_categories = core.items.iter().any(|i| !i.category.is_empty());
-    let mut display: Vec<(bool, String)> = Vec::new(); // (is_header, label)
+    // Build display rows from matching items only (search filters the list).
+    let has_categories = matching
+        .iter()
+        .any(|&i| core.items.get(i).is_some_and(|it| !it.category.is_empty()));
+    // (is_header, label, item_idx, description)
+    let mut display: Vec<(bool, String, Option<usize>, Option<String>)> = Vec::new();
     if has_categories {
         let mut last_cat = String::new();
-        for item in core.items.iter() {
+        for &ei in &matching {
+            let Some(item) = core.items.get(ei) else {
+                continue;
+            };
             if !item.category.is_empty() && item.category != last_cat {
-                display.push((true, item.category.clone()));
+                display.push((true, item.category.clone(), None, None));
                 last_cat = item.category.clone();
             }
-            display.push((false, item.label.clone()));
+            display.push((
+                false,
+                item.label.clone(),
+                Some(ei),
+                item.description.clone(),
+            ));
         }
     } else {
-        for item in core.items.iter() {
-            display.push((false, item.label.clone()));
+        for &ei in &matching {
+            let Some(item) = core.items.get(ei) else {
+                continue;
+            };
+            display.push((
+                false,
+                item.label.clone(),
+                Some(ei),
+                item.description.clone(),
+            ));
         }
     }
 
@@ -3471,22 +3939,15 @@ fn render_list_picker(
     let max_scroll = display.len().saturating_sub(list_height);
     let effective_scroll = core.scroll_offset.min(max_scroll);
 
-    let visible_display: Vec<&(bool, String)> = display
+    let visible_display: Vec<&(bool, String, Option<usize>, Option<String>)> = display
         .iter()
         .skip(effective_scroll)
         .take(list_height)
         .collect();
 
-    // Count how many non-header items are before the visible window
-    let mut entry_idx = 0usize;
-    for (is_header, _) in display.iter().take(effective_scroll) {
-        if !is_header {
-            entry_idx += 1;
-        }
-    }
-
+    let content_w = list_area.width as usize;
     let mut list_items: Vec<ListItem> = Vec::new();
-    for (is_header, label) in visible_display {
+    for (is_header, label, item_idx, description) in visible_display {
         if *is_header {
             let line = Line::from(vec![Span::styled(
                 format!(" {} ", label),
@@ -3496,8 +3957,7 @@ fn render_list_picker(
             )]);
             list_items.push(ListItem::new(line));
         } else {
-            let is_selected = entry_idx == core.selected;
-            entry_idx += 1;
+            let is_selected = *item_idx == Some(core.selected);
 
             let base_fg = if is_selected {
                 theme.text_strong
@@ -3546,6 +4006,22 @@ fn render_list_picker(
                     Style::default().fg(base_fg)
                 };
                 spans.push(Span::styled(label.clone(), style));
+            }
+
+            if let Some(desc) = description.as_deref().filter(|d| !d.is_empty()) {
+                let used: usize = spans
+                    .iter()
+                    .map(|s| UnicodeWidthStr::width(s.content.as_ref()))
+                    .sum();
+                let desc_w = UnicodeWidthStr::width(desc);
+                let pad = content_w.saturating_sub(used).saturating_sub(desc_w);
+                if pad > 0 {
+                    spans.push(Span::raw(" ".repeat(pad)));
+                }
+                spans.push(Span::styled(
+                    desc.to_string(),
+                    Style::default().fg(theme.text_dimmed),
+                ));
             }
 
             let line = Line::from(spans);
@@ -3618,67 +4094,24 @@ fn find_commit_by_hash<'a>(model: &'a Model, hash: &str) -> Option<&'a Commit> {
         .or_else(|| model.reflog_commits.iter().find(|c| c.hash == hash))
 }
 
-/// Look up a cached shortstat, spawning a background worker to fetch it if
-/// missing.  Render never blocks on git — the first frame for a new commit
-/// shows no stat line; the next repaint after the worker finishes will pick
-/// it up from the shared cache.
-fn lookup_or_fetch_stat(
-    cache: &Arc<Mutex<HashMap<String, CommitStat>>>,
-    inflight: &Arc<Mutex<std::collections::HashSet<String>>>,
-    git: &Arc<GitCommands>,
-    hash: &str,
-) -> Option<CommitStat> {
-    if let Ok(map) = cache.lock() {
-        if let Some(s) = map.get(hash) {
-            return Some(*s);
-        }
-    }
-    // Not cached: schedule a background fetch (once) and return None for now.
-    let mut inflight_guard = match inflight.lock() {
-        Ok(g) => g,
-        Err(_) => return None,
-    };
-    if inflight_guard.contains(hash) {
-        return None;
-    }
-    inflight_guard.insert(hash.to_string());
-    drop(inflight_guard);
-
-    let cache = Arc::clone(cache);
-    let inflight = Arc::clone(inflight);
-    let git = Arc::clone(git);
-    let hash_owned = hash.to_string();
-    std::thread::spawn(move || {
-        // Only cache on success.  Errors leave the entry absent so a future
-        // visit can retry; in-flight guard still prevents same-frame spam.
-        if let Ok(stat) = git.commit_stat(&hash_owned) {
-            if let Ok(mut map) = cache.lock() {
-                map.insert(hash_owned.clone(), stat);
-            }
-        }
-        if let Ok(mut set) = inflight.lock() {
-            set.remove(&hash_owned);
-        }
-    });
-    None
-}
-
 fn render_commit_details_panel(
     frame: &mut Frame,
     rect: Rect,
     commit: &Commit,
     commit_stats: &Arc<Mutex<HashMap<String, CommitStat>>>,
-    commit_stats_inflight: &Arc<Mutex<std::collections::HashSet<String>>>,
     commit_messages: &Arc<Mutex<HashMap<String, String>>>,
-    commit_messages_inflight: &Arc<Mutex<std::collections::HashSet<String>>>,
-    git: &Arc<GitCommands>,
     theme: &Theme,
     compact: bool,
     scroll: &mut u16,
 ) {
-    let stat_owned = lookup_or_fetch_stat(commit_stats, commit_stats_inflight, git, &commit.hash);
-    let message_owned =
-        lookup_or_fetch_message(commit_messages, commit_messages_inflight, git, &commit.hash);
+    let stat_owned = commit_stats
+        .lock()
+        .ok()
+        .and_then(|map| map.get(&commit.hash).copied());
+    let message_owned = commit_messages
+        .lock()
+        .ok()
+        .and_then(|map| map.get(&commit.hash).cloned());
     presentation::commit_details::render_commit_details(
         frame,
         rect,
@@ -3689,42 +4122,4 @@ fn render_commit_details_panel(
         compact,
         scroll,
     );
-}
-
-fn lookup_or_fetch_message(
-    cache: &Arc<Mutex<HashMap<String, String>>>,
-    inflight: &Arc<Mutex<std::collections::HashSet<String>>>,
-    git: &Arc<GitCommands>,
-    hash: &str,
-) -> Option<String> {
-    if let Ok(map) = cache.lock() {
-        if let Some(m) = map.get(hash) {
-            return Some(m.clone());
-        }
-    }
-    let mut inflight_guard = match inflight.lock() {
-        Ok(g) => g,
-        Err(_) => return None,
-    };
-    if inflight_guard.contains(hash) {
-        return None;
-    }
-    inflight_guard.insert(hash.to_string());
-    drop(inflight_guard);
-
-    let cache = Arc::clone(cache);
-    let inflight = Arc::clone(inflight);
-    let git = Arc::clone(git);
-    let hash_owned = hash.to_string();
-    std::thread::spawn(move || {
-        if let Ok(msg) = git.commit_message_full(&hash_owned) {
-            if let Ok(mut map) = cache.lock() {
-                map.insert(hash_owned.clone(), msg);
-            }
-        }
-        if let Ok(mut set) = inflight.lock() {
-            set.remove(&hash_owned);
-        }
-    });
-    None
 }

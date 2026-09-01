@@ -33,6 +33,15 @@ Then run:
 lazygitrs
 ```
 
+### Upgrade
+
+Detects how you installed (brew / npm / bun / cargo / install.sh) and upgrades in place:
+
+```sh
+lazygitrs upgrade          # latest
+lazygitrs upgrade 0.0.32   # specific version
+```
+
 ### What's different
 
 - [x] **AI commit messages** — works with whatever agent you already use (claude, opencode, codex, or my minimal shim [modelcli](https://github.com/blankeos/modelcli)). Set `git.commit.generateCommand` (see [Configuration](#configuration)):
@@ -42,16 +51,16 @@ lazygitrs
   git:
     commit:
       # Using claude
-      generateCommand: "claude -p 'Generate a conventional commit message for this diff.' --no-session-persistence"
+      generateCommand: "claude -p 'Generate a conventional commit message for this diff. Do not hard-wrap lines; one bullet per line; blank line between paragraphs.' --no-session-persistence"
       # Using opencode
-      generateCommand: "opencode run 'Generate a conventional commit message for this diff.'"
+      generateCommand: "opencode run 'Generate a conventional commit message for this diff. Do not hard-wrap lines; one bullet per line; blank line between paragraphs.'"
       # Using codex
-      generateCommand: "codex exec --ephemeral 'Generate a conventional commit message for this diff.'"
+      generateCommand: "codex exec --ephemeral 'Generate a conventional commit message for this diff. Do not hard-wrap lines; one bullet per line; blank line between paragraphs.'"
       # Using modelcli
-      generateCommand: 'DIFF=$(git diff --cached) && modelcli "Generate a conventional commit message for this diff. Always provide a bulletpoint body. $DIFF"'
+      generateCommand: 'DIFF=$(git diff --cached) && modelcli "Generate a conventional commit message for this diff. Always provide a bulletpoint body. Do not hard-wrap lines; one bullet per line. $DIFF"'
   ```
 
-- [x] **Side-by-side diffs** with syntax highlighting by default, no pager hacks needed
+- [x] **Side-by-side + unified diffs** with syntax highlighting by default and unified as well, no pager hacks needed
 - [x] **Better diff navigation UX** — `[]` new/old only views, `{}` for hunk traveling, `hjkl←↑↓→` for line-by-line scrolling, supports mouse select/scroll too. Lots inspired by [lumen](https://github.com/jnsahaj/lumen)
 - [x] **Hunk Reverting & Undo (`<Enter>` / `u`)** — Revert hovered/selected diff blocks with `<Enter>`, and undo block reverts with `u`. Cycle selections using `{` and `}`.
 - [x] **Default GitHub conveniences** — copy repo url, open repo url, copy PR create url, open PR create, copy pr url, open pr. (The 'copy' variants are useful if you use different default browsers for work/personal.)
@@ -62,10 +71,10 @@ lazygitrs
 - [x] **Built-in compare tool** — Inspired by lumen, but more built into the TUI. Pick a commit/branch A and a commit/branch B, then see how they differ.
 - [x] **Interactive rebasing** — Inspired by gitlens, a clean and easy-to-use UI for pick, reword, edit, squash, fixup, drop and fast rebasing.
 - [x] **Commit Details** — Inspired by zed, just a small details panel about the commit that's easier to look at.
-- [x] **Command Palette** — Easily access stuff like:
-  - [ ] `git reset` and then asks, what branch/commit, has quick search.
-  - [x] `git diff/compare` and then asks what branch/commit A and B, has quick search.
-  - [x] `git rebase` and then asks rebase on top of what branch/commit.
+- [x] **Command Palette** — easily access stuff like:
+  - [x] `git reset` (global `G`) — asks which branch/commit, has quick search, then soft/mixed/hard options.
+  - [x] `git diff/compare` (global `W`) and then asks what branch/commit A and B, has quick search.
+  - [x] `git rebase` (global `I`) and then asks rebase on top of what branch/commit.
   - [x] 🎨 Themes + Theme-Picker!
 - [x] **Universal AI Notes Architecture** — leave review comments on code diffs and instantly notify your AI CLI of choice to review or act on it. `lazygitrs` uses a dynamically registered `.lines.json` session architecture, supporting three transport layers to integrate with *any* AI tool on the market:
   - **Subprocess Spawning** (`notifyCommand`): Spawns a background command (great for `agy`, `claude`, etc.)
@@ -143,7 +152,78 @@ text_strong = "#ffffff"
 background = "#1a1a2e"
 ```
 
-To refresh the built-in generated themes from OpenCode upstream: `bun run scripts/gen-themes.ts`
+### Editor integrations
+
+<details>
+<summary><strong>Helix</strong> — <code>Ctrl-g</code> to open, <code>e</code>/<code>o</code> to edit back in hx</summary>
+
+**1. Open lazygitrs from Helix** — add to `~/.config/helix/config.toml`:
+
+```toml
+[keys.normal]
+# Open lazygitrs w/ ctrl-g
+"C-g" = [":new", ":insert-output lazygitrs", ":buffer-close!", ":redraw"]
+```
+
+**2. Make `e` / `o` open files in Helix** — add to `~/.config/lazygitrs/config.yml` (or `~/.config/lazygit/config.yml`):
+
+```yaml
+os:
+  # Suspends TUI → hx → restores. editPreset fills edit / editAtLine / etc.
+  editPreset: "helix"
+  open: "hx {{filename}}"
+```
+
+Then inside lazygitrs: `e` edits at line, `o` opens the file.
+
+</details>
+
+<details>
+<summary><strong>Neovim (LazyVim / snacks.nvim)</strong> — <code>&lt;leader&gt;gg</code> to open, <code>e</code>/<code>o</code> to edit back in nvim</summary>
+
+**1. Open lazygitrs from Neovim** — `Snacks.lazygit()` hardcodes `lazygit`, so use `Snacks.terminal` instead.
+
+Create `~/.config/nvim/lua/plugins/snacks-lazygitrs.lua`:
+
+```lua
+return {
+  {
+    "folke/snacks.nvim",
+    opts = {
+      lazygit = {
+        configure = false, -- snacks assumes real lazygit YAML/theme
+      },
+    },
+    keys = {
+      {
+        "<leader>gg",
+        function()
+          Snacks.terminal({ "lazygitrs" }, {
+            cwd = LazyVim.root.git(),
+            win = { style = "lazygit" },
+          })
+        end,
+        desc = "Lazygitrs",
+      },
+    },
+  },
+}
+```
+
+Restart nvim (or `:Lazy reload snacks.nvim`) to pick it up.
+
+**2. Make `e` / `o` open files in Neovim** — add to `~/.config/lazygitrs/config.yml` (or `~/.config/lazygit/config.yml`):
+
+```yaml
+os:
+  # Suspends TUI → nvim → restores. editPreset fills edit / editAtLine / etc.
+  editPreset: "nvim"
+  open: "nvim {{filename}}"
+```
+
+Then inside lazygitrs: `e` edits at line, `o` opens the file.
+
+</details>
 
 <!-- GEN_BENCHMARKS_START -->
 

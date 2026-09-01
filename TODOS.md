@@ -2,7 +2,7 @@
   - [x] Better graph view (enabled by default)
   - [x] Filter by branch
   - [x] Filter by commit message (handy if you prefix with ticket IDs)
-- [x] ~Command palette (OpenCode-style) — still figuring this one out~ - It's `?`
+- [x] ~~Command palette (OpenCode-style) — still figuring this one out~~ - It's `?`
 
 - [x] Stash viewer:
   - Can we add the same viewer for files in the '[5] Stash' sidebar tab? (the same way we currently do with Commits tab)
@@ -54,7 +54,7 @@
   - Files:
     - [x] In 'Files', the original lazygit has `e` to open file in editor and `o` to open file in default program.
     - [x] In 'Files', the original lazygit has `<c-o>` to copy the diff of the selected file to clipboard (we have this in `y` menu, but the direct shortcut may be missing).
-    - [ ] Full `$EDITOR` integration — committing with `C` (editor mode) currently has a limitation where it can't suspend the TUI to open a real terminal editor.
+    - [x] Full `$EDITOR` integration — `e`/`o` now suspend the TUI for terminal editors (`hx`/`nvim`/`vim` via `editPreset` / `$EDITOR`). Commit-with-`C` (editor mode) still uses the in-app editor path.
   - Remotes:
     - [x] In 'Remotes', pressing `Enter` should drill into remote branches. Then from a remote branch: `<space>` to checkout, `M` to merge, `r` to rebase onto it, `d` to delete remote branch.
   - Submodules:
@@ -64,8 +64,8 @@
   - Branches:
     - [x] In 'Branches', the original lazygit shows divergence info (ahead/behind counts relative to upstream). (already implemented)
   - Done / Won't Do:
-    - [x] ~Diff mode — the original lazygit has a way to diff any two commits/branches against each other (not just viewing a single commit's diff).~ (Author check: I have separate ideas for diff mode: comapring two commits/branches against each other, it'll be more intuitive)
-    - [x] ~In 'Branches', the original lazygit has `<c-o>` to copy PR URL, we might already have this in the `y` menu but worth verifying the direct shortcut.~ (Author check: so yeah we won't need this)
+    - [x] ~~Diff mode — the original lazygit has a way to diff any two commits/branches against each other (not just viewing a single commit's diff).~~ (Author check: I have separate ideas for diff mode: comapring two commits/branches against each other, it'll be more intuitive)
+    - [x] ~~In 'Branches', the original lazygit has `<c-o>` to copy PR URL, we might already have this in the `y` menu but worth verifying the direct shortcut.~~ (Author check: so yeah we won't need this)
 
 - [x] Improve the speeds still, very important for larger repos. Improve first-load speed. Either cache the data, or the render the TUI even before the git load model data isn't there yet. (perceived speed)
 - [x] regular push behavior to essentially do `git push origin HEAD`
@@ -135,7 +135,7 @@
 
 - [x] Make the combobox work with mouse (in diff_mode)
 - [x] In diff_mode, show the 'current branch' as the first option.
-- [x] ~In 'Commits' view, pressing 'd' to drop a commit.~ Just recommend using 'g' maybe?
+- [x] ~~In 'Commits' view, pressing 'd' to drop a commit.~~ Just recommend using 'g' maybe?
 
 - [x] Improve and standardize list-view mouse interaction behaviors:
   - Keyboard
@@ -143,8 +143,8 @@
     - Pressing up, Only start scrolling up when the selected/cursor is already on the first viewable element (not followed by '2 Files', '3 Branches', '4 Commits', '5 Stash' etc. - currently even if I'm on the last element, it will still scroll up when I press up)
   - Mouse
     - Clicking a list item - just essentially skips cursor to select the item as the new selected/cursor. Shouldn't really imitate 'enter', it just changes the selection. Currently works in '2 Files' tab. i.e. 'Keybindings' (?), Interactive rebase (I), Checkout (c on branches), Color Theme.
-    - Scroll down - ~should have the same behavior as pressing down on any of the cmdk-style components~ we decided later on that it has its own behavior, scroll down just scrolls the list view, does not change the selection.
-    - Scroll up - ~should have the same behavior as pressing up.~ we decided later on that it has its own behavior, scroll up just scrolls the list view, does not change the selection.
+    - Scroll down - ~~should have the same behavior as pressing down on any of the cmdk-style components~~ we decided later on that it has its own behavior, scroll down just scrolls the list view, does not change the selection.
+    - Scroll up - ~~should have the same behavior as pressing up.~~ we decided later on that it has its own behavior, scroll up just scrolls the list view, does not change the selection.
     - [x] In shift- or shift+ (meaning the sizebar is in the only view...), mouse scroll does not work for the list views i.e. Commits, Branches, etc.
     - [x] New change, scrolling up/down with mouse isn't same behavior as pressing down or up. It just scrolls, but doesn't change the current selection. Let's do this!
     - [x] As of Apr 29, 2026 - noticed that this isn't the behavior of the 'Interactive Rebase' UI.
@@ -195,7 +195,7 @@
 
 - [x] Feat: In 'Branches' when I 'checkout' search i.e. (c)... if I type `-` OR 'previous branch' OR 'prev branch', Instead of 'ref', let's show... 'Go to previous branch' (if it's possible to show the name of the actually previous branch (i.e. thinking just a command to check).. If it is, show something like '[-] Previous Branch (branch-name-here)'... but if it's too much of a pain to check for it, dont do it!)
 
-- [ ] Change 'Keybindings' panel (?) to 'Keybindings & Commands'. The only command we have currently is 'Color theme...' (change this to 'Color theme' only no ellipses).
+- [x] Change 'Keybindings' panel (?) to 'Keybindings & Commands'. The only command we have currently is 'Color theme...' (change this to 'Color theme' only no ellipses).
   - Another useful command is
 
 - [x] Flat file view. When I 'add' something, it reorders them in the list which is weird.
@@ -214,11 +214,11 @@
 
 - [x] We already have Commit details when focusing commit items in their respective lists. This new change is ONLY related to full view (shift-). I initially made it show on the side.. But isntead, I decided to always make it show above. So now it'll be a vertical layout. THe half view, default view is just fine, no changes on that.
 
-- [ ] Make 'Graph View' a bit more compact, like lazygit/zed. I like the right-padding that the graph adds so it pushes the table to the right. Except that currently, if there's A LOT of branches. It becomes a problematic problem. So now, let's just make it a scrollable piece of kind of column with a max width. Might be not worth doing because Zed's terminal doesn't have horizontal mouse scroll.
+- [x] Make 'Graph View' a bit more compact, like lazygit/zed. I like the right-padding that the graph adds so it pushes the table to the right. Except that currently, if there's A LOT of branches. It becomes a problematic problem. So now, let's just make it a scrollable piece of kind of column with a max width. Might be not worth doing because Zed's terminal doesn't have horizontal mouse scroll.
 
 - [x] Add a ✦ symbol as a button somewhere inside the 'Commit Message' dialog. This will be the special clickable button that will represent the 'Generate commit message' shortcut. Make it 'hoverable' with the mouse, show a tooltip when I hover on it 'c-g Generate w/ AI'.
 
-- [ ] multiselect commits in 'Commits' list ('4 Commits'). I wanna be able to 'squash'. In the original lazygit, I have these options when I'm focused on a commit item or range selected via `v`: squash, fixup, drop, edit, cherrypick, dismiss range select.
+- [x] multiselect commits in 'Commits' list ('4 Commits'). I wanna be able to 'squash'. In the original lazygit, I have these options when I'm focused on a commit item or range selected via `v`: squash, fixup, drop, edit, cherrypick, dismiss range select.
   - I think the current implementation is wayyy to unusable. Because why does it say 'Fixup commit <> into its parent?' that's very unclear. I think just do the following behavior...
     - The new s,f,d,e behavior (even when 1 or multirange select) in the '4 Commits' tab.
       The original lazygit behavior was for example... Press 's' to squash down - when I press it it shows a 'Are you sure you want to squash the selected commit(s) into the commit below?
@@ -236,14 +236,14 @@
 
 - [x] While 'generating commit messages' or 'pushing' the UI is blocked. Let's not block it. Let us move around a bit. The question is.. where to put this indicator.
 
-- [x] ~Use 'check' and 'checkmark' for staged and unstaged (not like lazygit), more like zed.~ (not planned)
+- [x] ~~Use 'check' and 'checkmark' for staged and unstaged (not like lazygit), more like zed.~~ (not planned)
 
 - [x] Allow me to scroll using mouse the 'Commit Messages' dialog.
 
 - [x] During interactive rebase UI, merge conflicts, I see a good UI for continuing and stuff. But I think when I press continue and the next commit on the list has a conflict. It just shows me the error dialog that there's a new conflict but does not update the new interactive rebase UI with the new progress on the next commit.
 
 - [x] Performance optimizations for large repos, noticed, the performance sucked for Zed. Diff viewer was not the issue, i think it's just loading a lot in one go. Maybe paginate it. Partially fixed now, less laggy.
-  - [ ] But The issue now is that the graph is rendering too much because too many branches. but still usable, we just need to compact the graph or something
+  - [x] But The issue now is that the graph is rendering too much because too many branches. but still usable, we just need to compact the graph or something
 
 - [x] Add a "unified diff" view and a "side-by-side (split) diff view". Currently we only have split diff view by default. Let's give it a hotkey
 
@@ -267,3 +267,59 @@ Where I observed this behavior: I noticed this for the "Commit Message" and "Des
 - [x] Graph is still not good, the feature where it becomes a solid circle disappeared. But only for nodes that have like this connected + hexagon look.
 
 - [x] `-` in '3 Branches' does not work
+
+- [ ] hunk-like notes feature
+
+- [x] in files list, show a `*2 +143 -71` on the justified end of the file item.
+- [x] When doing shift+] and shift+[ (the diff exploration) on the diff view, give me a way to see the current "hunk block" that I'm reading in the top right with this indication: [1/5] meaning 1 out of 5 hunks.
+
+- [x] Detached head.. When I'm making a commit. Like press 'c'. Immediately show a warning, but allow the action to continue anyway. Like 'You are in a detached head, not a branch. Are you sure you want to commit?' And it's just a simple yes or no alert.
+
+- [x] Better cherry picks tips.
+  - [x] 'C' currently says 'Cherry pick', but also say 'C Copy (cherry-pick)'.
+  - [x] I can do 'C' to copy. Let me do see 'V Paste (cherry-pick)' in the tips and help `?`. It must be at the very beginning of tips. Make sure the alert says the branch it will put it onto (which I assume is always the currently checked-out branch - am I right?), not just "On this branch?" - because the user would kinda assume that it would be on the branch that their cursor hovered on.
+
+- [ ] TBD (if I want to implement GitHub): tabs at the very top for: 'Git', 'Compare', 'Github'
+  - [ ] Git is just the current
+  - [ ] Compare is just the 'W' global key we already have
+  - [ ] TBD: Github is just Kit Langton's `ghui` https://github.com/kitlangton/ghui rebuit in rust.
+    - [ ] Issues
+    - [ ] Pull Requests
+    - [ ] Repos
+  - [ ] TBD: GitLab?
+
+- [ ] jj support? https://github.com/jj-vcs/jj
+
+- [x] Resize the sidebar using mouse, click and drag.
+
+- [x] in original lazygit, space in the '4 Commits' view actually isn't by default always entering the 'detached head' context. Most of the time (as long as you see the branch name in the list item, like if it's the item that's the head of that branch), it actually shows `l checkout branch '<branchname>'` as a second option and the first option is like `d checkout commit b838172 as detached head`
+
+- [x] the \` key to toggle the tree view or the list view isnt persisted inside the "W" Compare tool. Seems like it's always list to start.
+
+- [x] When deleting a remote tag (using 'delete remote tag' OR 'delete remote and local tag') that's on origin (it's a network request).. So show an async modal, instead of showing a "nothing changed" kinda UI. (add feedback)
+
+- [x] Allow reword on empty commit (original lazygit allows this seamlessly)
+- [x] When viewing a tag in the 'Tags' subtab in '3'. Add a `(main,origin)` label, or the other remotes as well like `(main,origin/main,someremote/main)` or something?
+
+- [x] Optimize the "after pressing enter" when in commiting or rewording.
+
+- [x] The `/` filtering needs better UI feedback. In the original lazygit, it highlights the chars that it matches with. But the scope affects a lot, so let's see if we can find a way to do this well.
+
+- [x] If the new commit in `main` is super fresh.. The first time I do `p` Pull, throws an eror of 'divergent branches', but then the second time I run `p` and enter. it's okay.
+
+- [ ] Checking out pull requests branches, by pressing space I think? `gh pr checkout` and also doing `P` or `p` from the pr head? I was thinking a bunhc of settings to do `P` and then see something like a a custom push command there like push to a different origin etc. Idk tbh what UX i want here.
+
+- [x] IN filetree view, the "M" or "A" or "??" should be slightly more indented. in Files.. Because currently it's lesser indented than the ▶︎ characters, visually makes u think it's at the root, which is bad UX.
+
+- [x] lazygitrs upgrade
+
+- [x] Be able to fallback w/ confirm alert when "c" checkout a new branch that doesnt exist.
+
+- [x] Improve filter performance (ctrl-s), more instantaneous, too slow right now
+
+- [x] Unified diff when scrolling, sometimes some of the diff lines get cleared as I scroll
+
+- [x] Interactive rebase 'e' bug. Points to older commit
+
+- [x] Stability of commit message generation and their wrapping, consistent \n- is sometimes cleared in the body. this is definitely a wrapping problem in the UI
+  - Root cause: `unwrap_commit_body` joined consecutive non-blank lines with spaces (`- a\n- b` → `- a - b`). Soft-wrap is now display-only; logical newlines from AI/paste/history are preserved. `WrapLayout` uses unicode display width (crabcode-style).

@@ -1,5 +1,7 @@
 use anyhow::Result;
+use crossterm::event::KeyEvent;
 use tui_textarea::{CursorMove, TextArea};
+use unicode_width::UnicodeWidthChar;
 
 use super::Gui;
 
@@ -7,32 +9,23 @@ fn is_word_char(c: char) -> bool {
     c.is_alphanumeric() || c == '_'
 }
 
-/// Reverse hard-wrapping in an externally-formatted commit body so it can be
-/// loaded into a soft-wrapped editor without spurious mid-paragraph line breaks.
+/// Synchronize a free-entry row and keep it selected. Used where the typed
+/// value is valid on its own and suggestions are optional completions.
+pub fn sync_list_picker_prefer_free_entry(core: &mut ListPickerCore, free_entry_category: &str) {
+    sync_list_picker_free_entry(core, free_entry_category);
+    if !core.search_textarea.lines().join("").trim().is_empty() {
+        core.selected = 0;
+    }
+}
+
+/// Normalize an externally-sourced commit body for the soft-wrapped editor.
 ///
-/// Convention: blank lines separate paragraphs; consecutive non-blank lines
-/// inside a paragraph are joined back into one logical line. Used when loading
-/// AI-generated messages, clipboard pastes via the menu, and history entries.
+/// Soft-wrap is display-only (`BodySoftWrap` / `WrapLayout`), so logical
+/// newlines from AI output, clipboard pastes, and history must be preserved.
+/// Joining consecutive lines used to collapse bullet lists into one line
+/// (`- a\n- b` → `- a - b`); we only normalize `\r\n` / trailing `\r`.
 pub fn unwrap_commit_body(text: &str) -> String {
-    let mut paragraphs: Vec<String> = Vec::new();
-    let mut current = String::new();
-    for line in text.lines() {
-        if line.trim().is_empty() {
-            if !current.is_empty() {
-                paragraphs.push(std::mem::take(&mut current));
-            }
-            // Multiple blank lines collapse into one paragraph break.
-        } else {
-            if !current.is_empty() {
-                current.push(' ');
-            }
-            current.push_str(line);
-        }
-    }
-    if !current.is_empty() {
-        paragraphs.push(current);
-    }
-    paragraphs.join("\n\n")
+    text.replace("\r\n", "\n").replace('\r', "\n")
 }
 
 /// Source-of-truth for the commit body when soft-wrap is in effect. The body
@@ -68,6 +61,7 @@ impl WrapLayout {
         let mut para_start = 0usize;
         let paragraphs: Vec<&str> = raw.split('\n').collect();
         let total_paragraphs = paragraphs.len();
+        let wrap_width = wrap_width.max(1);
         for (p_idx, para) in paragraphs.iter().enumerate() {
             let chars: Vec<char> = para.chars().collect();
             if chars.is_empty() {
@@ -76,40 +70,51 @@ impl WrapLayout {
                     raw_start: para_start,
                     char_len: 0,
                 });
-            } else if wrap_width == 0 {
-                lines.push(WrapLine {
-                    text: para.to_string(),
-                    raw_start: para_start,
-                    char_len: chars.len(),
-                });
             } else {
                 let mut start = 0usize;
                 while start < chars.len() {
-                    let remaining = chars.len() - start;
-                    if remaining <= wrap_width {
-                        let text: String = chars[start..].iter().collect();
-                        lines.push(WrapLine {
-                            text,
-                            raw_start: para_start + start,
-                            char_len: remaining,
-                        });
-                        start = chars.len();
-                    } else {
-                        let window = &chars[start..start + wrap_width];
-                        let break_at = window.iter().rposition(|c| *c == ' ');
-                        let (line_end, consumed) = match break_at {
-                            Some(0) | None => (start + wrap_width, 0),
-                            Some(i) => (start + i, 1),
-                        };
-                        let text: String = chars[start..line_end].iter().collect();
-                        let len = line_end - start;
-                        lines.push(WrapLine {
-                            text,
-                            raw_start: para_start + start,
-                            char_len: len,
-                        });
-                        start = line_end + consumed;
+                    // Grow by display width (crabcode-style), not char count,
+                    // so wide glyphs don't force horizontal scroll.
+                    let mut end = start;
+                    let mut width = 0usize;
+                    let mut last_space: Option<usize> = None;
+                    while end < chars.len() {
+                        let ch = chars[end];
+                        let ch_width = UnicodeWidthChar::width(ch).unwrap_or(0);
+                        if end > start && width + ch_width > wrap_width {
+                            break;
+                        }
+                        if ch == ' ' {
+                            last_space = Some(end);
+                        }
+                        width += ch_width;
+                        end += 1;
+                        if width >= wrap_width {
+                            break;
+                        }
                     }
+                    if end == start {
+                        // Pathological zero-width / over-wide glyph: advance one char.
+                        end = (start + 1).min(chars.len());
+                    }
+
+                    let at_end = end >= chars.len();
+                    let (line_end, consumed) = if at_end {
+                        (end, 0)
+                    } else {
+                        match last_space {
+                            Some(i) if i > start => (i, 1),
+                            _ => (end, 0),
+                        }
+                    };
+                    let text: String = chars[start..line_end].iter().collect();
+                    let len = line_end - start;
+                    lines.push(WrapLine {
+                        text,
+                        raw_start: para_start + start,
+                        char_len: len,
+                    });
+                    start = line_end + consumed;
                 }
             }
             // Advance past this paragraph's chars + the \n separator (except after the last).
@@ -172,6 +177,18 @@ impl WrapLayout {
     pub fn line_count(&self) -> usize {
         self.lines.len()
     }
+}
+
+fn parse_command_key(key: &str) -> Option<KeyEvent> {
+    let normalized = match key {
+        "Enter" => "<enter>",
+        "Tab" => "<tab>",
+        "esc" | "Esc" => "<esc>",
+        "Alt+↑" => "<a-k>",
+        "Alt+↓" => "<a-j>",
+        _ => key,
+    };
+    crate::config::keybindings::parse_key(normalized)
 }
 
 impl BodySoftWrap {
@@ -397,13 +414,23 @@ impl BodySoftWrap {
         self.cursor = layout.visual_to_cursor(row, col);
     }
 
+    /// Place the visual cursor on an already-projected `textarea` without
+    /// rebuilding it. Keeps the existing viewport so Up/Down only scroll when
+    /// the cursor would leave the visible area (browser-textarea behavior).
+    pub fn apply_cursor_into(&self, textarea: &mut TextArea<'static>, wrap_width: usize) {
+        let layout = WrapLayout::build(&self.raw, wrap_width.max(1));
+        let (row, col) = layout.cursor_to_visual(self.cursor);
+        textarea.move_cursor(CursorMove::Jump(row as u16, col as u16));
+    }
+
     /// Re-render `textarea` to display the current raw text soft-wrapped at
     /// `wrap_width`, and place the visual cursor where it logically belongs.
     ///
     /// We rebuild the textarea from scratch (rather than mutating in place)
     /// because tui_textarea's internal viewport/scroll state can get stuck
     /// past the end of content after a terminal resize. A fresh TextArea
-    /// always starts with a clean viewport.
+    /// always starts with a clean viewport. Prefer [`Self::apply_cursor_into`]
+    /// for pure cursor moves so scroll is preserved.
     pub fn render_into(&self, textarea: &mut TextArea<'static>, wrap_width: usize) {
         let layout = WrapLayout::build(&self.raw, wrap_width.max(1));
         let lines: Vec<String> = layout.lines.iter().map(|l| l.text.clone()).collect();
@@ -455,6 +482,21 @@ pub enum CommitInputFocus {
     Body,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CommitInputKind {
+    Commit,
+    Reword,
+}
+
+impl CommitInputKind {
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Commit => "Commit message",
+            Self::Reword => "Reword commit",
+        }
+    }
+}
+
 pub enum PopupState {
     None,
     Confirm {
@@ -474,6 +516,7 @@ pub enum PopupState {
     },
     /// Two-field commit message editor (summary + body), like lazygit.
     CommitInput {
+        kind: CommitInputKind,
         summary_textarea: TextArea<'static>,
         body_textarea: TextArea<'static>,
         /// Source-of-truth for body content. `body_textarea` is a soft-wrapped
@@ -507,12 +550,14 @@ pub enum PopupState {
         title: String,
         items: Vec<ChecklistItem>,
         selected: usize,
-        search: String,
+        search_textarea: TextArea<'static>,
+        /// When present, non-empty search text is also a checkable custom item.
+        free_entry_category: Option<String>,
         on_confirm: ChecklistAction,
     },
-    /// Keybinding help overlay with integrated search.
-    Help {
-        sections: Vec<HelpSection>,
+    /// Searchable command palette with keybinding hints.
+    CommandPalette {
+        sections: Vec<CommandSection>,
         selected: usize,
         search_textarea: TextArea<'static>,
         scroll_offset: usize,
@@ -521,6 +566,15 @@ pub enum PopupState {
     RefPicker {
         title: String,
         core: ListPickerCore,
+        on_confirm: ListPickerAction,
+    },
+    /// Generic searchable list picker with free-text entry (path/author filters, etc.).
+    /// Modeled after [`PopupState::RefPicker`] but with a configurable free-entry category.
+    ListPicker {
+        title: String,
+        core: ListPickerCore,
+        /// Category label for the synthetic free-entry row (e.g. `"[path]"`, `"[author]"`).
+        free_entry_category: String,
         on_confirm: ListPickerAction,
     },
     /// Color theme picker with live preview and search.
@@ -544,6 +598,45 @@ pub type ChecklistAction = Box<dyn FnOnce(&mut Gui, Vec<String>) -> Result<()>>;
 pub struct ChecklistItem {
     pub label: String,
     pub checked: bool,
+    pub is_free_entry: bool,
+}
+
+/// Keep a free-entry checklist row in sync with the current search text.
+///
+/// When `free_entry_category` is set and the search box is non-empty, a
+/// synthetic item whose label is the typed text is inserted at the top so
+/// users can multi-select arbitrary values (authors) just like known ones.
+pub fn sync_checklist_free_entry(
+    items: &mut Vec<ChecklistItem>,
+    free_entry_category: Option<&str>,
+    search: &str,
+) {
+    let previously_checked = items
+        .iter()
+        .find(|item| item.is_free_entry)
+        .map(|item| (item.label.clone(), item.checked));
+    items.retain(|item| !item.is_free_entry);
+    if free_entry_category.is_none() {
+        return;
+    }
+    let search = search.trim();
+    if search.is_empty() {
+        return;
+    }
+    if items.iter().any(|item| item.label == search) {
+        return;
+    }
+    let checked = previously_checked
+        .as_ref()
+        .is_some_and(|(label, checked)| label == search && *checked);
+    items.insert(
+        0,
+        ChecklistItem {
+            label: search.to_string(),
+            checked,
+            is_free_entry: true,
+        },
+    );
 }
 
 impl PartialEq for PopupState {
@@ -566,6 +659,24 @@ pub fn make_commit_summary_textarea() -> TextArea<'static> {
     make_textarea("Required")
 }
 
+/// Replace the summary textarea contents with `text`, cursor at end.
+///
+/// Always rebuilds a fresh `TextArea` so horizontal `scroll_top` is reset.
+/// Reusing select_all/cut/insert_str can leave a stale scroll past the new
+/// end (tui-textarea's `next_scroll_top` then clamps to `cursor`, showing
+/// empty space to the right of the text).
+pub fn set_commit_summary_text(textarea: &mut TextArea<'static>, text: &str) {
+    let mut fresh = make_commit_summary_textarea();
+    // Preserve focus/cursor styling from the existing widget.
+    fresh.set_cursor_style(textarea.cursor_style());
+    fresh.set_cursor_line_style(textarea.cursor_line_style());
+    fresh.set_style(textarea.style());
+    if !text.is_empty() {
+        fresh.insert_str(text);
+    }
+    *textarea = fresh;
+}
+
 pub fn make_commit_body_textarea() -> TextArea<'static> {
     let mut ta = make_textarea("Optional");
     // Body starts unfocused — hide cursor
@@ -573,10 +684,23 @@ pub fn make_commit_body_textarea() -> TextArea<'static> {
     ta
 }
 
-pub fn make_help_search_textarea() -> TextArea<'static> {
+pub fn make_command_palette_search_textarea() -> TextArea<'static> {
     use ratatui::style::{Color, Style};
 
-    let mut ta = make_textarea("Type to filter...");
+    let mut ta = make_textarea("Search commands or keybindings...");
+    ta.set_style(Style::default().fg(Color::Yellow));
+    ta.set_cursor_style(
+        Style::default()
+            .fg(Color::Yellow)
+            .add_modifier(ratatui::style::Modifier::REVERSED),
+    );
+    ta
+}
+
+pub fn make_checklist_search_textarea() -> TextArea<'static> {
+    use ratatui::style::{Color, Style};
+
+    let mut ta = make_textarea("Filter...");
     ta.set_style(Style::default().fg(Color::Yellow));
     ta.set_cursor_style(
         Style::default()
@@ -593,17 +717,145 @@ pub struct MenuItem {
     pub action: Option<MenuAction>,
 }
 
-pub struct HelpSection {
+pub struct CommandSection {
     pub title: String,
-    pub entries: Vec<HelpEntry>,
+    pub entries: Vec<CommandEntry>,
 }
 
-pub struct HelpEntry {
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum CommandAction {
+    Dispatch(KeyEvent),
+    OpenThemePicker,
+    Unavailable,
+}
+
+#[derive(Debug, Clone)]
+pub struct CommandEntry {
     pub key: String,
     pub description: String,
+    pub action: CommandAction,
+}
+
+impl CommandEntry {
+    pub fn keybinding(key: String, description: String) -> Self {
+        let action = parse_command_key(&key)
+            .map(CommandAction::Dispatch)
+            .unwrap_or(CommandAction::Unavailable);
+        Self {
+            key,
+            description: description.into(),
+            action,
+        }
+    }
+
+    pub fn action(key: String, description: String, action: CommandAction) -> Self {
+        Self {
+            key,
+            description,
+            action,
+        }
+    }
+
+    pub fn is_executable(&self) -> bool {
+        self.action != CommandAction::Unavailable
+    }
+}
+
+#[cfg(test)]
+mod commit_body_wrap_tests {
+    use super::{BodySoftWrap, WrapLayout, unwrap_commit_body};
+
+    #[test]
+    fn unwrap_preserves_newlines_and_bullets() {
+        let raw = "- something\n- something 2\n\nparagraph\n";
+        assert_eq!(
+            unwrap_commit_body(raw),
+            "- something\n- something 2\n\nparagraph\n"
+        );
+    }
+
+    #[test]
+    fn unwrap_normalizes_crlf() {
+        assert_eq!(unwrap_commit_body("a\r\nb\rc"), "a\nb\nc");
+    }
+
+    #[test]
+    fn wrap_layout_keeps_logical_newlines_as_rows() {
+        let layout = WrapLayout::build("- something\n- something 2", 80);
+        assert_eq!(layout.line_count(), 2);
+        assert_eq!(layout.as_textarea_text(), "- something\n- something 2");
+    }
+
+    #[test]
+    fn wrap_layout_breaks_on_display_width_not_char_count() {
+        // Two wide chars (width 2 each) should wrap before a third at width 4.
+        let layout = WrapLayout::build("あああ", 4);
+        assert_eq!(layout.line_count(), 2);
+        assert_eq!(layout.as_textarea_text(), "ああ\nあ");
+    }
+
+    #[test]
+    fn soft_wrap_preserves_raw_newlines_while_rendering() {
+        let mut state = BodySoftWrap::new();
+        state.set_text("- something\n- something 2");
+        let mut ta = super::make_commit_body_textarea();
+        state.render_into(&mut ta, 80);
+        assert_eq!(state.raw(), "- something\n- something 2");
+        assert_eq!(ta.lines().join("\n"), "- something\n- something 2");
+    }
+}
+
+#[cfg(test)]
+mod command_entry_tests {
+    use super::{CommandAction, CommandEntry};
+    use crossterm::event::{KeyCode, KeyModifiers};
+
+    #[test]
+    fn single_key_binding_is_executable() {
+        let entry = CommandEntry::keybinding("x".into(), "Delete".into());
+
+        assert!(entry.is_executable());
+        assert!(matches!(
+            entry.action,
+            CommandAction::Dispatch(key)
+                if key.code == KeyCode::Char('x') && key.modifiers == KeyModifiers::NONE
+        ));
+    }
+
+    #[test]
+    fn compound_key_hint_is_not_executable() {
+        let entry = CommandEntry::keybinding("j/k".into(), "Navigate".into());
+
+        assert!(!entry.is_executable());
+        assert_eq!(entry.action, CommandAction::Unavailable);
+    }
+
+    #[test]
+    fn explicit_action_is_executable_without_a_keybinding() {
+        let entry = CommandEntry::action(
+            String::new(),
+            "Color theme...".into(),
+            CommandAction::OpenThemePicker,
+        );
+
+        assert!(entry.is_executable());
+    }
+
+    #[test]
+    fn display_key_label_is_executable() {
+        let entry = CommandEntry::keybinding("Tab".into(), "Next panel".into());
+
+        assert!(matches!(
+            entry.action,
+            CommandAction::Dispatch(key) if key.code == KeyCode::Tab
+        ));
+    }
 }
 
 pub type ListPickerAction = Box<dyn FnOnce(&mut Gui, &str) -> Result<()>>;
+
+/// Category used by [`PopupState::RefPicker`] for the synthetic free-entry row.
+pub const REF_FREE_ENTRY_CATEGORY: &str = "[ref]";
 
 #[derive(Debug, Clone)]
 pub struct ListPickerItem {
@@ -613,6 +865,8 @@ pub struct ListPickerItem {
     pub label: String,
     /// Section/category header (e.g. "Branches", "Tags"). Empty for flat lists.
     pub category: String,
+    /// Optional right-aligned dimmed label (e.g. "light" / "dark" for themes).
+    pub description: Option<String>,
 }
 
 /// Shared state for searchable list picker popups (RefPicker, ThemePicker, etc.).
@@ -621,4 +875,367 @@ pub struct ListPickerCore {
     pub selected: usize,
     pub search_textarea: TextArea<'static>,
     pub scroll_offset: usize,
+}
+
+/// True when index 0 is the synthetic free-entry row for `free_entry_category`.
+pub fn is_free_entry_item(items: &[ListPickerItem], free_entry_category: &str) -> bool {
+    !items.is_empty() && items[0].category == free_entry_category
+}
+
+/// Remove the synthetic free-entry row at index 0 if present.
+pub fn remove_free_entry_item(items: &mut Vec<ListPickerItem>, free_entry_category: &str) {
+    if is_free_entry_item(items, free_entry_category) {
+        items.remove(0);
+    }
+}
+
+/// After the search textarea changes, sync the free-entry synthetic item and
+/// update selection to the first matching real item (or the free-entry row).
+///
+/// Scroll offset is left to the caller when matches exist (key vs paste differ);
+/// when search is cleared, `scroll_offset` is reset to 0.
+pub fn sync_list_picker_free_entry(core: &mut ListPickerCore, free_entry_category: &str) {
+    let new_search = core.search_textarea.lines().join("");
+    remove_free_entry_item(&mut core.items, free_entry_category);
+
+    let new_lower = new_search.to_lowercase();
+    if !new_lower.is_empty() {
+        let trimmed = new_search.trim().to_string();
+        core.items.insert(
+            0,
+            ListPickerItem {
+                value: trimmed.clone(),
+                label: trimmed,
+                category: free_entry_category.to_string(),
+                description: None,
+            },
+        );
+
+        if let Some(idx) = core.items.iter().skip(1).position(|i| {
+            i.label.to_lowercase().contains(&new_lower)
+                || i.value.to_lowercase().contains(&new_lower)
+        }) {
+            core.selected = idx + 1;
+        } else {
+            core.selected = 0;
+        }
+    } else {
+        core.selected = 0;
+        core.scroll_offset = 0;
+    }
+}
+
+/// Whether a list-picker row matches the current search (empty search = all).
+pub fn list_picker_item_matches(item: &ListPickerItem, search_lower: &str) -> bool {
+    if search_lower.is_empty() {
+        return true;
+    }
+    item.label.to_lowercase().contains(search_lower)
+        || item.value.to_lowercase().contains(search_lower)
+}
+
+/// Indices into `items` that match `search` (trimmed, case-insensitive).
+pub fn list_picker_matching_indices(items: &[ListPickerItem], search: &str) -> Vec<usize> {
+    let search_lower = search.trim().to_lowercase();
+    items
+        .iter()
+        .enumerate()
+        .filter(|(_, item)| list_picker_item_matches(item, &search_lower))
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// Display-row index for `sel` among only the matching items (plus category headers).
+pub fn list_picker_filtered_display_idx(
+    items: &[ListPickerItem],
+    matching: &[usize],
+    sel: usize,
+) -> usize {
+    let mut di = 0usize;
+    let mut last_cat = String::new();
+    for &ei in matching {
+        let Some(item) = items.get(ei) else {
+            continue;
+        };
+        if !item.category.is_empty() && item.category != last_cat {
+            di += 1;
+            last_cat = item.category.clone();
+        }
+        if ei == sel {
+            return di;
+        }
+        di += 1;
+    }
+    di
+}
+
+/// Next matching item index after `selected` (cycles within `matching`).
+pub fn list_picker_next_match(matching: &[usize], selected: usize) -> Option<usize> {
+    if matching.is_empty() {
+        return None;
+    }
+    match matching.iter().position(|&i| i == selected) {
+        Some(pos) => Some(matching[(pos + 1) % matching.len()]),
+        None => matching
+            .iter()
+            .copied()
+            .find(|&i| i > selected)
+            .or_else(|| matching.first().copied()),
+    }
+}
+
+/// Previous matching item index before `selected` (cycles within `matching`).
+pub fn list_picker_prev_match(matching: &[usize], selected: usize) -> Option<usize> {
+    if matching.is_empty() {
+        return None;
+    }
+    match matching.iter().position(|&i| i == selected) {
+        Some(0) => Some(matching[matching.len() - 1]),
+        Some(pos) => Some(matching[pos - 1]),
+        None => matching
+            .iter()
+            .rev()
+            .copied()
+            .find(|&i| i < selected)
+            .or_else(|| matching.last().copied()),
+    }
+}
+
+/// Keep `selected` on a matching row after the search string changes.
+pub fn list_picker_clamp_selection_to_matches(
+    matching: &[usize],
+    selected: usize,
+) -> Option<usize> {
+    if matching.is_empty() {
+        return None;
+    }
+    if matching.contains(&selected) {
+        Some(selected)
+    } else {
+        matching.first().copied()
+    }
+}
+
+/// Resolve the confirm value for a free-entry list picker: the selected item,
+/// or the trimmed search text when nothing is selected but search is non-empty.
+pub fn list_picker_confirm_value(core: &ListPickerCore) -> Option<String> {
+    let search = core.search_textarea.lines().join("");
+    if let Some(item) = core.items.get(core.selected) {
+        Some(item.value.clone())
+    } else if !search.trim().is_empty() {
+        Some(search.trim().to_string())
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod free_entry_tests {
+    use super::*;
+
+    fn core_with(items: Vec<ListPickerItem>, search: &str) -> ListPickerCore {
+        let mut ta = make_command_palette_search_textarea();
+        if !search.is_empty() {
+            ta.insert_str(search);
+        }
+        ListPickerCore {
+            items,
+            selected: 0,
+            search_textarea: ta,
+            scroll_offset: 3,
+        }
+    }
+
+    fn item(value: &str, category: &str) -> ListPickerItem {
+        ListPickerItem {
+            value: value.to_string(),
+            label: value.to_string(),
+            category: category.to_string(),
+            description: None,
+        }
+    }
+
+    #[test]
+    fn sync_inserts_free_entry_and_selects_match() {
+        let mut core = core_with(
+            vec![
+                item("main", "Branches"),
+                item("feature/path-filter", "Branches"),
+                item("v1.0", "Tags"),
+            ],
+            "path",
+        );
+
+        sync_list_picker_free_entry(&mut core, "[path]");
+
+        assert_eq!(core.items.len(), 4);
+        assert!(is_free_entry_item(&core.items, "[path]"));
+        assert_eq!(core.items[0].value, "path");
+        assert_eq!(core.items[0].category, "[path]");
+        // First real match after the free-entry row
+        assert_eq!(core.selected, 2);
+        assert_eq!(core.items[core.selected].value, "feature/path-filter");
+    }
+
+    #[test]
+    fn sync_selects_free_entry_when_no_match() {
+        let mut core = core_with(vec![item("main", "Branches")], "orphan");
+
+        sync_list_picker_free_entry(&mut core, "[author]");
+
+        assert_eq!(core.items.len(), 2);
+        assert_eq!(core.selected, 0);
+        assert_eq!(core.items[0].value, "orphan");
+        assert_eq!(core.items[0].category, "[author]");
+    }
+
+    #[test]
+    fn preferred_free_entry_stays_selected_when_a_suggestion_matches() {
+        let mut core = core_with(vec![item("src/config", "")], "src");
+
+        sync_list_picker_prefer_free_entry(&mut core, "[path]");
+
+        assert_eq!(core.selected, 0);
+        assert_eq!(core.items[0].value, "src");
+        assert_eq!(core.items[1].value, "src/config");
+    }
+
+    #[test]
+    fn sync_replaces_previous_free_entry() {
+        let mut core = core_with(vec![item("old", "[path]"), item("main", "Branches")], "new");
+
+        sync_list_picker_free_entry(&mut core, "[path]");
+
+        assert_eq!(core.items.len(), 2);
+        assert_eq!(core.items[0].value, "new");
+        assert!(core.items.iter().filter(|i| i.category == "[path]").count() == 1);
+    }
+
+    #[test]
+    fn sync_clears_free_entry_and_resets_scroll_when_search_empty() {
+        let mut core = core_with(vec![item("typed", "[path]"), item("main", "Branches")], "");
+        core.selected = 1;
+
+        sync_list_picker_free_entry(&mut core, "[path]");
+
+        assert_eq!(core.items.len(), 1);
+        assert_eq!(core.items[0].value, "main");
+        assert_eq!(core.selected, 0);
+        assert_eq!(core.scroll_offset, 0);
+    }
+
+    #[test]
+    fn confirm_value_prefers_selected_item() {
+        let mut core = core_with(vec![item("main", "Branches")], "mai");
+        sync_list_picker_free_entry(&mut core, "[ref]");
+        // selected should be the real match
+        let value = list_picker_confirm_value(&core).unwrap();
+        assert_eq!(value, "main");
+    }
+
+    #[test]
+    fn confirm_value_falls_back_to_search_when_empty_list() {
+        let core = core_with(vec![], "typed-value");
+        assert_eq!(
+            list_picker_confirm_value(&core).as_deref(),
+            Some("typed-value")
+        );
+    }
+
+    #[test]
+    fn confirm_value_none_when_empty() {
+        let core = core_with(vec![], "");
+        assert!(list_picker_confirm_value(&core).is_none());
+    }
+
+    #[test]
+    fn matching_indices_filters_case_insensitively() {
+        let items = vec![
+            item("src/main.rs", ""),
+            item("README.md", ""),
+            item("src/gui/mod.rs", ""),
+        ];
+        assert_eq!(list_picker_matching_indices(&items, "gui"), vec![2]);
+        assert_eq!(list_picker_matching_indices(&items, "SRC"), vec![0, 2]);
+        assert_eq!(list_picker_matching_indices(&items, ""), vec![0, 1, 2]);
+        assert!(list_picker_matching_indices(&items, "zzz").is_empty());
+    }
+
+    #[test]
+    fn next_prev_match_cycle_within_filtered_set() {
+        let matching = vec![0usize, 3, 7];
+        assert_eq!(list_picker_next_match(&matching, 0), Some(3));
+        assert_eq!(list_picker_next_match(&matching, 7), Some(0));
+        assert_eq!(list_picker_prev_match(&matching, 7), Some(3));
+        assert_eq!(list_picker_prev_match(&matching, 0), Some(7));
+        assert_eq!(
+            list_picker_clamp_selection_to_matches(&matching, 5),
+            Some(0)
+        );
+        assert_eq!(
+            list_picker_clamp_selection_to_matches(&matching, 3),
+            Some(3)
+        );
+    }
+}
+
+#[cfg(test)]
+mod checklist_free_entry_tests {
+    use super::{ChecklistItem, sync_checklist_free_entry};
+
+    fn item(label: &str, checked: bool) -> ChecklistItem {
+        ChecklistItem {
+            label: label.to_string(),
+            checked,
+            is_free_entry: false,
+        }
+    }
+
+    #[test]
+    fn inserts_custom_author_at_top() {
+        let mut items = vec![item("Alice <a@example.com>", false)];
+
+        sync_checklist_free_entry(&mut items, Some("[author]"), "Bob <b@example.com>");
+
+        assert_eq!(items.len(), 2);
+        assert!(items[0].is_free_entry);
+        assert_eq!(items[0].label, "Bob <b@example.com>");
+        assert!(!items[0].checked);
+    }
+
+    #[test]
+    fn preserves_checked_state_for_same_custom_value() {
+        let mut items = vec![
+            ChecklistItem {
+                label: "typed".to_string(),
+                checked: true,
+                is_free_entry: true,
+            },
+            item("Alice <a@example.com>", false),
+        ];
+
+        sync_checklist_free_entry(&mut items, Some("[author]"), "typed");
+
+        assert_eq!(items.len(), 2);
+        assert!(items[0].is_free_entry);
+        assert!(items[0].checked);
+    }
+
+    #[test]
+    fn removes_free_entry_when_search_cleared() {
+        let mut items = vec![
+            ChecklistItem {
+                label: "typed".to_string(),
+                checked: true,
+                is_free_entry: true,
+            },
+            item("Alice <a@example.com>", true),
+        ];
+
+        sync_checklist_free_entry(&mut items, Some("[author]"), "");
+
+        assert_eq!(items.len(), 1);
+        assert_eq!(items[0].label, "Alice <a@example.com>");
+        assert!(items[0].checked);
+    }
 }

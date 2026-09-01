@@ -320,6 +320,10 @@ pub struct DiffViewState {
     pub view_layout: DiffViewLayout,
     /// Whether long lines are wrapped to fit the panel width.
     pub wrap: bool,
+    /// Last unified content width used for wrap/scroll accounting.
+    /// Updated on each render so scroll helpers can compute visual rows
+    /// without a live layout.
+    pub last_content_width: usize,
     /// Whether the currently viewed file exists in the working tree on disk.
     pub file_exists_on_disk: bool,
     /// Hunk line number offsets for unified diffs. Each entry is
@@ -378,6 +382,7 @@ impl Default for DiffViewState {
             side_view: DiffSideView::Both,
             view_layout: DiffViewLayout::SideBySide,
             wrap: false,
+            last_content_width: 0,
             file_exists_on_disk: false,
             hunk_line_offsets: Vec::new(),
             search_active: false,
@@ -419,7 +424,18 @@ impl DiffViewState {
     }
 
     pub fn toggle_view_layout(&mut self) {
-        self.view_layout = self.view_layout.toggled();
+        // Convert scroll between DiffLine-index (split) and visual-row (unified)
+        // so the same content stays near the top after toggling.
+        let width = self.last_content_width.max(1);
+        if self.view_layout == DiffViewLayout::SideBySide {
+            let line = self.scroll_offset.min(self.lines.len().saturating_sub(1));
+            self.view_layout = DiffViewLayout::Unified;
+            self.scroll_offset = self.unified_visual_row_for_line(line, width);
+        } else {
+            let line = self.current_scroll_line();
+            self.view_layout = DiffViewLayout::SideBySide;
+            self.scroll_offset = line;
+        }
         self.horizontal_scroll = 0;
         self.selection = None;
     }
@@ -565,10 +581,10 @@ impl DiffViewState {
     /// Scroll so the current search match is visible.
     pub fn scroll_to_current_match(&mut self) {
         if let Some(m) = self.search_matches.get(self.search_match_idx) {
-            let line = m.line_idx;
-            // Scroll so the match line is visible (roughly centered)
-            if line < self.scroll_offset || line >= self.scroll_offset + 20 {
-                self.scroll_offset = line.saturating_sub(5);
+            let target = self.scroll_target_for_line(m.line_idx);
+            // Scroll so the match line is visible (roughly centered).
+            if target < self.scroll_offset || target >= self.scroll_offset + 20 {
+                self.scroll_offset = target.saturating_sub(5);
             }
         }
     }
@@ -633,15 +649,16 @@ impl DiffViewState {
                 file_exists_on_disk,
             }
         } else {
+            // Multi-file: keep syntax highlighting, but build highlighters in
+            // parallel — sequential tree-sitter on hundreds of files was the
+            // main cost for large commits / directory hovers.
             let file_count = file_diffs.len();
             let new_filename = format!("{} ({} files)", filename, file_count);
-            let mut lines = Vec::new();
-            let mut sections = Vec::new();
+            let mut lines = Vec::with_capacity(diff_output.len() / 32 + file_count);
             let mut hunk_line_offsets = Vec::new();
+            let mut section_meta: Vec<(&str, &str)> = Vec::with_capacity(file_count);
 
             for (section_idx, (file_name, file_diff)) in file_diffs.iter().enumerate() {
-                let (old, new) = parse_unified_diff(file_diff);
-
                 lines.push(DiffLine {
                     old_line: None,
                     new_line: None,
@@ -666,13 +683,10 @@ impl DiffViewState {
                 for (idx, old_off, new_off) in section_offsets {
                     hunk_line_offsets.push((section_start + idx, old_off, new_off));
                 }
-
-                sections.push(FileSection {
-                    old_highlighter: FileHighlighter::new(&old, file_name),
-                    new_highlighter: FileHighlighter::new(&new, file_name),
-                });
+                section_meta.push((file_name.as_str(), file_diff));
             }
 
+            let sections = build_file_sections_parallel(&section_meta);
             let hunk_starts = super::diff_algo::find_hunk_starts(&lines);
 
             ParsedDiff {
@@ -773,7 +787,7 @@ impl DiffViewState {
             None
         };
         if same_file {
-            let max = self.lines.len().saturating_sub(1);
+            let max = self.max_scroll();
             self.scroll_offset = self.scroll_offset.min(max);
         } else {
             self.scroll_offset = 0;
@@ -797,7 +811,7 @@ impl DiffViewState {
         self.hunk_line_offsets = Vec::new(); // Full content — no offsets needed
         if same_file {
             // Clamp scroll in case the diff got shorter
-            let max = self.lines.len().saturating_sub(1);
+            let max = self.max_scroll();
             self.scroll_offset = self.scroll_offset.min(max);
         } else {
             self.scroll_offset = 0;
@@ -851,7 +865,7 @@ impl DiffViewState {
                 new_highlighter: FileHighlighter::new(&new, actual_name),
             }];
             if same_file {
-                let max = self.lines.len().saturating_sub(1);
+                let max = self.max_scroll();
                 self.scroll_offset = self.scroll_offset.min(max);
             } else {
                 self.scroll_offset = 0;
@@ -860,7 +874,7 @@ impl DiffViewState {
                 self.clear_search();
             }
         } else {
-            // Multi-file diff — build per-section lines with highlighters
+            // Multi-file: parallel highlighters (same as parse_diff_output).
             let file_count = file_diffs.len();
             let new_filename = format!("{} ({} files)", filename, file_count);
             let same_file = self.filename == new_filename;
@@ -869,8 +883,7 @@ impl DiffViewState {
             self.filename = new_filename;
             self.old_content = String::new();
             self.new_content = String::new();
-            self.lines = Vec::new();
-            self.sections = Vec::new();
+            self.lines = Vec::with_capacity(diff_output.len() / 32 + file_count);
             if !same_file {
                 self.scroll_offset = 0;
                 self.horizontal_scroll = 0;
@@ -889,12 +902,9 @@ impl DiffViewState {
             };
 
             self.hunk_line_offsets = Vec::new();
+            let mut section_meta: Vec<(&str, &str)> = Vec::with_capacity(file_count);
 
             for (section_idx, (file_name, file_diff)) in file_diffs.iter().enumerate() {
-                let (old, new) = parse_unified_diff(file_diff);
-
-                // Add file header separator line
-                let _header_idx = self.lines.len();
                 self.lines.push(DiffLine {
                     old_line: None,
                     new_line: None,
@@ -906,7 +916,6 @@ impl DiffViewState {
                     section_index: section_idx,
                 });
 
-                // Compute diff lines for this file section
                 let section_start = self.lines.len();
                 let mut section_lines =
                     diff_lines_from_unified_or_rename_only(file_diff, self.tab_width);
@@ -915,23 +924,17 @@ impl DiffViewState {
                 }
                 self.lines.append(&mut section_lines);
 
-                // Compute hunk line offsets for this section
                 let hunks = parse_hunk_headers(file_diff);
                 let section_offsets =
                     build_hunk_line_offsets(&hunks, &self.lines[section_start..], 0);
-                // Adjust indices to be global (relative to self.lines)
                 for (idx, old_off, new_off) in section_offsets {
                     self.hunk_line_offsets
                         .push((section_start + idx, old_off, new_off));
                 }
-
-                // Create highlighters for this section
-                self.sections.push(FileSection {
-                    old_highlighter: FileHighlighter::new(&old, file_name),
-                    new_highlighter: FileHighlighter::new(&new, file_name),
-                });
+                section_meta.push((file_name.as_str(), file_diff));
             }
 
+            self.sections = build_file_sections_parallel(&section_meta);
             self.hunk_starts = super::diff_algo::find_hunk_starts(&self.lines);
             self.selected_revert_hunk = if same_file {
                 self.selected_revert_hunk
@@ -947,8 +950,7 @@ impl DiffViewState {
             };
 
             if same_file {
-                // Clamp scroll in case the diff got shorter
-                let max = self.lines.len().saturating_sub(1);
+                let max = self.max_scroll();
                 self.scroll_offset = self.scroll_offset.min(max);
             }
         }
@@ -959,7 +961,7 @@ impl DiffViewState {
     }
 
     pub fn scroll_down(&mut self, amount: usize) {
-        let max = self.lines.len().saturating_sub(1);
+        let max = self.max_scroll();
         self.scroll_offset = (self.scroll_offset + amount).min(max);
     }
 
@@ -971,21 +973,245 @@ impl DiffViewState {
         self.horizontal_scroll += amount;
     }
 
+    /// Max scroll offset (last visual/DiffLine row can reach the top).
+    pub fn max_scroll(&self) -> usize {
+        self.total_scroll_rows().saturating_sub(1)
+    }
+
+    /// Total scrollable rows for the active layout.
+    /// Unified uses the flattened delete-then-insert visual stream.
+    fn total_scroll_rows(&self) -> usize {
+        if self.view_layout == DiffViewLayout::Unified {
+            self.unified_total_visual_rows(self.last_content_width.max(1))
+        } else {
+            self.lines.len()
+        }
+    }
+
+    /// DiffLine index currently at the top of the viewport.
+    fn current_scroll_line(&self) -> usize {
+        if self.view_layout == DiffViewLayout::Unified {
+            self.unified_line_at_visual_row(self.scroll_offset, self.last_content_width.max(1))
+                .map(|(line_idx, _, _)| line_idx)
+                .unwrap_or(0)
+        } else {
+            self.scroll_offset
+        }
+    }
+
+    /// Scroll offset that puts `line_idx` at the top of the viewport.
+    fn scroll_target_for_line(&self, line_idx: usize) -> usize {
+        if self.view_layout == DiffViewLayout::Unified {
+            self.unified_visual_row_for_line(line_idx, self.last_content_width.max(1))
+        } else {
+            line_idx
+        }
+    }
+
+    /// Visual row where `line_idx` begins in the unified stream.
+    fn unified_visual_row_for_line(&self, line_idx: usize, content_width: usize) -> usize {
+        let mut row = 0usize;
+        let mut idx = 0usize;
+        while idx < self.lines.len() {
+            if idx == line_idx {
+                return row;
+            }
+            let diff_line = &self.lines[idx];
+            if !is_unified_change_line(diff_line) {
+                row += unified_line_visual_height(diff_line, content_width, self, idx);
+                idx += 1;
+                continue;
+            }
+            let block_end = next_unified_change_block_end(&self.lines, idx);
+            if line_idx < block_end {
+                // Target is inside this reordered block: all deletes first,
+                // then all inserts. A DiffLine's "start" is its first visible
+                // contribution (delete for Modified/Delete, insert for Insert).
+                if self.side_view != DiffSideView::NewOnly {
+                    for i in idx..block_end {
+                        let line = &self.lines[i];
+                        if !matches!(line.change_type, ChangeType::Delete | ChangeType::Modified) {
+                            continue;
+                        }
+                        if i == line_idx {
+                            return row;
+                        }
+                        row += unified_line_row_count(&line.old_line, content_width, self);
+                    }
+                }
+                if self.side_view != DiffSideView::OldOnly {
+                    for i in idx..block_end {
+                        let line = &self.lines[i];
+                        if !matches!(line.change_type, ChangeType::Insert | ChangeType::Modified) {
+                            continue;
+                        }
+                        if i == line_idx {
+                            // Modified already returned above on its delete row.
+                            // Insert-only lands here.
+                            return row;
+                        }
+                        row += unified_line_row_count(&line.new_line, content_width, self);
+                    }
+                }
+                return row;
+            }
+            row += self.unified_block_visual_rows(idx, block_end, content_width);
+            idx = block_end;
+        }
+        row
+    }
+
+    /// Map a unified visual row to `(line_idx, chunk_idx, panel)`.
+    fn unified_line_at_visual_row(
+        &self,
+        visual_row: usize,
+        content_width: usize,
+    ) -> Option<(usize, usize, DiffPanel)> {
+        self.unified_line_chunk_panel_from(0, visual_row, content_width)
+    }
+
+    fn unified_total_visual_rows(&self, content_width: usize) -> usize {
+        let mut row = 0usize;
+        let mut idx = 0usize;
+        while idx < self.lines.len() {
+            let diff_line = &self.lines[idx];
+            if !is_unified_change_line(diff_line) {
+                row += unified_line_visual_height(diff_line, content_width, self, idx);
+                idx += 1;
+                continue;
+            }
+            let block_end = next_unified_change_block_end(&self.lines, idx);
+            row += self.unified_block_visual_rows(idx, block_end, content_width);
+            idx = block_end;
+        }
+        row
+    }
+
+    fn unified_block_visual_rows(
+        &self,
+        block_start: usize,
+        block_end: usize,
+        content_width: usize,
+    ) -> usize {
+        let mut rows = 0usize;
+        if self.side_view != DiffSideView::NewOnly {
+            for idx in block_start..block_end {
+                let line = &self.lines[idx];
+                if matches!(line.change_type, ChangeType::Delete | ChangeType::Modified) {
+                    rows += unified_line_row_count(&line.old_line, content_width, self);
+                }
+            }
+        }
+        if self.side_view != DiffSideView::OldOnly {
+            for idx in block_start..block_end {
+                let line = &self.lines[idx];
+                if matches!(line.change_type, ChangeType::Insert | ChangeType::Modified) {
+                    rows += unified_line_row_count(&line.new_line, content_width, self);
+                }
+            }
+        }
+        rows
+    }
+
+    /// Like `unified_line_chunk_panel_at_offset`, but starting from absolute
+    /// visual row `start_visual` (0 = top of file) and seeking `target_off`
+    /// rows past that.
+    fn unified_line_chunk_panel_from(
+        &self,
+        start_visual: usize,
+        target_off: usize,
+        content_width: usize,
+    ) -> Option<(usize, usize, DiffPanel)> {
+        let target = start_visual + target_off;
+        let mut acc = 0usize;
+        let mut line_idx = 0usize;
+
+        while line_idx < self.lines.len() {
+            let diff_line = &self.lines[line_idx];
+
+            if !is_unified_change_line(diff_line) {
+                let num_rows = unified_line_visual_height(diff_line, content_width, self, line_idx);
+                if target < acc + num_rows {
+                    return Some((line_idx, target - acc, DiffPanel::New));
+                }
+                acc += num_rows;
+                line_idx += 1;
+                continue;
+            }
+
+            let block_end = next_unified_change_block_end(&self.lines, line_idx);
+
+            if self.side_view != DiffSideView::NewOnly {
+                for idx in line_idx..block_end {
+                    let line = &self.lines[idx];
+                    if !matches!(line.change_type, ChangeType::Delete | ChangeType::Modified) {
+                        continue;
+                    }
+                    let num_rows = unified_line_row_count(&line.old_line, content_width, self);
+                    if target < acc + num_rows {
+                        return Some((idx, target - acc, DiffPanel::Old));
+                    }
+                    acc += num_rows;
+                }
+            }
+
+            if self.side_view != DiffSideView::OldOnly {
+                for idx in line_idx..block_end {
+                    let line = &self.lines[idx];
+                    if !matches!(line.change_type, ChangeType::Insert | ChangeType::Modified) {
+                        continue;
+                    }
+                    let num_rows = unified_line_row_count(&line.new_line, content_width, self);
+                    if target < acc + num_rows {
+                        let local_chunk_idx = target - acc;
+                        let chunk_idx = if matches!(line.change_type, ChangeType::Modified)
+                            && self.side_view != DiffSideView::NewOnly
+                        {
+                            unified_line_row_count(&line.old_line, content_width, self)
+                                + local_chunk_idx
+                        } else {
+                            local_chunk_idx
+                        };
+                        return Some((idx, chunk_idx, DiffPanel::New));
+                    }
+                    acc += num_rows;
+                }
+            }
+
+            line_idx = block_end;
+        }
+
+        None
+    }
+
     pub fn next_hunk(&mut self) {
-        if let Some(next) = self.hunk_starts.iter().find(|&&h| h > self.scroll_offset) {
-            self.scroll_offset = *next;
+        let current_line = self.current_scroll_line();
+        if let Some(next) = self.hunk_starts.iter().find(|&&h| h > current_line) {
+            self.scroll_offset = self.scroll_target_for_line(*next);
         }
     }
 
     pub fn prev_hunk(&mut self) {
-        if let Some(prev) = self
-            .hunk_starts
-            .iter()
-            .rev()
-            .find(|&&h| h < self.scroll_offset)
-        {
-            self.scroll_offset = *prev;
+        let current_line = self.current_scroll_line();
+        if let Some(prev) = self.hunk_starts.iter().rev().find(|&&h| h < current_line) {
+            self.scroll_offset = self.scroll_target_for_line(*prev);
         }
+    }
+
+    /// Return the one-based hunk at the current viewport position and the
+    /// total number of hunks. Context before the first hunk is considered part
+    /// of the first hunk so the indicator starts at `1/N`.
+    pub fn hunk_position(&self) -> Option<(usize, usize)> {
+        let total = self.hunk_starts.len();
+        if total == 0 {
+            return None;
+        }
+
+        let current = self
+            .hunk_starts
+            .partition_point(|&start| start <= self.current_scroll_line())
+            .max(1);
+        Some((current, total))
     }
 
     pub fn is_empty(&self) -> bool {
@@ -1054,48 +1280,16 @@ impl DiffViewState {
         let content_width = layout
             .new_content_end_x
             .saturating_sub(layout.new_content_x) as usize;
-        let panel = self.unified_panel_for_chunk(line_idx, chunk_idx, content_width)?;
-        Some((line_idx, chunk_idx, panel))
+        self.unified_line_chunk_panel_at_offset((row - layout.inner_y) as usize, content_width)
     }
 
-    fn unified_panel_for_chunk(
+    fn unified_line_chunk_panel_at_offset(
         &self,
-        line_idx: usize,
-        chunk_idx: usize,
+        target_off: usize,
         content_width: usize,
-    ) -> Option<DiffPanel> {
-        let diff_line = self.lines.get(line_idx)?;
-        match diff_line.change_type {
-            ChangeType::Equal => Some(DiffPanel::New),
-            ChangeType::Delete => {
-                if self.side_view == DiffSideView::NewOnly {
-                    None
-                } else {
-                    Some(DiffPanel::Old)
-                }
-            }
-            ChangeType::Insert => {
-                if self.side_view == DiffSideView::OldOnly {
-                    None
-                } else {
-                    Some(DiffPanel::New)
-                }
-            }
-            ChangeType::Modified => {
-                let old_rows = if self.side_view == DiffSideView::NewOnly {
-                    0
-                } else {
-                    unified_line_row_count(&diff_line.old_line, content_width, self)
-                };
-                if chunk_idx < old_rows {
-                    Some(DiffPanel::Old)
-                } else if self.side_view == DiffSideView::OldOnly {
-                    None
-                } else {
-                    Some(DiffPanel::New)
-                }
-            }
-        }
+    ) -> Option<(usize, usize, DiffPanel)> {
+        // `scroll_offset` is a visual-row index in unified layout.
+        self.unified_line_chunk_panel_from(self.scroll_offset, target_off, content_width)
     }
 
     /// Return true when the given line index is the first line of a diff hunk.
@@ -1184,11 +1378,11 @@ impl DiffViewState {
             None => self
                 .hunk_starts
                 .iter()
-                .position(|&h| h > self.scroll_offset)
+                .position(|&h| h > self.current_scroll_line())
                 .unwrap_or(0),
         };
         self.selected_revert_hunk = Some(next);
-        self.scroll_offset = self.hunk_starts[next];
+        self.scroll_offset = self.scroll_target_for_line(self.hunk_starts[next]);
     }
 
     /// Jump to the previous hunk and select it as the revert target.
@@ -1204,11 +1398,11 @@ impl DiffViewState {
             None => self
                 .hunk_starts
                 .iter()
-                .rposition(|&h| h < self.scroll_offset)
+                .rposition(|&h| h < self.current_scroll_line())
                 .unwrap_or(self.hunk_starts.len() - 1),
         };
         self.selected_revert_hunk = Some(prev);
-        self.scroll_offset = self.hunk_starts[prev];
+        self.scroll_offset = self.scroll_target_for_line(self.hunk_starts[prev]);
     }
 
     /// Get the highlighters for a given section index.
@@ -1227,7 +1421,7 @@ impl DiffViewState {
 pub fn render_diff(
     frame: &mut Frame,
     area: Rect,
-    state: &DiffViewState,
+    state: &mut DiffViewState,
     theme: &Theme,
     focused: bool,
     diff_loading: bool,
@@ -1273,6 +1467,16 @@ pub fn render_diff(
         .border_type(theme.border_type_for("diff"))
         .border_style(border_style);
 
+    if let Some((current, total)) = state.hunk_position() {
+        block = block.title(
+            Line::from(Span::styled(
+                format!(" [{current}/{total}] "),
+                Style::default().fg(theme.text_dimmed),
+            ))
+            .alignment(ratatui::layout::Alignment::Right),
+        );
+    }
+
     // Bottom-right footnote: revert-hunk undo indicator. Only shown when
     // there's something to undo; the denominator is the peak stack depth
     // since it last drained, so a streak reads `1/1`, `2/2`, ... and undos
@@ -1294,6 +1498,18 @@ pub fn render_diff(
                     Style::default().fg(theme.text_dimmed),
                 ),
             ])
+            .alignment(ratatui::layout::Alignment::Right),
+        );
+    }
+
+    // The previous selection's diff stays on screen while the next one loads;
+    // flag it so a slow load doesn't pass for current content.
+    if diff_loading {
+        block = block.title_bottom(
+            Line::from(Span::styled(
+                " loading… ",
+                Style::default().fg(theme.text_dimmed),
+            ))
             .alignment(ratatui::layout::Alignment::Right),
         );
     }
@@ -1865,7 +2081,7 @@ pub fn render_diff(
 fn render_unified_diff_body(
     buf: &mut Buffer,
     inner: Rect,
-    state: &DiffViewState,
+    state: &mut DiffViewState,
     theme: &Theme,
     visible_height: usize,
     show_revert_markers: bool,
@@ -1878,57 +2094,130 @@ fn render_unified_diff_body(
     if content_width == 0 {
         return;
     }
+    state.last_content_width = content_width as usize;
 
+    // Skip `scroll_offset` visual rows from the start of the flattened stream
+    // (all deletes in a change block, then all inserts) so mid-block scrolling
+    // does not drop earlier paired lines.
+    let mut skip = state.scroll_offset;
     let mut row = 0usize;
-    for (idx_offset, diff_line) in state.lines[state.scroll_offset..].iter().enumerate() {
+    let mut line_idx = 0usize;
+    while line_idx < state.lines.len() {
         if row >= visible_height {
             break;
         }
-        let line_idx = state.scroll_offset + idx_offset;
+        let diff_line = &state.lines[line_idx];
 
         if let Some(ref header) = diff_line.file_header {
+            if skip > 0 {
+                skip -= 1;
+                line_idx += 1;
+                continue;
+            }
             let y = inner.y + row as u16;
             render_file_header(buf, inner.x, y, inner.width, header, theme);
             row += 1;
+            line_idx += 1;
             continue;
         }
 
-        render_diff_annotations(
-            buf,
-            state,
-            diff_line,
-            line_idx,
-            inner,
-            &mut row,
-            visible_height,
-            content_width,
-            GUTTER_WIDTH * 2,
-            0,
-            inner.x,
-            content_width,
-            theme,
-            spinner_frame,
-        );
+        if diff_line.change_type == ChangeType::Equal {
+            let height =
+                unified_line_visual_height(diff_line, content_width as usize, state, line_idx);
+            if skip >= height {
+                skip -= height;
+                line_idx += 1;
+                continue;
+            }
+            let default_hl = FileHighlighter::default();
+            let (_, new_highlighter) = state
+                .highlighters_for_section(diff_line.section_index)
+                .unwrap_or((&default_hl, &default_hl));
+            let old_num = state.file_line_number(line_idx, DiffPanel::Old);
+            let new_num = state.file_line_number(line_idx, DiffPanel::New);
+            let line_data = diff_line
+                .new_line
+                .as_ref()
+                .or(diff_line.old_line.as_ref())
+                .map(|(n, text)| (*n, text.as_str()));
+            // Consume leading wrap rows that fall before the viewport.
+            let start_chunk = skip;
+            skip = 0;
+            render_unified_row(
+                buf,
+                inner,
+                &mut row,
+                visible_height,
+                state,
+                old_num,
+                new_num,
+                ' ',
+                line_data,
+                &None,
+                ChangeType::Equal,
+                false,
+                new_highlighter,
+                Color::Reset,
+                Color::Reset,
+                theme.diff_gutter,
+                content_width,
+                None,
+                theme,
+                start_chunk,
+            );
+            render_diff_annotations(
+                buf,
+                state,
+                diff_line,
+                line_idx,
+                inner,
+                &mut row,
+                visible_height,
+                content_width,
+                GUTTER_WIDTH * 2,
+                0,
+                inner.x,
+                content_width,
+                theme,
+                spinner_frame,
+            );
+            line_idx += 1;
+            continue;
+        }
 
-        let default_hl = FileHighlighter::default();
-        let (old_highlighter, new_highlighter) = state
-            .highlighters_for_section(diff_line.section_index)
-            .unwrap_or((&default_hl, &default_hl));
+        let block_end = next_unified_change_block_end(&state.lines, line_idx);
         let mut marker_hunk_idx = if show_revert_markers && state.is_hunk_start_line(line_idx) {
             state.hunk_index_for_start_line(line_idx)
         } else {
             None
         };
 
-        match diff_line.change_type {
-            ChangeType::Equal => {
-                let old_num = state.file_line_number(line_idx, DiffPanel::Old);
-                let new_num = state.file_line_number(line_idx, DiffPanel::New);
-                let line_data = diff_line
-                    .new_line
-                    .as_ref()
-                    .or(diff_line.old_line.as_ref())
-                    .map(|(n, text)| (*n, text.as_str()));
+        if state.side_view != DiffSideView::NewOnly {
+            for idx in line_idx..block_end {
+                if row >= visible_height {
+                    break;
+                }
+                let line = &state.lines[idx];
+                if !matches!(line.change_type, ChangeType::Delete | ChangeType::Modified) {
+                    continue;
+                }
+                let height = unified_line_row_count(&line.old_line, content_width as usize, state);
+                if skip >= height {
+                    skip -= height;
+                    // Still consume the hunk marker so it only shows on the
+                    // first visible row of the block.
+                    marker_hunk_idx.take();
+                    continue;
+                }
+                let start_chunk = skip;
+                skip = 0;
+                let default_hl = FileHighlighter::default();
+                let (old_highlighter, _) = state
+                    .highlighters_for_section(line.section_index)
+                    .unwrap_or((&default_hl, &default_hl));
+                let old_num = state.file_line_number(idx, DiffPanel::Old);
+                let old_line = line.old_line.as_ref().map(|(n, text)| (*n, text.as_str()));
+                let old_segments = line.old_segments.clone();
                 render_unified_row(
                     buf,
                     inner,
@@ -1936,132 +2225,74 @@ fn render_unified_diff_body(
                     visible_height,
                     state,
                     old_num,
-                    new_num,
-                    ' ',
-                    line_data,
-                    &None,
-                    ChangeType::Equal,
-                    false,
-                    new_highlighter,
-                    Color::Reset,
-                    Color::Reset,
-                    theme.diff_gutter,
+                    None,
+                    '-',
+                    old_line,
+                    &old_segments,
+                    ChangeType::Delete,
+                    true,
+                    old_highlighter,
+                    theme.diff_remove_bg,
+                    theme.diff_remove_gutter_bg,
+                    theme.diff_remove_gutter_fg,
                     content_width,
                     marker_hunk_idx.take(),
                     theme,
+                    start_chunk,
                 );
             }
-            ChangeType::Delete => {
-                if state.side_view != DiffSideView::NewOnly {
-                    render_unified_row(
-                        buf,
-                        inner,
-                        &mut row,
-                        visible_height,
-                        state,
-                        state.file_line_number(line_idx, DiffPanel::Old),
-                        None,
-                        '-',
-                        diff_line
-                            .old_line
-                            .as_ref()
-                            .map(|(n, text)| (*n, text.as_str())),
-                        &diff_line.old_segments,
-                        ChangeType::Delete,
-                        true,
-                        old_highlighter,
-                        theme.diff_remove_bg,
-                        theme.diff_remove_gutter_bg,
-                        theme.diff_remove_gutter_fg,
-                        content_width,
-                        marker_hunk_idx.take(),
-                        theme,
-                    );
+        }
+
+        if state.side_view != DiffSideView::OldOnly {
+            for idx in line_idx..block_end {
+                if row >= visible_height {
+                    break;
                 }
-            }
-            ChangeType::Insert => {
-                if state.side_view != DiffSideView::OldOnly {
-                    render_unified_row(
-                        buf,
-                        inner,
-                        &mut row,
-                        visible_height,
-                        state,
-                        None,
-                        state.file_line_number(line_idx, DiffPanel::New),
-                        '+',
-                        diff_line
-                            .new_line
-                            .as_ref()
-                            .map(|(n, text)| (*n, text.as_str())),
-                        &diff_line.new_segments,
-                        ChangeType::Insert,
-                        false,
-                        new_highlighter,
-                        theme.diff_add_bg,
-                        theme.diff_add_gutter_bg,
-                        theme.diff_add_gutter_fg,
-                        content_width,
-                        marker_hunk_idx.take(),
-                        theme,
-                    );
+                let line = &state.lines[idx];
+                if !matches!(line.change_type, ChangeType::Insert | ChangeType::Modified) {
+                    continue;
                 }
-            }
-            ChangeType::Modified => {
-                if state.side_view != DiffSideView::NewOnly {
-                    render_unified_row(
-                        buf,
-                        inner,
-                        &mut row,
-                        visible_height,
-                        state,
-                        state.file_line_number(line_idx, DiffPanel::Old),
-                        None,
-                        '-',
-                        diff_line
-                            .old_line
-                            .as_ref()
-                            .map(|(n, text)| (*n, text.as_str())),
-                        &diff_line.old_segments,
-                        ChangeType::Delete,
-                        true,
-                        old_highlighter,
-                        theme.diff_remove_bg,
-                        theme.diff_remove_gutter_bg,
-                        theme.diff_remove_gutter_fg,
-                        content_width,
-                        marker_hunk_idx.take(),
-                        theme,
-                    );
+                let height = unified_line_row_count(&line.new_line, content_width as usize, state);
+                if skip >= height {
+                    skip -= height;
+                    marker_hunk_idx.take();
+                    continue;
                 }
-                if state.side_view != DiffSideView::OldOnly {
-                    render_unified_row(
-                        buf,
-                        inner,
-                        &mut row,
-                        visible_height,
-                        state,
-                        None,
-                        state.file_line_number(line_idx, DiffPanel::New),
-                        '+',
-                        diff_line
-                            .new_line
-                            .as_ref()
-                            .map(|(n, text)| (*n, text.as_str())),
-                        &diff_line.new_segments,
-                        ChangeType::Insert,
-                        false,
-                        new_highlighter,
-                        theme.diff_add_bg,
-                        theme.diff_add_gutter_bg,
-                        theme.diff_add_gutter_fg,
-                        content_width,
-                        marker_hunk_idx.take(),
-                        theme,
-                    );
-                }
+                let start_chunk = skip;
+                skip = 0;
+                let default_hl = FileHighlighter::default();
+                let (_, new_highlighter) = state
+                    .highlighters_for_section(line.section_index)
+                    .unwrap_or((&default_hl, &default_hl));
+                let new_num = state.file_line_number(idx, DiffPanel::New);
+                let new_line = line.new_line.as_ref().map(|(n, text)| (*n, text.as_str()));
+                let new_segments = line.new_segments.clone();
+                render_unified_row(
+                    buf,
+                    inner,
+                    &mut row,
+                    visible_height,
+                    state,
+                    None,
+                    new_num,
+                    '+',
+                    new_line,
+                    &new_segments,
+                    ChangeType::Insert,
+                    false,
+                    new_highlighter,
+                    theme.diff_add_bg,
+                    theme.diff_add_gutter_bg,
+                    theme.diff_add_gutter_fg,
+                    content_width,
+                    marker_hunk_idx.take(),
+                    theme,
+                    start_chunk,
+                );
             }
         }
+
+        line_idx = block_end;
     }
 }
 
@@ -2086,6 +2317,7 @@ fn render_unified_row(
     content_width: u16,
     marker_hunk_idx: Option<usize>,
     theme: &Theme,
+    start_chunk: usize,
 ) {
     if *row >= visible_height {
         return;
@@ -2126,7 +2358,7 @@ fn render_unified_row(
         vec![spans]
     };
 
-    for (chunk_idx, chunk) in rows.iter().enumerate() {
+    for (chunk_idx, chunk) in rows.iter().enumerate().skip(start_chunk) {
         if *row >= visible_height {
             break;
         }
@@ -2892,6 +3124,18 @@ pub fn unified_line_visual_height(
     code_rows + extra_rows
 }
 
+fn is_unified_change_line(diff_line: &DiffLine) -> bool {
+    diff_line.file_header.is_none() && !matches!(diff_line.change_type, ChangeType::Equal)
+}
+
+fn next_unified_change_block_end(lines: &[DiffLine], start: usize) -> usize {
+    lines[start..]
+        .iter()
+        .position(|line| !is_unified_change_line(line))
+        .map(|offset| start + offset)
+        .unwrap_or(lines.len())
+}
+
 fn unified_line_row_count(
     line: &Option<(usize, String)>,
     content_width: usize,
@@ -3271,35 +3515,110 @@ pub fn render_diff_search_bar(frame: &mut Frame, area: Rect, state: &DiffViewSta
 }
 
 /// Parse a multi-file unified diff into per-file sections.
-/// Returns Vec of (filename, raw_diff_for_that_file).
-fn parse_multi_file_diff(diff: &str) -> Vec<(String, String)> {
-    let mut sections: Vec<(String, Vec<&str>)> = Vec::new();
+/// Returns Vec of (filename, raw_diff_slice) without re-joining bodies.
+fn parse_multi_file_diff(diff: &str) -> Vec<(String, &str)> {
+    let bytes = diff.as_bytes();
+    let mut sections: Vec<(String, &str)> = Vec::new();
     let mut current_filename = String::new();
-    let mut current_lines: Vec<&str> = Vec::new();
+    let mut section_start: Option<usize> = None;
+    let mut line_start = 0usize;
 
-    for line in diff.lines() {
+    while line_start <= bytes.len() {
+        let line_end = bytes[line_start..]
+            .iter()
+            .position(|&b| b == b'\n')
+            .map(|i| line_start + i)
+            .unwrap_or(bytes.len());
+        let line = &diff[line_start..line_end];
+
         if line.starts_with("diff --git ") {
-            // Save previous section
-            if !current_filename.is_empty() {
-                sections.push((current_filename, current_lines));
-                current_lines = Vec::new();
+            if let Some(start) = section_start {
+                let end = line_start.saturating_sub(1).max(start);
+                sections.push((
+                    std::mem::take(&mut current_filename),
+                    &diff[start..end.min(diff.len()).max(start)],
+                ));
             }
-            // Extract filename from "diff --git a/path b/path"
             current_filename = extract_filename_from_diff_header(line);
-        } else {
-            current_lines.push(line);
+            let after = if line_end < bytes.len() {
+                line_end + 1
+            } else {
+                line_end
+            };
+            section_start = Some(after);
+        }
+
+        if line_end >= bytes.len() {
+            break;
+        }
+        line_start = line_end + 1;
+    }
+
+    if let Some(start) = section_start {
+        if !current_filename.is_empty() {
+            sections.push((current_filename, &diff[start..]));
         }
     }
 
-    // Save last section
-    if !current_filename.is_empty() {
-        sections.push((current_filename, current_lines));
+    sections
+}
+
+/// Build tree-sitter highlighters for many file sections in parallel.
+fn build_file_sections_parallel(section_meta: &[(&str, &str)]) -> Vec<FileSection> {
+    let n = section_meta.len();
+    if n == 0 {
+        return Vec::new();
+    }
+    if n == 1 {
+        let (name, body) = section_meta[0];
+        let (old, new) = parse_unified_diff(body);
+        return vec![FileSection {
+            old_highlighter: FileHighlighter::new(&old, name),
+            new_highlighter: FileHighlighter::new(&new, name),
+        }];
     }
 
+    let workers = std::thread::available_parallelism()
+        .map(|p| p.get())
+        .unwrap_or(4)
+        .min(n)
+        .max(1);
+    let chunk = (n + workers - 1) / workers;
+    let mut handles = Vec::with_capacity(workers);
+
+    for w in 0..workers {
+        let start = w * chunk;
+        if start >= n {
+            break;
+        }
+        let end = (start + chunk).min(n);
+        // Copy the string data the worker needs (bodies may be large but this
+        // avoids lifetime issues across threads and runs once per load).
+        let owned: Vec<(String, String)> = section_meta[start..end]
+            .iter()
+            .map(|(name, body)| ((*name).to_string(), (*body).to_string()))
+            .collect();
+        handles.push(std::thread::spawn(move || {
+            owned
+                .into_iter()
+                .map(|(name, body)| {
+                    let (old, new) = parse_unified_diff(&body);
+                    FileSection {
+                        old_highlighter: FileHighlighter::new(&old, &name),
+                        new_highlighter: FileHighlighter::new(&new, &name),
+                    }
+                })
+                .collect::<Vec<_>>()
+        }));
+    }
+
+    let mut sections = Vec::with_capacity(n);
+    for handle in handles {
+        if let Ok(part) = handle.join() {
+            sections.extend(part);
+        }
+    }
     sections
-        .into_iter()
-        .map(|(name, lines)| (name, lines.join("\n")))
-        .collect()
 }
 
 /// Extract the filename from a "diff --git a/path b/path" header line.
@@ -3343,8 +3662,15 @@ fn parse_unified_diff(diff: &str) -> (String, String) {
         } else if let Some(ctx) = line.strip_prefix(' ') {
             old_lines.push(ctx);
             new_lines.push(ctx);
+        } else if line.starts_with('\\') {
+            // Git emits metadata like `\ No newline at end of file` inside
+            // hunks. It describes the preceding diff line, but it is not part
+            // of either file's contents. Including it shifts highlighter line
+            // numbers and can make later highlighted rows render the wrong
+            // text (for example duplicating the previous added markdown line).
+            continue;
         } else {
-            // Could be "\ No newline at end of file" or other metadata
+            // Bare context line in unusual diff output.
             old_lines.push(line);
             new_lines.push(line);
         }
@@ -3360,11 +3686,43 @@ fn parse_unified_diff(diff: &str) -> (String, String) {
 }
 
 fn diff_lines_from_unified_or_rename_only(diff: &str, tab_width: usize) -> Vec<DiffLine> {
+    if is_binary_diff(diff) {
+        return binary_file_placeholder_lines(tab_width);
+    }
     if let Some((old_path, new_path)) = rename_only_paths(diff) {
         return rename_only_lines(&old_path, &new_path, tab_width);
     }
 
     super::diff_algo::compute_side_by_side_from_unified_diff(diff, tab_width)
+}
+
+/// Git emits `Binary files A and B differ` (and similar) instead of hunks.
+fn is_binary_diff(diff: &str) -> bool {
+    diff.lines().any(|line| {
+        let t = line.trim_start();
+        t.starts_with("Binary files ")
+            || t.starts_with("Binary file ")
+            || t.starts_with("GIT binary patch")
+    })
+}
+
+fn binary_file_placeholder_lines(tab_width: usize) -> Vec<DiffLine> {
+    let msg = super::expand_tabs("Binary file (not viewable)", tab_width);
+    vec![DiffLine {
+        old_line: Some((1, msg.clone())),
+        new_line: Some((1, msg)),
+        change_type: ChangeType::Equal,
+        old_segments: None,
+        new_segments: None,
+        file_header: None,
+        comment_notes: Vec::new(),
+        section_index: 0,
+    }]
+}
+
+/// True when git emitted a rename/copy with no content hunks (pure move).
+pub fn is_rename_only_diff(diff: &str) -> bool {
+    rename_only_paths(diff).is_some()
 }
 
 fn rename_only_paths(diff: &str) -> Option<(String, String)> {
@@ -3500,6 +3858,8 @@ fn build_hunk_line_offsets(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ratatui::Terminal;
+    use ratatui::backend::TestBackend;
 
     fn diff_line(change_type: ChangeType) -> DiffLine {
         DiffLine {
@@ -3512,6 +3872,65 @@ mod tests {
             comment_notes: Vec::new(),
             section_index: 0,
         }
+    }
+
+    #[test]
+    fn hunk_position_tracks_the_viewport() {
+        let mut state = DiffViewState::new();
+        state.hunk_starts = vec![3, 8, 14];
+
+        state.scroll_offset = 0;
+        assert_eq!(state.hunk_position(), Some((1, 3)));
+
+        state.scroll_offset = 3;
+        assert_eq!(state.hunk_position(), Some((1, 3)));
+
+        state.scroll_offset = 12;
+        assert_eq!(state.hunk_position(), Some((2, 3)));
+
+        state.scroll_offset = 14;
+        assert_eq!(state.hunk_position(), Some((3, 3)));
+    }
+
+    #[test]
+    fn diff_border_shows_hunk_position_at_top_right() {
+        let backend = TestBackend::new(40, 6);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        let mut state = DiffViewState::new();
+        state.filename = "file.txt".to_string();
+        state.lines = (0..5).map(|_| diff_line(ChangeType::Equal)).collect();
+        state.hunk_starts = vec![1, 4];
+        state.scroll_offset = 4;
+
+        terminal
+            .draw(|frame| {
+                render_diff(
+                    frame,
+                    Rect::new(0, 0, 40, 6),
+                    &mut state,
+                    &Theme::dark(),
+                    true,
+                    false,
+                    false,
+                    0,
+                );
+            })
+            .expect("diff should render");
+
+        let top_border: String = (0..40)
+            .map(|x| {
+                terminal
+                    .backend()
+                    .buffer()
+                    .cell((x, 0))
+                    .and_then(|cell| cell.symbol().chars().next())
+                    .unwrap_or(' ')
+            })
+            .collect();
+        assert!(
+            top_border.ends_with(" [2/2] ╮") || top_border.ends_with(" [2/2] ┐"),
+            "{top_border:?}"
+        );
     }
 
     #[test]
@@ -3552,6 +3971,168 @@ mod tests {
     }
 
     #[test]
+    fn unified_modified_blocks_render_all_deletions_before_insertions() {
+        let diff = "diff --git a/file.txt b/file.txt\n--- a/file.txt\n+++ b/file.txt\n@@ -1,4 +1,5 @@\n context before\n-old one\n-old two\n+new one\n+new two\n+new three\n context after\n";
+        let parsed = DiffViewState::parse_diff_output("file.txt", diff, 4, true);
+        let mut state = DiffViewState::new();
+        state.view_layout = DiffViewLayout::Unified;
+        state.apply_parsed(parsed);
+
+        let mut buf = Buffer::empty(Rect::new(0, 0, 80, 10));
+        render_unified_diff_body(
+            &mut buf,
+            Rect::new(0, 0, 80, 10),
+            &mut state,
+            &Theme::dark(),
+            10,
+            false,
+            0,
+        );
+
+        let signs: String = (0..7)
+            .map(|row| {
+                buf.cell((11, row))
+                    .and_then(|cell| cell.symbol().chars().next())
+                    .unwrap_or(' ')
+            })
+            .collect();
+        assert_eq!(signs, " --+++ ");
+    }
+
+    #[test]
+    fn no_newline_marker_does_not_shift_unified_markdown_highlights() {
+        let diff = "diff --git a/_plans/TODOS.md b/_plans/TODOS.md\nindex f13d2a0..6186190 100644\n--- a/_plans/TODOS.md\n+++ b/_plans/TODOS.md\n@@ -63,4 +63,5 @@ Sidequests\n \n - [ ] Onboarding\n \n-- [ ] Cell wrapping when saving textarea for instance or description\n\\ No newline at end of file\n+- [ ] Cell wrapping when saving textarea for instance or description\n+- [ ] Currency input and parsing natural inputs like 1k. or even formulas like 4+12+34+12k\n";
+        let parsed = DiffViewState::parse_diff_output("_plans/TODOS.md", diff, 4, true);
+
+        assert!(!parsed.old_content.contains("No newline at end of file"));
+        assert!(!parsed.new_content.contains("No newline at end of file"));
+
+        let mut state = DiffViewState::new();
+        state.view_layout = DiffViewLayout::Unified;
+        state.apply_parsed(parsed);
+
+        let mut buf = Buffer::empty(Rect::new(0, 0, 120, 8));
+        render_unified_diff_body(
+            &mut buf,
+            Rect::new(0, 0, 120, 8),
+            &mut state,
+            &Theme::dark(),
+            8,
+            false,
+            0,
+        );
+
+        let row_text = |buf: &Buffer, row: u16| -> String {
+            (0..buf.area().width)
+                .map(|x| {
+                    buf.cell((x, row))
+                        .and_then(|cell| cell.symbol().chars().next())
+                        .unwrap_or(' ')
+                })
+                .collect::<String>()
+        };
+
+        assert!(row_text(&buf, 4).contains("Cell wrapping"));
+        assert!(row_text(&buf, 5).contains("Currency input"));
+    }
+
+    #[test]
+    fn unified_mid_block_scroll_keeps_earlier_deletes_visible() {
+        // Regression: DiffLine-indexed scroll used to drop delete N and insert N
+        // together when scrolling through a Modified block, so earlier lines
+        // vanished as you scrolled down. Visual-row scroll keeps the flattened
+        // delete-then-insert stream contiguous.
+        let mut state = DiffViewState::new();
+        state.view_layout = DiffViewLayout::Unified;
+        state.last_content_width = 80;
+        let mut lines = Vec::new();
+        for i in 0..4 {
+            let mut line = diff_line(ChangeType::Modified);
+            line.old_line = Some((100 + i, format!("old {i}")));
+            line.new_line = Some((200 + i, format!("new {i}")));
+            lines.push(line);
+        }
+        state.lines = lines;
+
+        // Visual stream is: -old0 -old1 -old2 -old3 +new0 +new1 +new2 +new3
+        assert_eq!(state.unified_total_visual_rows(80), 8);
+
+        // Scroll past the first delete only.
+        state.scroll_offset = 1;
+        let mut buf = Buffer::empty(Rect::new(0, 0, 80, 6));
+        render_unified_diff_body(
+            &mut buf,
+            Rect::new(0, 0, 80, 6),
+            &mut state,
+            &Theme::dark(),
+            6,
+            false,
+            0,
+        );
+
+        let signs: String = (0..6)
+            .map(|row| {
+                buf.cell((11, row))
+                    .and_then(|cell| cell.symbol().chars().next())
+                    .unwrap_or(' ')
+            })
+            .collect();
+        // First delete is scrolled off; remaining deletes then inserts stay.
+        assert_eq!(signs, "---+++");
+        // old 0 must be gone, old 1 still present.
+        let row_text = |row: u16| -> String {
+            (0..80)
+                .map(|x| {
+                    buf.cell((x, row))
+                        .and_then(|cell| cell.symbol().chars().next())
+                        .unwrap_or(' ')
+                })
+                .collect()
+        };
+        assert!(row_text(0).contains("old 1"));
+        assert!(!row_text(0).contains("old 0"));
+        assert!(row_text(3).contains("new 0"));
+    }
+
+    #[test]
+    fn unified_modified_block_rows_map_old_block_then_new_block() {
+        let mut state = DiffViewState::new();
+        state.view_layout = DiffViewLayout::Unified;
+        let mut first = diff_line(ChangeType::Modified);
+        first.old_line = Some((7, "old one".to_string()));
+        first.new_line = Some((8, "new one".to_string()));
+        let mut second = diff_line(ChangeType::Modified);
+        second.old_line = Some((8, "old two".to_string()));
+        second.new_line = Some((9, "new two".to_string()));
+        let mut third = diff_line(ChangeType::Insert);
+        third.new_line = Some((10, "new three".to_string()));
+        state.lines = vec![first, second, third];
+
+        let layout = DiffPanelLayout::compute(Rect::new(0, 0, 80, 8), &state);
+
+        assert_eq!(
+            state.line_chunk_panel_at_row(layout.inner_y, &layout, DiffPanel::New),
+            Some((0, 0, DiffPanel::Old))
+        );
+        assert_eq!(
+            state.line_chunk_panel_at_row(layout.inner_y + 1, &layout, DiffPanel::New),
+            Some((1, 0, DiffPanel::Old))
+        );
+        assert_eq!(
+            state.line_chunk_panel_at_row(layout.inner_y + 2, &layout, DiffPanel::New),
+            Some((0, 1, DiffPanel::New))
+        );
+        assert_eq!(
+            state.line_chunk_panel_at_row(layout.inner_y + 3, &layout, DiffPanel::New),
+            Some((1, 1, DiffPanel::New))
+        );
+        assert_eq!(
+            state.line_chunk_panel_at_row(layout.inner_y + 4, &layout, DiffPanel::New),
+            Some((2, 0, DiffPanel::New))
+        );
+    }
+
+    #[test]
     fn pure_rename_diff_produces_visible_modified_row() {
         let diff = "diff --git a/src/views/openai_oauth_flow.rs b/src/views/provider_oauth_flow.rs\nsimilarity index 100%\nrename from src/views/openai_oauth_flow.rs\nrename to src/views/provider_oauth_flow.rs\n";
 
@@ -3573,6 +4154,43 @@ mod tests {
         assert_eq!(
             parsed.lines[0].new_line,
             Some((1, "src/views/provider_oauth_flow.rs".to_string()))
+        );
+    }
+
+    #[test]
+    fn detects_rename_only_without_hunks() {
+        let diff = "diff --git a/old/tab-indent.ts b/new/tab-indent.ts\n\
+                    similarity index 100%\n\
+                    rename from old/tab-indent.ts\n\
+                    rename to new/tab-indent.ts\n";
+        assert!(is_rename_only_diff(diff));
+        assert!(!is_rename_only_diff(
+            "diff --git a/a.rs b/b.rs\n\
+             similarity index 90%\n\
+             rename from a.rs\n\
+             rename to b.rs\n\
+             @@ -1 +1 @@\n\
+             -old\n\
+             +new\n"
+        ));
+    }
+
+    #[test]
+    fn binary_diff_shows_not_viewable_placeholder() {
+        let diff = "diff --git a/foo.png b/foo.png\n\
+                    new file mode 100644\n\
+                    index 0000000..e8ef7b2\n\
+                    Binary files /dev/null and b/foo.png differ\n";
+        let parsed = DiffViewState::parse_diff_output("foo.png", diff, 4, true);
+        assert!(!parsed.lines.is_empty());
+        let text = parsed.lines[0]
+            .new_line
+            .as_ref()
+            .map(|(_, s)| s.as_str())
+            .unwrap_or("");
+        assert!(
+            text.contains("not viewable") || text.contains("Binary file"),
+            "got {text:?}"
         );
     }
 }

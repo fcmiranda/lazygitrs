@@ -51,7 +51,7 @@ lazygitrs
       generateCommand: 'DIFF=$(git diff --cached) && modelcli "Generate a conventional commit message for this diff. Always provide a bulletpoint body. $DIFF"'
   ```
 
-- [x] **Side-by-side diffs** with syntax highlighting by default, no pager hacks needed
+- [x] **Side-by-side + unified diffs** with syntax highlighting by default and unified as well, no pager hacks needed
 - [x] **Better diff navigation UX** — `[]` new/old only views, `{}` for hunk traveling, `hjkl←↑↓→` for line-by-line scrolling, supports mouse select/scroll too. Lots inspired by [lumen](https://github.com/jnsahaj/lumen)
 - [x] **Default GitHub conveniences** — copy repo url, open repo url, copy PR create url, open PR create, copy pr url, open pr. (The 'copy' variants are useful if you use different default browsers for work/personal.)
 - [x] **Branch Filtering** — better experience in the Commits tab, compare what actually matters. Toggle commits log between all branches and HEAD-only (default shortcut: `a` in Commits panel).
@@ -61,9 +61,9 @@ lazygitrs
 - [x] **Interactive rebasing** — inspired by gitlens, a clean and easy-to-use UI for pick, reword, edit, squash, fixup, drop and fast rebasing.
 - [x] **Commit Details** — Inspired by zed, just a small details panel about the commit that's easier to look at.
 - [x] **Command Palette** — easily access stuff like:
-  - [ ] `git reset` and then asks, what branch/commit, has quick search.
-  - [x] `git diff/compare` and then asks what branch/commit A and B, has quick search.
-  - [x] `git rebase` and then asks rebase on top of what branch/commit.
+  - [x] `git reset` (global `G`) — asks which branch/commit, has quick search, then soft/mixed/hard options.
+  - [x] `git diff/compare` (global `W`) and then asks what branch/commit A and B, has quick search.
+  - [x] `git rebase` (global `I`) and then asks rebase on top of what branch/commit.
   - [x] 🎨 Themes + Theme-Picker!
 - [x] **Universal AI Notes Architecture** — leave review comments on code diffs and instantly notify your AI CLI of choice to review or act on it. `lazygitrs` uses a dynamically registered `.lines.json` session architecture, supporting three transport layers to integrate with *any* AI tool on the market:
   - **Subprocess Spawning** (`notifyCommand`): Spawns a background command (great for `agy`, `claude`, etc.)
@@ -133,8 +133,6 @@ lazygitrs ships with 30+ built-in color themes (Catppuccin, Dracula, Tokyo Night
   "background": "#1a1a2e"
 }
 ```
-
-To refresh the built-in generated themes from OpenCode upstream: `bun run scripts/gen-themes.ts`
 
 <!-- GEN_BENCHMARKS_START -->
 

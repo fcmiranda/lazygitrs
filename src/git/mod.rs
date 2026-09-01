@@ -45,6 +45,12 @@ pub enum ModelPart {
         is_bisecting: bool,
         rebase_onto_hash: String,
     },
+    /// Current HEAD hash + branch name. Must be refreshed with the rest of the
+    /// model so the commits graph filled-circle indicator tracks the tip.
+    Head {
+        hash: String,
+        branch_name: String,
+    },
     RepoUrl(String),
     Contributors(Vec<(String, usize)>),
 }
@@ -56,7 +62,7 @@ pub enum ModelPart {
 pub const DEFAULT_COMMIT_LIMIT: usize = 300;
 
 /// Total number of `ModelPart` variants that `load_model_streaming` sends.
-pub const MODEL_PART_COUNT: usize = 13;
+pub const MODEL_PART_COUNT: usize = 14;
 
 struct RepoPaths {
     worktree_path: PathBuf,
@@ -149,7 +155,7 @@ impl GitCommands {
     ///
     /// Git commands are run in parallel using scoped threads since they are
     /// all independent reads against the same repo.
-    pub fn load_model(&self, commit_limit: usize, all_branches_log: bool) -> Result<Model> {
+    pub fn load_model(&self, commit_limit: usize, _all_branches_log: bool) -> Result<Model> {
         let mut model = Model::default();
 
         model.repo_name = self.repo_name();
@@ -160,7 +166,7 @@ impl GitCommands {
         std::thread::scope(|s| {
             let h_files = s.spawn(|| self.load_files());
             let h_branches = s.spawn(|| self.load_branches());
-            let h_commits = s.spawn(|| self.load_commits(commit_limit, all_branches_log));
+            let h_commits = s.spawn(|| self.load_commits(commit_limit));
             let h_stash = s.spawn(|| self.load_stash());
             let h_remotes = s.spawn(|| self.load_remotes());
             let h_tags = s.spawn(|| self.load_tags());
@@ -174,7 +180,7 @@ impl GitCommands {
 
             model.files = h_files.join().unwrap()?;
             model.branches = h_branches.join().unwrap()?;
-            model.commits = h_commits.join().unwrap()?;
+            model.set_commits(h_commits.join().unwrap()?);
             model.stash_entries = h_stash.join().unwrap()?;
             model.remotes = h_remotes.join().unwrap()?;
             model.tags = h_tags.join().unwrap()?;
@@ -206,9 +212,17 @@ impl GitCommands {
     /// sends its result through `tx` as soon as it finishes, so the UI can
     /// waterfall-display whichever data arrives first.
     ///
-    /// The caller should also set `model.repo_name` and `model.head_hash`
-    /// synchronously since those are cheap.
-    pub fn load_model_streaming(self: &Arc<Self>, tx: &mpsc::Sender<ModelPart>) {
+    /// The caller may set `model.repo_name` (and optionally an initial
+    /// `head_hash`) synchronously for the first paint; subsequent refreshes
+    /// receive an updated `ModelPart::Head`.
+    /// Stream model parts in parallel. When `commit_filter` is set (e.g. `-f`),
+    /// the Commits part loads the filtered page immediately — no unfiltered log
+    /// first, matching lazygit's startup path filter.
+    pub fn load_model_streaming(
+        self: &Arc<Self>,
+        tx: &mpsc::Sender<ModelPart>,
+        commit_filter: Option<crate::git::commit::CommitFilter>,
+    ) {
         macro_rules! spawn_part {
             ($tx:expr, $self:expr, $variant:ident, $expr:expr) => {{
                 let tx = $tx.clone();
@@ -223,8 +237,22 @@ impl GitCommands {
 
         spawn_part!(tx, self, Files, |g: &GitCommands| g.load_files());
         spawn_part!(tx, self, Branches, |g: &GitCommands| g.load_branches());
-        spawn_part!(tx, self, Commits, |g: &GitCommands| g
-            .load_commits(DEFAULT_COMMIT_LIMIT, true));
+        if let Some(filter) = commit_filter {
+            let tx = tx.clone();
+            let git = Arc::clone(self);
+            std::thread::spawn(move || {
+                let unpushed = git.unpushed_commit_hashes().unwrap_or_default();
+                if let Ok(mut commits) =
+                    git.load_filtered_commits_page(&filter, DEFAULT_COMMIT_LIMIT, 0)
+                {
+                    Self::apply_unpushed_status(&mut commits, &unpushed);
+                    let _ = tx.send(ModelPart::Commits(commits));
+                }
+            });
+        } else {
+            spawn_part!(tx, self, Commits, |g: &GitCommands| g
+                .load_commits(DEFAULT_COMMIT_LIMIT));
+        }
         spawn_part!(tx, self, Stash, |g: &GitCommands| g.load_stash());
         spawn_part!(tx, self, Remotes, |g: &GitCommands| g.load_remotes());
         spawn_part!(tx, self, Tags, |g: &GitCommands| g.load_tags());
@@ -238,7 +266,8 @@ impl GitCommands {
             .load_reflog(100)
             .or_else(|_| Ok::<_, anyhow::Error>(Vec::new())));
 
-        // DiffStats and RepoStatus have different shapes, spawn them directly.
+        // DiffStats, Head, RepoUrl, Contributors, RepoStatus have different
+        // shapes — spawn them directly.
         {
             let tx = tx.clone();
             let git = Arc::clone(self);
@@ -246,6 +275,15 @@ impl GitCommands {
                 if let Ok((added, deleted)) = git.diff_shortstat() {
                     let _ = tx.send(ModelPart::DiffStats { added, deleted });
                 }
+            });
+        }
+        {
+            let tx = tx.clone();
+            let git = Arc::clone(self);
+            std::thread::spawn(move || {
+                let hash = git.head_hash().unwrap_or_default();
+                let branch_name = git.current_branch_name().unwrap_or_default();
+                let _ = tx.send(ModelPart::Head { hash, branch_name });
             });
         }
         {
@@ -282,6 +320,11 @@ impl GitCommands {
     /// Refresh just the working tree files.
     pub fn refresh_files(&self) -> Result<Vec<crate::model::File>> {
         self.load_files()
+    }
+
+    /// Status-only file refresh (skips numstat/hunk subprocesses).
+    pub fn refresh_files_status_only(&self) -> Result<Vec<crate::model::File>> {
+        self.load_files_status_only()
     }
 
     /// Refresh just branches.
@@ -471,6 +514,45 @@ mod tests {
 
         assert_eq!(git.repo_path(), linked.canonicalize().unwrap());
         assert_eq!(git.repo_name(), "main-repo");
+    }
+
+    #[test]
+    fn load_files_is_fast_on_unborn_repo_with_many_untracked() {
+        let temp = TempDir::new("many-untracked");
+        let repo = temp.path().join("repo");
+        std::fs::create_dir_all(&repo).expect("mkdir");
+        assert_success(Command::new("git").arg("init").arg(&repo).status());
+
+        // node_modules-style tree: many untracked files, no commits yet.
+        let nm = repo.join("node_modules").join("pkg");
+        std::fs::create_dir_all(&nm).expect("mkdir nm");
+        for i in 0..500 {
+            std::fs::write(
+                nm.join(format!("f{i}.js")),
+                format!("console.log({i});\n").repeat(20),
+            )
+            .expect("write");
+        }
+        std::fs::write(repo.join("README.md"), "hi\n").expect("write readme");
+
+        let git = GitCommands::new(&repo).expect("git");
+        let start = std::time::Instant::now();
+        let files = git.load_files().expect("load_files");
+        let elapsed = start.elapsed();
+
+        assert!(
+            files.len() >= 501,
+            "expected all untracked files, got {}",
+            files.len()
+        );
+        assert!(
+            files.iter().all(|f| !f.tracked && f.additions == 0),
+            "untracked files should not pay for line counts (lazygit parity)"
+        );
+        assert!(
+            elapsed.as_secs() < 5,
+            "load_files too slow on large untracked tree: {elapsed:?}"
+        );
     }
 
     fn assert_success(status: std::io::Result<std::process::ExitStatus>) {

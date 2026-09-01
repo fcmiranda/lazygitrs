@@ -12,6 +12,7 @@ pub struct App {
     pub start_in_diff: bool,
     pub filter_file: Option<String>,
     pub is_popup: bool,
+    pub filter_path: Option<PathBuf>,
 }
 
 impl App {
@@ -21,6 +22,7 @@ impl App {
         start_in_diff: bool,
         filter_file: Option<String>,
         config_override: Option<String>,
+        filter_path: Option<PathBuf>,
     ) -> Result<Self> {
         let is_popup = config_override.as_deref() == Some("popup");
         let config = AppConfig::load(debug, config_override)?;
@@ -36,6 +38,7 @@ impl App {
             start_in_diff,
             filter_file,
             is_popup,
+            filter_path,
         })
     }
 
@@ -53,6 +56,7 @@ impl App {
             self.start_in_diff,
             self.filter_file,
             self.is_popup,
+            self.filter_path,
         )?;
         gui.run()?;
 

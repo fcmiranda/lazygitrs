@@ -6,8 +6,8 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use crate::config::keybindings::{matches_key, parse_key};
 use crate::gui::modes::diff_mode::{DiffModeFocus, DiffModeSelector};
-use crate::gui::popup::{HelpEntry, HelpSection, MenuItem, PopupState};
-use crate::gui::{DiffPayload, DiffResult, Gui, textarea_input};
+use crate::gui::popup::{CommandEntry, CommandSection, MenuItem, PopupState};
+use crate::gui::{DiffPayload, Gui, textarea_input};
 use crate::model::FileChangeStatus;
 use crate::os::platform::Platform;
 use crate::pager::side_by_side::{DiffPanelLayout, DiffViewState};
@@ -39,11 +39,17 @@ pub fn handle_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
 
     // ? to show help
     if key.code == KeyCode::Char('?') {
-        show_diff_mode_help(gui);
+        show_diff_mode_command_palette(gui);
         return Ok(());
     }
 
     let keybindings = &gui.config.user_config.keybinding;
+
+    if matches_key(key, &keybindings.universal.toggle_diff_view_layout) {
+        gui.diff_view.toggle_view_layout();
+        gui.persist_diff_view_layout();
+        return Ok(());
+    }
 
     // Start file search (/) — only when NOT focused on diff exploration
     // (diff exploration handles / for its own content search)
@@ -252,9 +258,13 @@ fn handle_file_search_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
 fn handle_commit_files_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
     let keybindings = &gui.config.user_config.keybinding;
 
-    // Toggle tree view (backtick)
+    // Toggle tree view (backtick) — keep in sync with Files / Commit Files and persist
     if matches_key(key, &keybindings.files.toggle_tree_view) {
         gui.diff_mode.show_tree = !gui.diff_mode.show_tree;
+        gui.show_file_tree = gui.diff_mode.show_tree;
+        gui.show_commit_file_tree = gui.diff_mode.show_tree;
+        gui.update_file_tree_state();
+        gui.persist_file_tree_visibility();
         update_diff_mode_tree(gui);
         gui.diff_mode.diff_files_selected = 0;
         return Ok(());
@@ -565,21 +575,14 @@ fn handle_diff_exploration_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
                 let abs_path = gui.git.repo_path().join(&filename);
                 if !filename.is_empty() && abs_path.exists() {
                     let abs_path = abs_path.to_string_lossy().to_string();
-                    let os = &gui.config.user_config.os;
-                    if let Some(ln) =
-                        line.or_else(|| gui.diff_view.file_line_number(line_idx, line_panel))
+                    let ln = line.or_else(|| gui.diff_view.file_line_number(line_idx, line_panel));
+                    if let Ok(launch) =
+                        gui.config
+                            .user_config
+                            .os
+                            .plan_edit(&abs_path, ln, Some(column))
                     {
-                        let tpl = if !os.edit_at_line.is_empty() {
-                            &os.edit_at_line
-                        } else {
-                            &os.edit
-                        };
-                        let _ = crate::config::user_config::OsConfig::run_template_at_line(
-                            tpl, &abs_path, ln, column,
-                        );
-                    } else {
-                        let _ =
-                            crate::config::user_config::OsConfig::run_template(&os.edit, &abs_path);
+                        let _ = gui.launch_editor(launch);
                     }
                 }
                 return Ok(());
@@ -687,10 +690,6 @@ fn handle_diff_exploration_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
         KeyCode::Char('{') => {
             gui.diff_view.prev_hunk();
         }
-        KeyCode::Char('v') => {
-            gui.diff_view.toggle_view_layout();
-            gui.persist_diff_view_layout();
-        }
         KeyCode::Char(']') => {
             use crate::pager::side_by_side::DiffSideView;
             gui.diff_view.side_view = match gui.diff_view.side_view {
@@ -736,7 +735,7 @@ pub fn reload_diff_files(gui: &mut Gui) -> Result<()> {
         return Ok(());
     }
     // Clear the diff view since we're loading new files
-    gui.diff_view.reset_keep_prefs();
+    gui.clear_diff_view();
 
     match gui.git.diff_refs_files(&ref_a, &ref_b) {
         Ok(files) => {
@@ -771,11 +770,12 @@ fn update_diff_mode_tree(gui: &mut Gui) {
 }
 
 /// Called from the main loop to request diff loading for the currently selected file in diff mode.
-/// Spawns a background thread using the shared diff_tx/diff_generation infrastructure.
+/// Queues the request on the shared latest-only diff worker.
 pub fn maybe_request_diff(gui: &mut Gui, generation: u64, diff_key: String) {
     if !gui.diff_mode.has_both_refs() || gui.diff_mode.diff_files.is_empty() {
         gui.diff_loading = false;
         gui.diff_loading_since = None;
+        gui.clear_diff_view();
         return;
     }
 
@@ -794,7 +794,6 @@ pub fn maybe_request_diff(gui: &mut Gui, generation: u64, diff_key: String) {
     };
 
     let git = Arc::clone(&gui.git);
-    let tx = gui.diff_tx.clone();
     let gen_counter = Arc::clone(&gui.diff_generation);
 
     if let Some(idx) = file_idx {
@@ -802,59 +801,62 @@ pub fn maybe_request_diff(gui: &mut Gui, generation: u64, diff_key: String) {
         let Some(file) = gui.diff_mode.diff_files.get(idx) else {
             gui.diff_loading = false;
             gui.diff_loading_since = None;
+            gui.clear_diff_view();
             return;
         };
         let name = file.name.clone();
         let current_path = file.current_path().to_string();
 
-        std::thread::spawn(move || {
-            if gen_counter.load(Ordering::Relaxed) != generation {
-                return;
-            }
-            let payload = match git.diff_refs_file(&ref_a, &ref_b, &name) {
+        gui.queue_diff_job(generation, diff_key, move || {
+            match git.diff_refs_file(&ref_a, &ref_b, &name) {
                 Ok(diff) if diff.is_empty() => DiffPayload::Empty,
                 Ok(diff) => {
                     let exists = git.repo_path().join(&current_path).exists();
+                    // Pure renames between refs: show file content at ref_b.
+                    if crate::pager::side_by_side::is_rename_only_diff(&diff) {
+                        if let Ok(content) = git.file_content_at_commit(&ref_b, &current_path) {
+                            if !content.is_empty() {
+                                return DiffPayload::Parsed(DiffViewState::parse_content(
+                                    &current_path,
+                                    &content,
+                                    &content,
+                                    4,
+                                    exists,
+                                ));
+                            }
+                        }
+                    }
                     DiffPayload::Parsed(DiffViewState::parse_diff_output(&name, &diff, 4, exists))
                 }
                 Err(_) => DiffPayload::Empty,
-            };
-            let _ = tx.send(DiffResult {
-                generation,
-                diff_key,
-                payload,
-            });
+            }
         });
     } else if gui.diff_mode.show_tree {
         // Directory node: combined diff of all child files
         if let Some(node) = gui.diff_mode.tree_nodes.get(selected) {
             if node.is_dir && !node.child_file_indices.is_empty() {
-                let child_names: Vec<String> = node
-                    .child_file_indices
-                    .iter()
-                    .filter_map(|&i| gui.diff_mode.diff_files.get(i))
-                    .map(|f| f.name.clone())
-                    .collect();
+                // One pathspec-filtered `git diff A B -- dir/` instead of N× files.
+                let pathspec = if node.path.is_empty() || node.path == "." {
+                    None
+                } else if node.path.ends_with('/') {
+                    Some(node.path.clone())
+                } else {
+                    Some(format!("{}/", node.path))
+                };
                 let dir_name = node.name.clone();
 
-                std::thread::spawn(move || {
+                gui.queue_diff_job(generation, diff_key, move || {
                     if gen_counter.load(Ordering::Relaxed) != generation {
-                        return;
+                        return DiffPayload::Empty;
                     }
-                    let mut combined_diff = String::new();
-                    for name in &child_names {
-                        if gen_counter.load(Ordering::Relaxed) != generation {
-                            return;
-                        }
-                        let diff = git.diff_refs_file(&ref_a, &ref_b, name).unwrap_or_default();
-                        if !diff.is_empty() {
-                            if !combined_diff.is_empty() {
-                                combined_diff.push('\n');
-                            }
-                            combined_diff.push_str(&diff);
-                        }
-                    }
-                    let payload = if combined_diff.is_empty() {
+                    let paths: Vec<&str> = match pathspec.as_deref() {
+                        Some(p) => vec![p],
+                        None => Vec::new(),
+                    };
+                    let combined_diff = git
+                        .diff_refs_paths(&ref_a, &ref_b, &paths)
+                        .unwrap_or_default();
+                    if combined_diff.is_empty() {
                         DiffPayload::Empty
                     } else {
                         DiffPayload::Parsed(DiffViewState::parse_diff_output(
@@ -863,22 +865,17 @@ pub fn maybe_request_diff(gui: &mut Gui, generation: u64, diff_key: String) {
                             4,
                             true,
                         ))
-                    };
-                    let _ = tx.send(DiffResult {
-                        generation,
-                        diff_key,
-                        payload,
-                    });
+                    }
                 });
             } else {
                 gui.diff_loading = false;
                 gui.diff_loading_since = None;
-                gui.diff_view.reset_keep_prefs();
+                gui.clear_diff_view();
             }
         } else {
             gui.diff_loading = false;
             gui.diff_loading_since = None;
-            gui.diff_view.reset_keep_prefs();
+            gui.clear_diff_view();
         }
     } else {
         gui.diff_loading = false;
@@ -886,107 +883,55 @@ pub fn maybe_request_diff(gui: &mut Gui, generation: u64, diff_key: String) {
     }
 }
 
-fn show_diff_mode_help(gui: &mut Gui) {
-    let diff_mode_section = HelpSection {
+fn show_diff_mode_command_palette(gui: &mut Gui) {
+    let diff_mode_section = CommandSection {
         title: "Compare / Diff Mode".into(),
         entries: vec![
-            HelpEntry {
-                key: "q".into(),
-                description: "Exit diff mode".into(),
-            },
-            HelpEntry {
-                key: "Tab".into(),
-                description: "Cycle focus (A → B → Files → Diff)".into(),
-            },
-            HelpEntry {
-                key: "1-4".into(),
-                description: "Jump to panel".into(),
-            },
-            HelpEntry {
-                key: "<c-s>".into(),
-                description: "Swap A and B".into(),
-            },
-            HelpEntry {
-                key: "<enter>".into(),
-                description: "Edit selector / Focus diff".into(),
-            },
-            HelpEntry {
-                key: "`".into(),
-                description: "Toggle file tree view".into(),
-            },
-            HelpEntry {
-                key: "j/k".into(),
-                description: "Navigate files / Scroll diff".into(),
-            },
-            HelpEntry {
-                key: "{/}".into(),
-                description: "Previous / next hunk".into(),
-            },
-            HelpEntry {
-                key: "[/]".into(),
-                description: "Toggle old / new only view".into(),
-            },
-            HelpEntry {
-                key: "v".into(),
-                description: "Toggle unified / side-by-side view".into(),
-            },
-            HelpEntry {
-                key: "z".into(),
-                description: "Toggle line wrap".into(),
-            },
-            HelpEntry {
-                key: "g/G".into(),
-                description: "Go to top / bottom".into(),
-            },
-            HelpEntry {
-                key: "/".into(),
-                description: "Search (files or diff content)".into(),
-            },
-            HelpEntry {
-                key: "n/N".into(),
-                description: "Next / previous search match".into(),
-            },
-            HelpEntry {
-                key: "y".into(),
-                description: "Copy to clipboard".into(),
-            },
-            HelpEntry {
-                key: "c".into(),
-                description: "Create note on line".into(),
-            },
-            HelpEntry {
-                key: "?".into(),
-                description: "Show this help".into(),
-            },
+            CommandEntry::keybinding("q".into(), "Exit diff mode".into()),
+            CommandEntry::keybinding("Tab".into(), "Cycle focus (A → B → Files → Diff)".into()),
+            CommandEntry::keybinding("1-4".into(), "Jump to panel".into()),
+            CommandEntry::keybinding("<c-s>".into(), "Swap A and B".into()),
+            CommandEntry::keybinding("<enter>".into(), "Edit selector / Focus diff".into()),
+            CommandEntry::keybinding("`".into(), "Toggle file tree view".into()),
+            CommandEntry::keybinding("j/k".into(), "Navigate files / Scroll diff".into()),
+            CommandEntry::keybinding("{/}".into(), "Previous / next hunk".into()),
+            CommandEntry::keybinding("[/]".into(), "Toggle old / new only view".into()),
+            CommandEntry::keybinding(
+                gui.config
+                    .user_config
+                    .keybinding
+                    .universal
+                    .toggle_diff_view_layout
+                    .clone(),
+                "Toggle unified / side-by-side view".into(),
+            ),
+            CommandEntry::keybinding("z".into(), "Toggle line wrap".into()),
+            CommandEntry::keybinding("g/G".into(), "Go to top / bottom".into()),
+            CommandEntry::keybinding("/".into(), "Search (files or diff content)".into()),
+            CommandEntry::keybinding("n/N".into(), "Next / previous search match".into()),
+            CommandEntry::keybinding("y".into(), "Copy to clipboard".into()),
+            CommandEntry::keybinding("c".into(), "Create note on line".into()),
+            CommandEntry::keybinding("?".into(), "Show command palette".into()),
         ],
     };
 
-    let combobox_section = HelpSection {
+    let combobox_section = CommandSection {
         title: "Combobox (while editing A or B)".into(),
         entries: vec![
-            HelpEntry {
-                key: "<enter>".into(),
-                description: "Confirm selection".into(),
-            },
-            HelpEntry {
-                key: "<esc>".into(),
-                description: "Cancel".into(),
-            },
-            HelpEntry {
-                key: "Up/Down".into(),
-                description: "Navigate results".into(),
-            },
-            HelpEntry {
-                key: "Type".into(),
-                description: "Filter branches, tags, commits, remotes".into(),
-            },
+            CommandEntry::keybinding("<enter>".into(), "Confirm selection".into()),
+            CommandEntry::keybinding("<esc>".into(), "Cancel".into()),
+            CommandEntry::keybinding("Up/Down".into(), "Navigate results".into()),
+            CommandEntry::keybinding(
+                "Type".into(),
+                "Filter branches, tags, commits, remotes".into(),
+            ),
         ],
     };
 
-    gui.popup = PopupState::Help {
+    gui.popup = PopupState::CommandPalette {
         sections: vec![diff_mode_section, combobox_section],
         selected: 0,
-        search_textarea: crate::gui::popup::make_help_search_textarea(),
+        search_textarea: crate::gui::popup::make_command_palette_search_textarea(),
         scroll_offset: 0,
     };
 }

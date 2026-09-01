@@ -107,16 +107,33 @@ impl GitCommands {
         Ok(())
     }
 
-    pub fn fetch(&self, remote: &str) -> Result<()> {
+    pub fn rename_remote(&self, old_name: &str, new_name: &str) -> Result<()> {
         self.git()
-            .args(&["fetch", remote])
+            .args(&["remote", "rename", old_name, new_name])
+            .run_expecting_success()?;
+        Ok(())
+    }
+
+    pub fn update_remote_url(&self, name: &str, url: &str) -> Result<()> {
+        self.git()
+            .args(&["remote", "set-url", name, url])
+            .run_expecting_success()?;
+        Ok(())
+    }
+
+    pub fn fetch(&self, remote: &str) -> Result<()> {
+        // --no-write-fetch-head: still updates remote-tracking refs, but avoids
+        // racing a concurrent `git pull` on .git/FETCH_HEAD (can surface as a
+        // spurious "divergent branches" / merge failure on the first p).
+        self.git()
+            .args(&["fetch", "--no-write-fetch-head", remote])
             .run_expecting_success()?;
         Ok(())
     }
 
     pub fn fetch_all(&self) -> Result<()> {
         self.git()
-            .args(&["fetch", "--all"])
+            .args(&["fetch", "--all", "--no-write-fetch-head"])
             .run_expecting_success()?;
         Ok(())
     }
@@ -124,12 +141,13 @@ impl GitCommands {
     /// Non-interactive fetch for the periodic auto-fetch loop. Suppresses any
     /// terminal/credential prompts so a missing SSH passphrase or stored
     /// credential can't hang the TUI.
-    pub fn fetch_all_background(&self) -> Result<()> {
-        self.git()
-            .args(&["fetch", "--all"])
+    pub fn fetch_all_background(&self) -> Result<bool> {
+        let result = self
+            .git()
+            .args(&["fetch", "--all", "--no-write-fetch-head"])
             .env("GIT_TERMINAL_PROMPT", "0")
             .run_expecting_success()?;
-        Ok(())
+        Ok(!result.stdout.trim().is_empty() || !result.stderr.trim().is_empty())
     }
 
     pub fn pull(&self) -> Result<()> {

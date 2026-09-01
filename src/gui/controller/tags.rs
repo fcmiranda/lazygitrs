@@ -4,7 +4,8 @@ use crossterm::event::{KeyCode, KeyEvent};
 use crate::config::KeybindingConfig;
 use crate::gui::Gui;
 use crate::gui::popup::{
-    ListPickerCore, ListPickerItem, MenuItem, PopupState, make_help_search_textarea, make_textarea,
+    ListPickerCore, ListPickerItem, MenuItem, PopupState, make_command_palette_search_textarea,
+    make_textarea,
 };
 
 pub fn handle_key(gui: &mut Gui, key: KeyEvent, _keybindings: &KeybindingConfig) -> Result<()> {
@@ -47,7 +48,7 @@ fn enter_tag_commits(gui: &mut Gui) -> Result<()> {
         let commits = gui.git.load_commits_for_branch(&name, 300)?;
         {
             let mut model = gui.model.lock().unwrap();
-            model.sub_commits = commits;
+            model.set_sub_commits(commits);
         }
         gui.branch_commits_name = name;
         gui.sub_commits_parent_context = crate::gui::context::ContextId::Tags;
@@ -83,42 +84,45 @@ fn delete_tag(gui: &mut Gui) -> Result<()> {
     let model = gui.model.lock().unwrap();
     if let Some(tag) = model.tags.get(selected) {
         let name = tag.name.clone();
+        let on_remote = tag.on_remote;
         drop(model);
 
         let name_local = name.clone();
-        let name_remote = name.clone();
-        let name_both = name.clone();
+        let mut items = vec![MenuItem {
+            label: "Delete local tag".to_string(),
+            description: String::new(),
+            key: Some("c".to_string()),
+            action: Some(Box::new(move |gui| {
+                gui.git.delete_tag(&name_local)?;
+                gui.needs_refresh = true;
+                Ok(())
+            })),
+        }];
+
+        if on_remote {
+            let name_remote = name.clone();
+            let name_both = name.clone();
+            items.push(MenuItem {
+                label: "Delete remote tag".to_string(),
+                description: String::new(),
+                key: Some("r".to_string()),
+                action: Some(Box::new(move |gui| {
+                    prompt_remote_tag_delete(gui, name_remote.clone(), false)
+                })),
+            });
+            items.push(MenuItem {
+                label: "Delete local and remote tag".to_string(),
+                description: String::new(),
+                key: Some("b".to_string()),
+                action: Some(Box::new(move |gui| {
+                    prompt_remote_tag_delete(gui, name_both.clone(), true)
+                })),
+            });
+        }
 
         gui.popup = PopupState::Menu {
             title: format!("Delete tag '{}'?", name),
-            items: vec![
-                MenuItem {
-                    label: "Delete local tag".to_string(),
-                    description: String::new(),
-                    key: Some("c".to_string()),
-                    action: Some(Box::new(move |gui| {
-                        gui.git.delete_tag(&name_local)?;
-                        gui.needs_refresh = true;
-                        Ok(())
-                    })),
-                },
-                MenuItem {
-                    label: "Delete remote tag".to_string(),
-                    description: String::new(),
-                    key: Some("r".to_string()),
-                    action: Some(Box::new(move |gui| {
-                        prompt_remote_tag_delete(gui, name_remote.clone(), false)
-                    })),
-                },
-                MenuItem {
-                    label: "Delete local and remote tag".to_string(),
-                    description: String::new(),
-                    key: Some("b".to_string()),
-                    action: Some(Box::new(move |gui| {
-                        prompt_remote_tag_delete(gui, name_both.clone(), true)
-                    })),
-                },
-            ],
+            items,
             selected: 0,
             loading_index: None,
         };
@@ -147,6 +151,7 @@ fn prompt_remote_tag_delete(
                 value: remote.name.clone(),
                 label,
                 category: "Remotes".to_string(),
+                description: None,
             }
         })
         .collect();
@@ -157,7 +162,7 @@ fn prompt_remote_tag_delete(
         core: ListPickerCore {
             items,
             selected: 0,
-            search_textarea: make_help_search_textarea(),
+            search_textarea: make_command_palette_search_textarea(),
             scroll_offset: 0,
         },
         on_confirm: Box::new(move |gui, remote| {
@@ -196,13 +201,19 @@ fn confirm_remote_tag_delete(
         title,
         message,
         on_confirm: Box::new(move |gui| {
-            let message = if delete_local_after_remote {
-                format!("Deleting tag {} locally and from {}...", name, remote)
+            let (op_title, message) = if delete_local_after_remote {
+                (
+                    "Delete remote and local tag",
+                    format!("Deleting tag {} locally and from {}...", name, remote),
+                )
             } else {
-                format!("Deleting tag {} from {}...", name, remote)
+                (
+                    "Delete remote tag",
+                    format!("Deleting tag {} from {}...", name, remote),
+                )
             };
 
-            gui.start_remote_op("Delete", &message, move |git| {
+            gui.start_remote_op(op_title, &message, move |git| {
                 git.delete_remote_tag(&remote, &name)?;
                 if delete_local_after_remote {
                     git.delete_tag(&name)?;
@@ -220,51 +231,10 @@ fn show_reset_menu(gui: &mut Gui) -> Result<()> {
     let selected = gui.context_mgr.selected_active();
     let model = gui.model.lock().unwrap();
     if let Some(tag) = model.tags.get(selected) {
-        let hash = tag.hash.clone();
-        let short_hash = if hash.len() > 7 { &hash[..7] } else { &hash };
+        // Prefer the tag name as the ref so the menu title is readable.
+        let ref_name = tag.name.clone();
         drop(model);
-
-        let h1 = hash.clone();
-        let h2 = hash.clone();
-        let h3 = hash.clone();
-
-        gui.popup = PopupState::Menu {
-            title: "Reset to this tag".to_string(),
-            items: vec![
-                MenuItem {
-                    label: "Soft reset".to_string(),
-                    description: format!("reset --soft {}", short_hash),
-                    key: Some("s".to_string()),
-                    action: Some(Box::new(move |gui| {
-                        gui.git.reset_to_commit(&h1, "--soft")?;
-                        gui.needs_refresh = true;
-                        Ok(())
-                    })),
-                },
-                MenuItem {
-                    label: "Mixed reset".to_string(),
-                    description: format!("reset --mixed {}", short_hash),
-                    key: Some("m".to_string()),
-                    action: Some(Box::new(move |gui| {
-                        gui.git.reset_to_commit(&h2, "--mixed")?;
-                        gui.needs_refresh = true;
-                        Ok(())
-                    })),
-                },
-                MenuItem {
-                    label: "Hard reset".to_string(),
-                    description: format!("reset --hard {}", short_hash),
-                    key: Some("h".to_string()),
-                    action: Some(Box::new(move |gui| {
-                        gui.git.reset_to_commit(&h3, "--hard")?;
-                        gui.needs_refresh = true;
-                        Ok(())
-                    })),
-                },
-            ],
-            selected: 0,
-            loading_index: None,
-        };
+        return super::commits::show_reset_menu_for_ref(gui, &ref_name);
     }
     Ok(())
 }

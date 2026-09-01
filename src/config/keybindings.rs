@@ -126,6 +126,8 @@ pub struct UniversalKeybinding {
     pub reset_side_panel: String,
     #[serde(rename = "customCommandPrompt")]
     pub custom_command_prompt: String,
+    #[serde(rename = "toggleDiffViewLayout")]
+    pub toggle_diff_view_layout: String,
 }
 
 impl Default for UniversalKeybinding {
@@ -181,6 +183,7 @@ impl Default for UniversalKeybinding {
             main_panel_full: "<a-j>".into(),
             reset_side_panel: "<a-r>".into(),
             custom_command_prompt: ":".into(),
+            toggle_diff_view_layout: "\\".into(),
         }
     }
 }
@@ -354,7 +357,7 @@ impl Default for CommitsKeybinding {
             tag_commit: "T".into(),
             checkout_commit: "<space>".into(),
             reset_cherry_pick: "<c-q>".into(),
-            open_log_menu: "f".into(),
+            open_log_menu: "<c-s>".into(),
             view_bisect_options: "b".into(),
             interactive_rebase: "i".into(),
         }

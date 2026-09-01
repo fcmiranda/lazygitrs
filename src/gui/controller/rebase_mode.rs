@@ -4,7 +4,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::git::rebase::RebaseAction;
 use crate::gui::Gui;
 use crate::gui::modes::rebase_mode::RebasePhase;
-use crate::gui::popup::{HelpEntry, HelpSection, MessageKind, PopupState};
+use crate::gui::popup::{CommandEntry, CommandSection, MessageKind, PopupState};
 
 pub fn handle_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
     // Popup takes priority
@@ -197,38 +197,128 @@ fn handle_in_progress_key(gui: &mut Gui, key: KeyEvent) -> Result<()> {
         return abort_rebase(gui);
     }
 
-    // Navigation (read-only, just for viewing)
     let entry_count = gui.rebase_mode.entries.len();
     if entry_count == 0 {
         return Ok(());
     }
 
+    // Navigation
     match key.code {
-        KeyCode::Char('j') | KeyCode::Down => {
+        KeyCode::Char('j') | KeyCode::Down if !key.modifiers.contains(KeyModifiers::ALT) => {
             if gui.rebase_mode.selected + 1 < entry_count {
                 gui.rebase_mode.selected += 1;
             }
+            let vh = gui.rebase_mode.visible_height;
+            gui.rebase_mode.ensure_visible(vh);
+            return Ok(());
         }
-        KeyCode::Char('k') | KeyCode::Up => {
+        KeyCode::Char('k') | KeyCode::Up if !key.modifiers.contains(KeyModifiers::ALT) => {
             if gui.rebase_mode.selected > 0 {
                 gui.rebase_mode.selected -= 1;
             }
+            let vh = gui.rebase_mode.visible_height;
+            gui.rebase_mode.ensure_visible(vh);
+            return Ok(());
         }
         KeyCode::Char('g') => {
             gui.rebase_mode.selected = 0;
+            let vh = gui.rebase_mode.visible_height;
+            gui.rebase_mode.ensure_visible(vh);
+            return Ok(());
         }
         KeyCode::Char('G') => {
             gui.rebase_mode.selected = entry_count.saturating_sub(1);
+            let vh = gui.rebase_mode.visible_height;
+            gui.rebase_mode.ensure_visible(vh);
+            return Ok(());
         }
         _ => {}
     }
-    let vh = gui.rebase_mode.visible_height;
-    gui.rebase_mode.ensure_visible(vh);
+
+    // Action shortcuts for remaining (Pending) commits — persisted to disk.
+    match key.code {
+        KeyCode::Char('p') => {
+            gui.rebase_mode.set_action(RebaseAction::Pick);
+            return persist_in_progress_todo(gui);
+        }
+        KeyCode::Char('r') => {
+            gui.rebase_mode.set_action(RebaseAction::Reword);
+            return persist_in_progress_todo(gui);
+        }
+        KeyCode::Char('e') => {
+            gui.rebase_mode.set_action(RebaseAction::Edit);
+            return persist_in_progress_todo(gui);
+        }
+        KeyCode::Char('s') => {
+            gui.rebase_mode.set_action(RebaseAction::Squash);
+            return persist_in_progress_todo(gui);
+        }
+        KeyCode::Char('f') => {
+            gui.rebase_mode.set_action(RebaseAction::Fixup);
+            return persist_in_progress_todo(gui);
+        }
+        KeyCode::Char('d') => {
+            gui.rebase_mode.set_action(RebaseAction::Drop);
+            return persist_in_progress_todo(gui);
+        }
+        KeyCode::Char('l') | KeyCode::Right => {
+            gui.rebase_mode.cycle_action_forward();
+            return persist_in_progress_todo(gui);
+        }
+        KeyCode::Char('h') | KeyCode::Left => {
+            gui.rebase_mode.cycle_action_backward();
+            return persist_in_progress_todo(gui);
+        }
+        _ => {}
+    }
+
+    // Reorder remaining pending entries (Alt+j/k or [ / ]).
+    if ((key.code == KeyCode::Up || key.code == KeyCode::Char('k'))
+        && key.modifiers.contains(KeyModifiers::ALT))
+        || key.code == KeyCode::Char('[')
+    {
+        gui.rebase_mode.move_up();
+        let vh = gui.rebase_mode.visible_height;
+        gui.rebase_mode.ensure_visible(vh);
+        return persist_in_progress_todo(gui);
+    }
+    if ((key.code == KeyCode::Down || key.code == KeyCode::Char('j'))
+        && key.modifiers.contains(KeyModifiers::ALT))
+        || key.code == KeyCode::Char(']')
+    {
+        gui.rebase_mode.move_down();
+        let vh = gui.rebase_mode.visible_height;
+        gui.rebase_mode.ensure_visible(vh);
+        return persist_in_progress_todo(gui);
+    }
 
     Ok(())
 }
 
+fn persist_in_progress_todo(gui: &mut Gui) -> Result<()> {
+    let pending = gui.rebase_mode.pending_actions_newest_first();
+    if let Err(e) = gui.git.write_rebase_todo(&pending) {
+        gui.popup = PopupState::Message {
+            title: "Rebase todo".to_string(),
+            message: format!("Failed to update rebase todo: {e}"),
+            kind: MessageKind::Error,
+        };
+    }
+    Ok(())
+}
+
 fn continue_rebase(gui: &mut Gui) -> Result<()> {
+    // Persist any in-memory todo edits before asking git to continue.
+    let pending = gui.rebase_mode.pending_actions_newest_first();
+    if let Err(e) = gui.git.write_rebase_todo(&pending) {
+        gui.popup = PopupState::Message {
+            title: "Continue failed".to_string(),
+            message: format!("Failed to update rebase todo: {e}"),
+            kind: MessageKind::Error,
+        };
+        return Ok(());
+    }
+
     match gui.git.continue_rebase() {
         Ok(()) => {
             // Don't exit rebase mode here. Resync immediately if Git paused
@@ -313,24 +403,11 @@ fn execute_rebase(gui: &mut Gui) -> Result<()> {
     let actions = gui.rebase_mode.build_actions();
     let base_hash = gui.rebase_mode.base_hash.clone();
 
-    // Validate: squash/fixup cannot be the first action
-    if let Some((_, first_action)) = actions.first() {
-        if *first_action == RebaseAction::Squash || *first_action == RebaseAction::Fixup {
-            gui.popup = PopupState::Message {
-                title: "Invalid rebase".to_string(),
-                message: format!(
-                    "Cannot {} the first commit — there is nothing to {} into.",
-                    first_action.as_str(),
-                    first_action.as_str(),
-                ),
-                kind: MessageKind::Error,
-            };
-            return Ok(());
-        }
-    }
-
     // Switch to InProgress phase so refresh() can detect completion
     // and show the success popup (or re-enter InProgress if paused).
+    // Squash/fixup of the oldest todo is allowed: git cannot start a todo
+    // with those actions, so rebase_interactive_batch picks the onto commit
+    // and rebases onto its parent instead.
     gui.rebase_mode.phase = crate::gui::modes::rebase_mode::RebasePhase::InProgress;
 
     match gui.git.rebase_interactive_batch(&base_hash, &actions) {
@@ -358,157 +435,99 @@ fn execute_rebase(gui: &mut Gui) -> Result<()> {
 // ── Help dialogs ────────────────────────────────────────────────────────
 
 fn show_planning_help(gui: &mut Gui) {
-    let actions_section = HelpSection {
+    let actions_section = CommandSection {
         title: "Actions".into(),
         entries: vec![
-            HelpEntry {
-                key: "p".into(),
-                description: "Set action to Pick".into(),
-            },
-            HelpEntry {
-                key: "r".into(),
-                description: "Set action to Reword".into(),
-            },
-            HelpEntry {
-                key: "e".into(),
-                description: "Set action to Edit".into(),
-            },
-            HelpEntry {
-                key: "s".into(),
-                description: "Set action to Squash".into(),
-            },
-            HelpEntry {
-                key: "f".into(),
-                description: "Set action to Fixup".into(),
-            },
-            HelpEntry {
-                key: "d".into(),
-                description: "Set action to Drop".into(),
-            },
-            HelpEntry {
-                key: "h / ←".into(),
-                description: "Cycle action backward".into(),
-            },
-            HelpEntry {
-                key: "l / →".into(),
-                description: "Cycle action forward".into(),
-            },
+            CommandEntry::keybinding("p".into(), "Set action to Pick".into()),
+            CommandEntry::keybinding("r".into(), "Set action to Reword".into()),
+            CommandEntry::keybinding("e".into(), "Set action to Edit".into()),
+            CommandEntry::keybinding("s".into(), "Set action to Squash".into()),
+            CommandEntry::keybinding("f".into(), "Set action to Fixup".into()),
+            CommandEntry::keybinding("d".into(), "Set action to Drop".into()),
+            CommandEntry::keybinding("h / ←".into(), "Cycle action backward".into()),
+            CommandEntry::keybinding("l / →".into(), "Cycle action forward".into()),
         ],
     };
 
-    let navigation_section = HelpSection {
+    let navigation_section = CommandSection {
         title: "Navigation".into(),
         entries: vec![
-            HelpEntry {
-                key: "j / ↓".into(),
-                description: "Select next commit".into(),
-            },
-            HelpEntry {
-                key: "k / ↑".into(),
-                description: "Select previous commit".into(),
-            },
-            HelpEntry {
-                key: "g".into(),
-                description: "Jump to top".into(),
-            },
-            HelpEntry {
-                key: "G".into(),
-                description: "Jump to bottom".into(),
-            },
-            HelpEntry {
-                key: "Alt+↑".into(),
-                description: "Move commit up".into(),
-            },
-            HelpEntry {
-                key: "Alt+↓".into(),
-                description: "Move commit down".into(),
-            },
-            HelpEntry {
-                key: "[".into(),
-                description: "Swap with previous".into(),
-            },
-            HelpEntry {
-                key: "]".into(),
-                description: "Swap with next".into(),
-            },
+            CommandEntry::keybinding("j / ↓".into(), "Select next commit".into()),
+            CommandEntry::keybinding("k / ↑".into(), "Select previous commit".into()),
+            CommandEntry::keybinding("g".into(), "Jump to top".into()),
+            CommandEntry::keybinding("G".into(), "Jump to bottom".into()),
+            CommandEntry::keybinding("Alt+↑".into(), "Move commit up".into()),
+            CommandEntry::keybinding("Alt+↓".into(), "Move commit down".into()),
+            CommandEntry::keybinding("[".into(), "Swap with previous".into()),
+            CommandEntry::keybinding("]".into(), "Swap with next".into()),
         ],
     };
 
-    let general_section = HelpSection {
+    let general_section = CommandSection {
         title: "General".into(),
         entries: vec![
-            HelpEntry {
-                key: "Enter".into(),
-                description: "Start rebase".into(),
-            },
-            HelpEntry {
-                key: "q / Esc".into(),
-                description: "Abort (exit without rebasing)".into(),
-            },
+            CommandEntry::keybinding("Enter".into(), "Start rebase".into()),
+            CommandEntry::keybinding("q / Esc".into(), "Abort (exit without rebasing)".into()),
         ],
     };
 
-    gui.popup = PopupState::Help {
+    gui.popup = PopupState::CommandPalette {
         sections: vec![actions_section, navigation_section, general_section],
         selected: 0,
-        search_textarea: crate::gui::popup::make_help_search_textarea(),
+        search_textarea: crate::gui::popup::make_command_palette_search_textarea(),
         scroll_offset: 0,
     };
 }
 
 fn show_in_progress_help(gui: &mut Gui) {
-    let rebase_section = HelpSection {
+    let rebase_section = CommandSection {
         title: "Rebase".into(),
         entries: vec![
-            HelpEntry {
-                key: "Enter / c".into(),
-                description: "Continue rebase".into(),
-            },
-            HelpEntry {
-                key: "S".into(),
-                description: "Skip current commit".into(),
-            },
-            HelpEntry {
-                key: "A".into(),
-                description: "Abort rebase".into(),
-            },
+            CommandEntry::keybinding("Enter / c".into(), "Continue rebase".into()),
+            CommandEntry::keybinding("S".into(), "Skip current commit".into()),
+            CommandEntry::keybinding("A".into(), "Abort rebase".into()),
         ],
     };
 
-    let navigation_section = HelpSection {
+    let actions_section = CommandSection {
+        title: "Remaining commits".into(),
+        entries: vec![
+            CommandEntry::keybinding(
+                "p / r / e / s / f / d".into(),
+                "Set pick/reword/edit/squash/fixup/drop".into(),
+            ),
+            CommandEntry::keybinding("h / l".into(), "Cycle action".into()),
+            CommandEntry::keybinding("[ / ]".into(), "Reorder remaining commits".into()),
+        ],
+    };
+
+    let navigation_section = CommandSection {
         title: "Navigation".into(),
         entries: vec![
-            HelpEntry {
-                key: "j / ↓".into(),
-                description: "Select next entry".into(),
-            },
-            HelpEntry {
-                key: "k / ↑".into(),
-                description: "Select previous entry".into(),
-            },
-            HelpEntry {
-                key: "g".into(),
-                description: "Jump to top".into(),
-            },
-            HelpEntry {
-                key: "G".into(),
-                description: "Jump to bottom".into(),
-            },
+            CommandEntry::keybinding("j / ↓".into(), "Select next entry".into()),
+            CommandEntry::keybinding("k / ↑".into(), "Select previous entry".into()),
+            CommandEntry::keybinding("g".into(), "Jump to top".into()),
+            CommandEntry::keybinding("G".into(), "Jump to bottom".into()),
         ],
     };
 
-    let general_section = HelpSection {
+    let general_section = CommandSection {
         title: "General".into(),
-        entries: vec![HelpEntry {
-            key: "q / Esc".into(),
-            description: "Close view (rebase stays in progress)".into(),
-        }],
+        entries: vec![CommandEntry::keybinding(
+            "q / Esc".into(),
+            "Close view (rebase stays in progress)".into(),
+        )],
     };
 
-    gui.popup = PopupState::Help {
-        sections: vec![rebase_section, navigation_section, general_section],
+    gui.popup = PopupState::CommandPalette {
+        sections: vec![
+            rebase_section,
+            actions_section,
+            navigation_section,
+            general_section,
+        ],
         selected: 0,
-        search_textarea: crate::gui::popup::make_help_search_textarea(),
+        search_textarea: crate::gui::popup::make_command_palette_search_textarea(),
         scroll_offset: 0,
     };
 }

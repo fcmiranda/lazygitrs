@@ -1,6 +1,6 @@
 [package]
 name = "lazygitrs"
-version = "0.0.23"
+version = "0.0.35"
 edition = "2024"
 description = "A faster, memory-safe, more ergonomic slopfork of lazygit"
 repository = "https://github.com/blankeos/lazygitrs"
@@ -10,7 +10,10 @@ license = "MIT"
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
-crossterm = { version = "0.28", features = ["event-stream"] }
+# `use-dev-tty` switches crossterm off mio/kqueue onto filedescriptor's
+# select()-based reader. Required on macOS under Helix `:insert-output`,
+# where stdin is /dev/null so events come from /dev/tty (mio returns POLLNVAL).
+crossterm = { version = "0.28", features = ["event-stream", "libc", "use-dev-tty"] }
 dirs = "6"
 ratatui = "0.29"
 serde = { version = "1", features = ["derive"] }
@@ -43,6 +46,7 @@ textwrap = "0.16.2"
 axum = "0.8.9"
 futures-util = "0.3"
 async-stream = "0.3"
+libc = "0.2"
 
 [profile.release]
 lto = true

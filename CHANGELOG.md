@@ -2,17 +2,200 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.35] - 2026-08-30
+
+### Bug Fixes
+
+- Allow squash/fixup as first rebase action by rebasing onto parent by @Blankeos
+- Commit message dialog hardcoded height crash by @Blankeos
+
+### Chores
+
+- Refuse tagging unless on main by @Blankeos
+
+### Features
+
+- Discard performance #25 (#26) by @Blankeos in [#26](https://github.com/Blankeos/lazygitrs/pull/26)
+
+## [0.0.34] - 2026-08-27
+
+### Bug Fixes
+
+- Cycle list picker selection and deduplicate scroll-after-navigation logic by @Blankeos
+- Theme picker filter and up/down by @Blankeos
+- Reset scroll position when replacing commit summary text by @Blankeos
+- Preserve logical newlines in commit body soft-wrap editor by @Blankeos
+- Replace sed-based GIT_SEQUENCE_EDITOR with temp-file scripts by @Blankeos
+- Make TUI work under Helix `:insert-output` by claiming `/dev/tty` by @Blankeos
+
+### Features
+
+- Generate light-mode themes from OpenCode source data by @Blankeos
+- Apply commit filters at stream time instead of re-fetching after load by @Blankeos
+- Add theme appearance tracking and update generated theme colors by @Blankeos
+- Add startup path filter (-f/--filter) and fix list picker search filtering by @Blankeos
+
+### Doc
+
+- Document how to do editor integrations by @Blankeos
+
+## [0.0.33] - 2026-08-21
+
+### Features
+
+- Add edit and open-file shortcuts to commit files panel by @Blankeos
+- Support suspending TUI for terminal editors (hx/nvim/vim) by @Blankeos
+- Display co-authors in commit details and offer branch creation on checkout miss by @Blankeos
+
+## [0.0.32] - 2026-08-13
+
+### Features
+
+- Add remote edit and fork-remote workflows by @Blankeos
+- Add lazygitrs self-upgrade command by @Blankeos
+
+### Performance
+
+- Make commit diff navigation instant with prefetch and churn fix (#24) by @joshxfi in [#24](https://github.com/Blankeos/lazygitrs/pull/24)
+
+
+### New Contributors
+
+- @joshxfi made their first contribution in [#24](https://github.com/Blankeos/lazygitrs/pull/24)
+## [0.0.31] - 2026-08-13
+
+### Bug Fixes
+
+- Errors when partially adding filetrees by @Blankeos
+- Migrate checklist search input to textarea with enhanced editing by @Blankeos
+- Render pure rename diffs by falling back to file content by @Blankeos
+- Prevent concurrent fetch races causing divergent branch errors by @Blankeos
+
+### Features
+
+- Skip expensive untracked file stats in diff/file loading by @Blankeos
+- Fix tree row spacing for status icons by @Blankeos
+
+### Performance
+
+- Optimize stage-all toggling with optimistic UI updates by @Blankeos
+- Make stage/unstage and checkout paths non-blocking by @Blankeos
+
+## [0.0.30] - 2026-08-05
+
+### Features
+
+- Add list search match highlighting in rendered panels by @Blankeos
+- Support multi-author commit filtering by @Blankeos
+- Ctrl-s, add commit filtering by branch, path, and author by @Blankeos
+- Stream HEAD metadata during model loading by @Blankeos
+
+## [0.0.29] - 2026-08-02
+
+### Bug Fixes
+
+- Show placeholder for binary files in diff views by @Blankeos
+- Include `--root` for root-commit file diffs by @Blankeos
+- Fix portrait sidebar resize hit-testing and ratio mapping by @Blankeos
+- Restore syntax highlighting for multi-file commit previews by @Blankeos
+
+### Features
+
+- Migrate help overlays to executable command palettes by @Blankeos
+- Add global reset picker and share reset actions by @Blankeos
+- Support AI commit message generation for commit rewording by @Blankeos
+
+### Performance
+
+- Skip commit file stats when loading stash contents by @Blankeos
+- Batch directory diffs and parallelize multi-file highlighting by @Blankeos
+
+## [0.0.28] - 2026-07-27
+
+### Bug Fixes
+
+- Avoid overwriting commits while branch filter is active by @Blankeos
+- Harden terminal input handling and isolate background commands (#23) by @Blankeos in [#23](https://github.com/Blankeos/lazygitrs/pull/23)
+- Render commit graph with per-row width and single separator space by @Blankeos
+
+### Chores
+
+- Added automated npm/cratesio publishing by @Blankeos
+
+### Features
+
+- Add draggable sidebar divider interaction by @Blankeos
+- Add popup mouse selection + click-to-activate behavior by @Blankeos
+- Replace remote operation modal with lightweight loading toast by @Blankeos
+- Display remote tag presence and gate remote deletion by @Blankeos
+- Show co-located branch labels on tags by @Blankeos
+- Allow rewording empty commits by @Blankeos
+- Show async Loading modal during remote operations by @Blankeos
+
+### Performance
+
+- Run commit actions through async ops and streaming refresh by @Blankeos
+
+## [0.0.27] - 2026-07-23
+
+### Bug Fixes
+
+- Handle fragmented escape sequences and suppress command modifiers by @Blankeos
+
+### Performance
+
+- Optimize async diff loading and commit detail fetching by @Blankeos
+
+## [0.0.26] - 2026-07-23
+
+### Bug Fixes
+
+- Preserve terminal text input when enabling keyboard enhancements by @Blankeos
+
+## [0.0.25] - 2026-07-22
+
+### Bug Fixes
+
+- #20 hover disabled optimistic so it doesn't hit ghostty users by @Blankeos
+- Persist file-tree visibility in compare mode by @Blankeos
+
+### Features
+
+- Add branch-aware commit checkout menu by @Blankeos
+
+## [0.0.24] - 2026-07-12
+
+### Bug Fixes
+
+- Force plain unified output for stash diff by @Blankeos
+- Ignore no-newline metadata in unified diff parsing by @Blankeos
+- Render unified modified hunks in old-then-new chunk order by @Blankeos
+
+### Features
+
+- Show diff hunk/addition/deletion stats in commit file lists by @Blankeos
+- Show current hunk position in side-by-side header by @Blankeos
+- Show inline diff stats in staged file lists by @Blankeos
+- Clarify cherry-pick copy/paste UX by @Blankeos
+- Add confirmation before committing from detached HEAD by @Blankeos
+- Show diff layout mode in status and help hints by @Blankeos
+- Make diff layout toggle keybinding configurable by @Blankeos
+
+### Performance
+
+- Avoid extra branch recency calls and gate auto-refresh on fetch output by @Blankeos
+
 ## [0.0.23] - 2026-06-18
 
 ### Bug Fixes
 
-- Restore head-marker behavior for merge nodes by Blankeos
-- Resolve previous branch checkout via explicit ref name by Blankeos
-- Handle rename/copy paths consistently across diffs and file actions by Blankeos
+- Restore head-marker behavior for merge nodes by @Blankeos
+- Resolve previous branch checkout via explicit ref name by @Blankeos
+- Handle rename/copy paths consistently across diffs and file actions by @Blankeos
 
 ### Chores
 
-- Publish Homebrew formula via release workflow by Blankeos
+- Publish Homebrew formula via release workflow by @Blankeos
 
 ## [0.0.22] - 2026-06-10
 
