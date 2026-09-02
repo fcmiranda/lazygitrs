@@ -1572,6 +1572,93 @@ mod tests {
         assert_eq!(checklist_item_at(&popup, area, x, 12), None); // search row
         assert_eq!(checklist_item_at(&popup, area, x, 13), None); // separator
     }
+
+    #[test]
+    fn list_panel_renders_scrollbar_when_scrollable() {
+        use ratatui::widgets::{Block, Borders, ListItem};
+        let backend = TestBackend::new(30, 8);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        let theme = Theme::default();
+        let items: Vec<ListItem> = (0..20)
+            .map(|i| ListItem::new(format!("item {}", i)))
+            .collect();
+        let rect = Rect::new(0, 0, 30, 8);
+        let block = Block::default().borders(Borders::ALL);
+        let mut scroll_offset = 0;
+
+        terminal
+            .draw(|f| {
+                super::render_list_with_range_raw(
+                    f,
+                    rect,
+                    block,
+                    items,
+                    0,
+                    true,
+                    &theme,
+                    None,
+                    &mut scroll_offset,
+                    true,
+                );
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let right_x = 29;
+        let mut found_thumb = false;
+        for y in 0..8 {
+            if buf.cell((right_x, y)).map(|c| c.symbol()) == Some("▐") {
+                found_thumb = true;
+                break;
+            }
+        }
+        assert!(
+            found_thumb,
+            "Scrollbar thumb '▐' should be rendered on right border when list is scrollable"
+        );
+    }
+
+    #[test]
+    fn list_panel_does_not_render_scrollbar_when_content_fits() {
+        use ratatui::widgets::{Block, Borders, ListItem};
+        let backend = TestBackend::new(30, 8);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        let theme = Theme::default();
+        let items: Vec<ListItem> = (0..3)
+            .map(|i| ListItem::new(format!("item {}", i)))
+            .collect();
+        let rect = Rect::new(0, 0, 30, 8);
+        let block = Block::default().borders(Borders::ALL);
+        let mut scroll_offset = 0;
+
+        terminal
+            .draw(|f| {
+                super::render_list_with_range_raw(
+                    f,
+                    rect,
+                    block,
+                    items,
+                    0,
+                    true,
+                    &theme,
+                    None,
+                    &mut scroll_offset,
+                    true,
+                );
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        for y in 0..8 {
+            for x in 0..30 {
+                assert_ne!(
+                    buf.cell((x, y)).map(|c| c.symbol()),
+                    Some("▐"),
+                    "Scrollbar should NOT be rendered when all content fits"
+                );
+            }
+        }
+    }
 }
 
 /// Build a window title like " 4 Commit Files (abc1234 feat: some change) ".
@@ -2080,8 +2167,21 @@ fn render_commit_list_ctx(
             }
         })
         .collect();
-
+    let border_style = if is_active {
+        theme.active_border
+    } else {
+        theme.inactive_border
+    };
     frame.render_widget(List::new(visible_items).block(block), rect);
+    super::scroll::render_scrollbar(
+        frame.buffer_mut(),
+        rect,
+        total_len,
+        visible_height,
+        offset,
+        false,
+        border_style,
+    );
 }
 
 /// Highlight contiguous `/` search matches in a list panel (lazygit-style).
@@ -2186,6 +2286,7 @@ fn render_list_with_range_raw(
         *scroll_offset = max_offset;
     }
     let offset = *scroll_offset;
+    let total_len = items.len();
 
     let visible_items: Vec<ListItem> = items
         .into_iter()
@@ -2203,9 +2304,22 @@ fn render_list_with_range_raw(
             }
         })
         .collect();
-
+    let border_style = if is_active {
+        theme.active_border
+    } else {
+        theme.inactive_border
+    };
     let list = List::new(visible_items).block(block);
     frame.render_widget(list, rect);
+    super::scroll::render_scrollbar(
+        frame.buffer_mut(),
+        rect,
+        total_len,
+        visible_height,
+        offset,
+        false,
+        border_style,
+    );
 }
 
 fn get_info_content<'a>(model: &Model, ctx_mgr: &ContextManager) -> Vec<Line<'a>> {
@@ -2392,6 +2506,7 @@ fn render_status_bar(
                     ("c", "commit"),
                     ("a", "stage all"),
                     ("space", "toggle"),
+                    ("`", "tree"),
                     ("\\", view_layout_hint),
                     ("d", "discard"),
                     ("e", "edit"),
@@ -2401,6 +2516,7 @@ fn render_status_bar(
             ContextId::CommitFiles | ContextId::StashFiles | ContextId::BranchCommitFiles => {
                 hints.extend([
                     ("enter", "focus diff"),
+                    ("`", "tree"),
                     ("\\", view_layout_hint),
                     ("y", "copy"),
                 ]);

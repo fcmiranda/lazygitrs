@@ -2076,6 +2076,16 @@ pub fn render_diff(
     }
 
     render_hover_plus_button(buf, area, state, theme);
+
+    crate::gui::scroll::render_scrollbar(
+        buf,
+        area,
+        state.total_scroll_rows(),
+        visible_height,
+        state.scroll_offset,
+        true,
+        border_style,
+    );
 }
 
 fn render_unified_diff_body(
@@ -4191,6 +4201,44 @@ mod tests {
         assert!(
             text.contains("not viewable") || text.contains("Binary file"),
             "got {text:?}"
+        );
+    }
+
+    #[test]
+    fn diff_border_renders_scrollbar_on_right_border() {
+        let backend = TestBackend::new(40, 10);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        let mut state = DiffViewState::new();
+        state.filename = "file.txt".to_string();
+        state.lines = (0..50).map(|_| diff_line(ChangeType::Equal)).collect();
+        state.scroll_offset = 0;
+
+        terminal
+            .draw(|frame| {
+                render_diff(
+                    frame,
+                    Rect::new(0, 0, 40, 10),
+                    &mut state,
+                    &Theme::dark(),
+                    true,
+                    false,
+                    false,
+                    0,
+                );
+            })
+            .expect("diff should render");
+
+        let buffer = terminal.backend().buffer();
+        // The right border column is at x = 39. Rows 1..=8 are the inner border cells.
+        let right_border: Vec<String> = (1..9)
+            .map(|y| buffer.get(39, y).symbol().to_string())
+            .collect();
+
+        // There should be at least one '▐' (Right Half Block) scrollbar character rendered on the right border
+        assert!(
+            right_border.iter().any(|c| c == "▐"),
+            "Expected scrollbar '▐' on right border, but got: {:?}",
+            right_border
         );
     }
 }
