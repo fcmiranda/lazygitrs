@@ -13,6 +13,7 @@ pub struct App {
     pub filter_file: Option<String>,
     pub is_popup: bool,
     pub filter_path: Option<PathBuf>,
+    pub start_in_commits: bool,
 }
 
 impl App {
@@ -23,6 +24,7 @@ impl App {
         filter_file: Option<String>,
         config_override: Option<String>,
         filter_path: Option<PathBuf>,
+        start_in_commits: bool,
     ) -> Result<Self> {
         let is_popup = config_override.as_deref() == Some("popup");
         let config = AppConfig::load(debug, config_override)?;
@@ -39,6 +41,7 @@ impl App {
             filter_file,
             is_popup,
             filter_path,
+            start_in_commits,
         })
     }
 
@@ -57,6 +60,7 @@ impl App {
             self.filter_file,
             self.is_popup,
             self.filter_path,
+            self.start_in_commits,
         )?;
         gui.run()?;
 

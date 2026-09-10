@@ -1550,6 +1550,192 @@ mod tests {
     }
 
     #[test]
+    fn status_bar_reflects_toggle_working_tree_and_head() {
+        use crate::config::KeybindingConfig;
+        use crate::gui::context::{ContextId, ContextManager};
+        use crate::model::Model;
+        use crate::pager::side_by_side::DiffViewState;
+
+        let backend = TestBackend::new(160, 1);
+        let mut terminal = Terminal::new(backend).expect("test terminal");
+        let theme = Theme::default();
+        let mut ctx_mgr = ContextManager::new();
+        let diff_view = DiffViewState::new();
+        let model = Model::default();
+        let keybindings = KeybindingConfig::default();
+
+        // 1. Files context -> shows "ctrl+g head"
+        ctx_mgr.set_active(ContextId::Files);
+        terminal
+            .draw(|f| {
+                super::render_status_bar(
+                    f,
+                    Rect::new(0, 0, 160, 1),
+                    &ctx_mgr,
+                    &diff_view,
+                    &theme,
+                    &model,
+                    false,
+                    false,
+                    &keybindings,
+                );
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let content: String = (0..160)
+            .map(|x| buf.cell((x, 0)).unwrap().symbol())
+            .collect();
+        assert!(
+            content.contains("ctrl+g head"),
+            "Expected 'ctrl+g head' in status bar for Files, got: {}",
+            content
+        );
+
+        // 2. Commits context -> shows "ctrl+g files"
+        ctx_mgr.set_active(ContextId::Commits);
+        terminal
+            .draw(|f| {
+                super::render_status_bar(
+                    f,
+                    Rect::new(0, 0, 160, 1),
+                    &ctx_mgr,
+                    &diff_view,
+                    &theme,
+                    &model,
+                    false,
+                    false,
+                    &keybindings,
+                );
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let content: String = (0..160)
+            .map(|x| buf.cell((x, 0)).unwrap().symbol())
+            .collect();
+        assert!(
+            content.contains("ctrl+g files"),
+            "Expected 'ctrl+g files' in status bar for Commits, got: {}",
+            content
+        );
+
+        // 3. CommitFiles context -> shows "ctrl+g files"
+        ctx_mgr.set_active(ContextId::CommitFiles);
+        terminal
+            .draw(|f| {
+                super::render_status_bar(
+                    f,
+                    Rect::new(0, 0, 160, 1),
+                    &ctx_mgr,
+                    &diff_view,
+                    &theme,
+                    &model,
+                    false,
+                    false,
+                    &keybindings,
+                );
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let content: String = (0..160)
+            .map(|x| buf.cell((x, 0)).unwrap().symbol())
+            .collect();
+        assert!(
+            content.contains("ctrl+g files"),
+            "Expected 'ctrl+g files' in status bar for CommitFiles, got: {}",
+            content
+        );
+
+        // 4. Diff-focused mode: Files context -> shows "ctrl+g head"
+        ctx_mgr.set_active(ContextId::Files);
+        terminal
+            .draw(|f| {
+                super::render_status_bar(
+                    f,
+                    Rect::new(0, 0, 160, 1),
+                    &ctx_mgr,
+                    &diff_view,
+                    &theme,
+                    &model,
+                    true,
+                    false,
+                    &keybindings,
+                );
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let content: String = (0..160)
+            .map(|x| buf.cell((x, 0)).unwrap().symbol())
+            .collect();
+        assert!(
+            content.contains("ctrl+g head"),
+            "Expected 'ctrl+g head' in diff-focused status bar for Files, got: {}",
+            content
+        );
+
+        // 5. Diff-focused mode: Commits context -> shows "ctrl+g files"
+        ctx_mgr.set_active(ContextId::Commits);
+        terminal
+            .draw(|f| {
+                super::render_status_bar(
+                    f,
+                    Rect::new(0, 0, 160, 1),
+                    &ctx_mgr,
+                    &diff_view,
+                    &theme,
+                    &model,
+                    true,
+                    false,
+                    &keybindings,
+                );
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let content: String = (0..160)
+            .map(|x| buf.cell((x, 0)).unwrap().symbol())
+            .collect();
+        assert!(
+            content.contains("ctrl+g files"),
+            "Expected 'ctrl+g files' in diff-focused status bar for Commits, got: {}",
+            content
+        );
+
+        // 6. Custom keybinding (e.g. <c-t>) -> shows "ctrl+t head" and "ctrl+t files"
+        let mut custom_kb = KeybindingConfig::default();
+        custom_kb.universal.toggle_working_tree_and_head = "<c-t>".into();
+        ctx_mgr.set_active(ContextId::Files);
+        terminal
+            .draw(|f| {
+                super::render_status_bar(
+                    f,
+                    Rect::new(0, 0, 160, 1),
+                    &ctx_mgr,
+                    &diff_view,
+                    &theme,
+                    &model,
+                    false,
+                    false,
+                    &custom_kb,
+                );
+            })
+            .unwrap();
+
+        let buf = terminal.backend().buffer();
+        let content: String = (0..160)
+            .map(|x| buf.cell((x, 0)).unwrap().symbol())
+            .collect();
+        assert!(
+            content.contains("ctrl+t head"),
+            "Expected 'ctrl+t head' with custom keybinding, got: {}",
+            content
+        );
+    }
+
+    #[test]
     fn command_log_is_hidden_when_main_panel_is_absent() {
         assert_eq!(command_log_geometry(Rect::default(), 1), None);
     }
@@ -2594,6 +2780,7 @@ fn render_status_bar(
     let mut hints: Vec<(&str, &str)> = Vec::new();
     let mut emphasized: Vec<&str> = Vec::new();
     let open_log_menu_key = format_key_hint(&keybindings.commits.open_log_menu);
+    let toggle_head_key = format_key_hint(&keybindings.universal.toggle_working_tree_and_head);
 
     // When in a special state (rebasing/merging/cherry-picking), show those options prominently
     if model.is_rebasing {
@@ -2621,6 +2808,10 @@ fn render_status_bar(
             let has_selection = diff_view.selected_revert_hunk.is_some();
             let has_undo = !diff_view.revert_undo_stack.is_empty();
             let mut idx = 0;
+            if !toggle_head_key.is_empty() {
+                hints.insert(idx, (toggle_head_key.as_str(), "head"));
+                idx += 1;
+            }
             if has_selection {
                 hints.insert(idx, ("enter", "hunk menu"));
                 emphasized.push("enter");
@@ -2632,6 +2823,11 @@ fn render_status_bar(
                 hints.insert(idx, ("u", "undo revert"));
             }
         } else {
+            if (ctx_mgr.active() == ContextId::Commits || ctx_mgr.active() == ContextId::CommitFiles)
+                && !toggle_head_key.is_empty()
+            {
+                hints.push((toggle_head_key.as_str(), "files"));
+            }
             hints.push(("{/}", "prev/next hunk"));
         }
         hints.push(("[/]", "side view"));
@@ -2648,6 +2844,9 @@ fn render_status_bar(
         };
         match ctx_mgr.active() {
             ContextId::Files => {
+                if !toggle_head_key.is_empty() {
+                    hints.push((toggle_head_key.as_str(), "head"));
+                }
                 hints.extend([
                     ("c", "commit"),
                     ("a", "stage all"),
@@ -2660,6 +2859,9 @@ fn render_status_bar(
                 ]);
             }
             ContextId::CommitFiles | ContextId::StashFiles | ContextId::BranchCommitFiles => {
+                if ctx_mgr.active() == ContextId::CommitFiles && !toggle_head_key.is_empty() {
+                    hints.push((toggle_head_key.as_str(), "files"));
+                }
                 hints.extend([
                     ("enter", "focus diff"),
                     ("`", "tree"),
@@ -2692,6 +2894,9 @@ fn render_status_bar(
                 ]);
             }
             ContextId::Commits => {
+                if !toggle_head_key.is_empty() {
+                    hints.push((toggle_head_key.as_str(), "files"));
+                }
                 if has_copied_commits {
                     hints.push(("V", "paste (cherry-pick)"));
                 }

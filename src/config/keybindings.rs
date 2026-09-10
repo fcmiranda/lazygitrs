@@ -128,6 +128,8 @@ pub struct UniversalKeybinding {
     pub custom_command_prompt: String,
     #[serde(rename = "toggleDiffViewLayout")]
     pub toggle_diff_view_layout: String,
+    #[serde(rename = "toggleWorkingTreeAndHead")]
+    pub toggle_working_tree_and_head: String,
 }
 
 impl Default for UniversalKeybinding {
@@ -184,6 +186,7 @@ impl Default for UniversalKeybinding {
             reset_side_panel: "<a-r>".into(),
             custom_command_prompt: ":".into(),
             toggle_diff_view_layout: "\\".into(),
+            toggle_working_tree_and_head: "<c-g>".into(),
         }
     }
 }

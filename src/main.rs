@@ -60,6 +60,10 @@ struct Cli {
     /// Clear the active AI session for this repository and globally
     #[arg(long)]
     clear_session: bool,
+
+    /// Launch directly in the commits panel
+    #[arg(long)]
+    commits: bool,
 }
 
 #[derive(Subcommand)]
@@ -187,6 +191,7 @@ fn main() {
         cli.file,
         cli.config,
         cli.filter_path,
+        cli.commits,
     ) {
         Ok(app) => {
             if let Err(e) = app.run() {
@@ -198,5 +203,19 @@ fn main() {
             eprintln!("Error: {:#}", e);
             std::process::exit(1);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_cli_commits_flag() {
+        let cli = Cli::parse_from(["lazygitrs", "--commits"]);
+        assert!(cli.commits);
+
+        let cli_default = Cli::parse_from(["lazygitrs"]);
+        assert!(!cli_default.commits);
     }
 }
