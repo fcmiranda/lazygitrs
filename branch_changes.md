@@ -13,12 +13,12 @@ This document summarizes the changes, additions, fixes, and architectural improv
   * Added custom command status hints `(":", "shell")` to the global status bar.
 
 * **Commits Panel Remappings, Branch Filtering & Bisecting**:
-  * **Branch Filtering Popup (`f`)**: Filter commits by selected branches using a multi-select checklist menu (`open_log_menu` remapped to `f`). Includes a `<Clear Filter>` option and automatic fallback to checking the highlighted branch when none are selected. Pressing `<Esc>` in the Commits panel clears active branch filters before clearing the clipboard.
+  * **Branch Filtering Popup (`<c-s>` / `Ctrl+S`)**: Filter commits by selected branches using a multi-select checklist menu (`openLogMenu`, defaulting to `<c-s>`). Includes a `<Clear Filter>` option and automatic fallback to checking the highlighted branch when none are selected. Pressing `<Esc>` in the Commits panel clears active branch filters before clearing the clipboard.
+  * **Dynamic Status Bar Synchronicity**: Status bar hints dynamically query and render the configured `open_log_menu` keybinding (e.g. `ctrl+s filter branch`, or custom mappings such as `f filter branch`).
   * **HEAD vs All Branches Log View Toggle (`a`)**: Quick shortcut (`a`) to toggle between showing commits across all branches versus HEAD-only.
   * **Bisect Options Menu (`b`)**: Remapped `view_bisect_options` to `b` for fast bisecting workflow access.
   * **Mark Fixup Commit (`<c-f>`)**: Remapped `mark_commit_as_fixup` to `<c-f>` (with `F` creating a fixup commit).
   * **Cherry-Pick Copy & Paste (`C` / `V`)**: `C` copies commits to the cherry-pick clipboard, and `V` (`paste_commits`) pastes/cherry-picks the copied commits in the Commits panel.
-  * Updated status bar hints to display `("f", "filter branch")` and `("a", "toggle log view")`.
 
 * **Hunk Reverting & Undo Revert (`<Enter>` / `u`)**:
   * Keybinding `<Enter>` (`revert_block`) reverts the currently hovered or selected diff hunk/block.
@@ -33,8 +33,8 @@ This document summarizes the changes, additions, fixes, and architectural improv
   * Added `("D", "discard all")` status bar hint.
 
 * **Theme System Improvements & TOML Migration**:
-  * Converted all theme definition files from JSON to TOML format across built-in, custom, and generated theme files (see [src/themes/white.toml](file:///home/fecavmi/dev/github/lazygitrs/ai-notes/src/themes/white.toml) and [src/generated_themes/](file:///home/fecavmi/dev/github/lazygitrs/ai-notes/src/generated_themes/)).
-  * Updated theme loading order in [src/config/theme.rs](file:///home/fecavmi/dev/github/lazygitrs/ai-notes/src/config/theme.rs) to give user-defined themes in `~/.config/lazygit/themes/` priority over built-in embedded themes.
+  * Converted all theme definition files from JSON to TOML format across built-in, custom, and generated theme files (see `src/themes/white.toml` and `src/generated_themes/`).
+  * Updated theme loading order in `src/config/theme.rs` to give user-defined themes in `~/.config/lazygit/themes/` priority over built-in embedded themes.
   * Added bright white theme (`white.toml`) featuring high-contrast black borders (`#000000`).
 
 * **Granular Borders & Panel Customization**:
@@ -45,19 +45,21 @@ This document summarizes the changes, additions, fixes, and architectural improv
   * Implemented a vertical grab column allowing sidebar and diff panels to be resized by dragging with the mouse.
   * Bypassed repository reloading during drag events to ensure smooth rendering performance.
 
-* **Parent/Child Tree Navigation Shortcuts**:
-  * Introduced siblings, child, and parent navigation keys (`,`, `.`, `/`, `<`, `>`) inside file tree lists and diff panels.
-  * Enabled focusing combined directory diffs via Enter on child directories.
+* **File Tree Navigation & Combined Diffs**:
+  * Added directory fold/unfold shortcut (`-`) to collapse or expand any folder node (including root directory).
+  * Introduced siblings, child, and parent navigation keys (`,`, `.`, `<`, `>`) inside file tree lists and diff panels.
+  * Enabled focusing combined directory diffs via `Enter` on child directories.
 
 * **Bidirectional AI Review Sync & Session Routing**:
   * Implemented bidirectional sync of AI review annotations.
-  * Created an SSE (Server-Sent Events) push and pull transport layer inside [src/acp.rs](file:///home/fecavmi/dev/github/lazygitrs/ai-notes/src/acp.rs) with binding retry loops.
+  * Created an SSE (Server-Sent Events) push and pull transport layer inside `src/acp.rs` with binding retry loops.
   * Added support for `{{workspace_path}}` in `notifyCommand` execution.
   * Implemented `acp/navigate` API route supporting note scrolling, selection, and navigation.
+  * Isolated dynamic HTTP ports per worktree in `.lazygitrs.port` to ensure conflict-free parallel execution.
 
 * **CLI Options & Agent Integration**:
   * Added `--config` and `--print-default-config` CLI flags.
-  * Documented agent instructions and session registration rules in [AGENTS.md](file:///home/fecavmi/dev/github/lazygitrs/ai-notes/AGENTS.md).
+  * Documented agent instructions and session registration rules in `AGENTS.md`.
 
 ---
 

@@ -4,8 +4,13 @@
 
 This skill enables AI coding agents (opencode, codex, gemini, agy, etc.) to participate in a bidirectional review-notes workflow with **lazygitrs**, a Rust TUI for git.
 
-lazygitrs runs an embedded HTTP server on a dynamic port (defaults to `47657`). The active port is written to `.lazygitrs.port`. 
-**CRITICAL**: Before running any of the curl commands below, ALWAYS determine the port by running `PORT=$(cat .lazygitrs.port 2>/dev/null || echo 47657)`. The commands below use `$PORT` as a placeholder.
+lazygitrs runs an embedded HTTP server on a dynamic port (defaults to `47657`). The active port for each repository or worktree is written to `.lazygitrs.port` in that worktree's root.
+
+**CRITICAL (Worktree Isolation)**: Before running any of the commands below, scripts and agents MUST ALWAYS determine the port by reading the local `.lazygitrs.port` file in the current worktree first:
+```bash
+PORT=$(cat .lazygitrs.port 2>/dev/null || echo 47657)
+```
+Treat `~/.lazygitrs_active_session.json` strictly as a fallback only. Reading the local `.lazygitrs.port` file first ensures that multiple concurrent worktrees each communicate with their respective lazygitrs instances without conflicting. The commands below use `$PORT` as a placeholder.
 
 The user creates inline notes in the diff view, sends them to your AI session, and you respond by posting annotations back.
 
@@ -68,7 +73,7 @@ You configure which architecture your AI uses during the **registration** step.
 
 Steps to run at session start:
 
-1. **Detect lazygitrs**: Check if `.lazygitrs.port` exists in the repo root. If it does, lazygitrs is running.
+1. **Detect lazygitrs & Resolve Port**: Check if `.lazygitrs.port` exists in the local worktree root first. Each worktree runs on its own dynamic port to isolate sessions across concurrent worktrees. Always read the local `.lazygitrs.port` first (`PORT=$(cat .lazygitrs.port 2>/dev/null || echo 47657)`), treating `~/.lazygitrs_active_session.json` strictly as a fallback only.
 2. **Discover your real session ID**:
    - For opencode: `opencode session list --format json 2>/dev/null | head -1` and extract the `"id"` field.
    - For Antigravity (agy): Use your real internal Conversation UUID.
@@ -313,3 +318,4 @@ When you POST annotations for a file+line that has a user note with `status: "se
 - Use `newRange` for lines that exist in the new version of the file, `oldRange` for deleted lines.
 - Line numbers are 1-based file line numbers (not diff hunk line numbers).
 - The `revision` counter in the response increments on every change — you can poll and compare to detect new notes efficiently.
+- **Concurrent Worktrees**: Always read the local `.lazygitrs.port` file in the active worktree first. Treat `~/.lazygitrs_active_session.json` strictly as a fallback only to prevent crosstalk or conflicts across multiple concurrent worktrees.
