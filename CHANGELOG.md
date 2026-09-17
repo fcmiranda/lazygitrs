@@ -2,6 +2,57 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.0.38] - 2026-09-15
+
+### Bug Fixes
+
+- Size graph rows for deferred merge connectors by @Blankeos
+
+## [0.0.37] - 2026-09-14
+
+### Bug Fixes
+
+- Use localtime_s on Windows for commit dates by @Blankeos
+- Change j/k hint to arrow symbols in popup hint bar by @Blankeos
+- Match lazygit commit and merge glyphs by @Blankeos
+- Refresh diff and show conflict output on failed pop/apply by @Blankeos
+
+### Chores
+
+- Backtrack unreleased v0.0.37/v0.0.38 to v0.0.36 by @Blankeos
+
+### Documentation
+
+- Simplify Helix and Neovim integration instructions by @Blankeos
+
+### Features
+
+- Add Ctrl-F grep over diff contents by @Blankeos
+- Render commit refs and tags lazygit-style by @Blankeos
+- Match lazygit commit list row layout with local-time dates and author columns by @Blankeos
+
+### Refactor
+
+- Extract search bar/status bar rendering into helper by @Blankeos
+
+## [0.0.36] - 2026-09-06
+
+### Bug Fixes
+
+- Wrap hunk navigation at ends and guard empty hunk lists by @Blankeos
+
+### Features
+
+- Open selected directories in editor and default program by @Blankeos
+- Fill line background to full panel width in side-by-side diff by @Blankeos
+- Better hunk staging without separators (like zed/vscode) (#31) by @Blankeos in [#31](https://github.com/Blankeos/lazygitrs/pull/31)
+- Better looking stripes (inspired by lumen) by @Blankeos
+- Separator-stacked staged/unstaged diff (#30) by @Blankeos in [#30](https://github.com/Blankeos/lazygitrs/pull/30)
+
+### Refactor
+
+- Split file status indicator into per-char styled spans by @Blankeos
+
 ## [0.0.35] - 2026-08-30
 
 ### Bug Fixes

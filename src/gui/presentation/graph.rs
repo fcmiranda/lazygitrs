@@ -144,7 +144,14 @@ pub fn compute_graph(commits: &[(String, Vec<String>)]) -> Vec<GraphRow> {
         }
 
         // Build cells from a side-by-side comparison of lanes_before vs lanes.
-        let width = lanes.len().max(lanes_before.len()).max(commit_col + 1);
+        // Deferred endpoints may reference a trailing source lane that has
+        // since been popped, so include them in the width (never skip).
+        let deferred_width = deferred_cols.iter().max().map_or(0, |m| m + 1);
+        let width = lanes
+            .len()
+            .max(lanes_before.len())
+            .max(commit_col + 1)
+            .max(deferred_width);
         let mut cells: Vec<Cell> = vec![Cell::default(); width];
 
         let is_merge = !merge_parents.is_empty();
@@ -280,25 +287,18 @@ fn box_drawing(up: bool, down: bool, left: bool, right: bool) -> (&'static str, 
 /// immediately after this row's graph. Ensures a single trailing space before
 /// the hash/message.
 ///
-/// `is_head` swaps the commit glyph to a filled circle for HEAD.
-pub fn render_graph_spans(row: &GraphRow, is_head: bool, theme: &Theme) -> Vec<Span<'static>> {
+/// Glyphs match lazygit: `○` for commits, `◎` for merges.
+/// `is_head` is kept for API compatibility but no longer swaps the glyph
+/// (lazygit shows HEAD via ref labels, not a special graph symbol).
+pub fn render_graph_spans(row: &GraphRow, _is_head: bool, theme: &Theme) -> Vec<Span<'static>> {
     let mut spans = Vec::with_capacity(row.cells.len() * 2 + 1);
 
     for cell in &row.cells {
         let (first, second) = box_drawing(cell.up, cell.down, cell.left, cell.right);
 
         let first_glyph: &'static str = match cell.cell_type {
-            CellType::Commit | CellType::Merge => {
-                if is_head && cell.style_col == row.commit_col {
-                    "⬤"
-                } else {
-                    match cell.cell_type {
-                        CellType::Commit => "◯",
-                        CellType::Merge => "⏣",
-                        _ => unreachable!(),
-                    }
-                }
-            }
+            CellType::Commit => "○",
+            CellType::Merge => "◎",
             CellType::Connection => first,
         };
 
@@ -335,14 +335,52 @@ mod tests {
         for cell in &row.cells {
             let (first, second) = box_drawing(cell.up, cell.down, cell.left, cell.right);
             let g = match cell.cell_type {
-                CellType::Commit => "◯",
-                CellType::Merge => "⏣",
+                CellType::Commit => "○",
+                CellType::Merge => "◎",
                 CellType::Connection => first,
             };
             out.push_str(g);
             out.push_str(second);
         }
         out.trim_end().to_string()
+    }
+
+    #[test]
+    fn deferred_connector_outlives_its_source_lane() {
+        let commits = vec![
+            ("tip".into(), vec!["root".into()]),
+            ("merge".into(), vec!["side_root".into(), "root".into()]),
+            ("side_root".into(), vec![]),
+            ("root".into(), vec![]),
+        ];
+        let rows = compute_graph(&commits);
+        let last = rows.last().unwrap();
+        assert_eq!(last.cells.len(), 2);
+        assert_eq!(render_plain(last), "○──");
+        assert_eq!(last.cells[0].right_style_col, Some(1));
+        assert!(last.cells[1].left);
+    }
+
+    #[test]
+    fn deferred_connector_spanning_multiple_popped_lanes() {
+        // Merge at the far-right lane defers to lane 0, then the middle and
+        // far-right lanes both close before lane 0 terminates. Width must
+        // still cover the deferred endpoint (col 2) after trailing pops.
+        let commits = vec![
+            ("tip".into(), vec!["a".into()]),
+            ("m1".into(), vec!["b".into(), "c".into()]),
+            ("c".into(), vec!["d".into(), "a".into()]),
+            ("b".into(), vec![]),
+            ("d".into(), vec![]),
+            ("a".into(), vec![]),
+        ];
+        let rows = compute_graph(&commits);
+        let last = rows.last().unwrap();
+        assert_eq!(last.cells.len(), 3);
+        assert_eq!(render_plain(last), "○────");
+        assert_eq!(last.cells[0].right_style_col, Some(2));
+        assert!(last.cells[1].left && last.cells[1].right);
+        assert!(last.cells[2].left);
     }
 
     #[test]
@@ -367,12 +405,12 @@ mod tests {
         assert_eq!(
             rendered,
             vec![
-                "◯",   // 6975eec: main lane only
-                "│ ⏣", // 0d129e4: main pipe continues, merge symbol on feature lane
-                "◯─│", // 1b91554: merge stroke drawn HERE (parent's row), into col 1
-                "│ ⏣", // 9902457: main pipe continues, merge symbol on feature lane
-                "◯─│", // f6ecf6f: merge stroke drawn HERE, into col 1
-                "│ ◯", // 22d0113: feature tip
+                "○",   // 6975eec: main lane only
+                "│ ◎", // 0d129e4: main pipe continues, merge symbol on feature lane
+                "○─│", // 1b91554: merge stroke drawn HERE (parent's row), into col 1
+                "│ ◎", // 9902457: main pipe continues, merge symbol on feature lane
+                "○─│", // f6ecf6f: merge stroke drawn HERE, into col 1
+                "│ ○", // 22d0113: feature tip
             ]
         );
     }

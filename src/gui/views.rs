@@ -315,6 +315,7 @@ pub fn render(
                         ctx_id,
                         commit_list_cache,
                         false,
+                        screen_mode != ScreenMode::Normal,
                     );
                 }
                 ContextId::Stash => {
@@ -346,6 +347,7 @@ pub fn render(
                         ctx_id,
                         commit_list_cache,
                         true,
+                        screen_mode != ScreenMode::Normal,
                     );
                 }
                 ContextId::CommitFiles | ContextId::StashFiles | ContextId::BranchCommitFiles => {
@@ -416,9 +418,11 @@ pub fn render(
                 commit_details_scroll,
             );
         }
-        render_status_bar(
+        render_search_bar_or_status_bar(
             frame,
             fl.status_bar,
+            search_state,
+            search_textarea,
             ctx_mgr,
             diff_view,
             theme,
@@ -621,6 +625,7 @@ pub fn render(
                         ContextId::BranchCommits,
                         commit_list_cache,
                         true,
+                        screen_mode != ScreenMode::Normal,
                     );
                 } else {
                     let items = presentation::branches::render_branch_list(
@@ -712,6 +717,7 @@ pub fn render(
                         ContextId::BranchCommits,
                         commit_list_cache,
                         true,
+                        screen_mode != ScreenMode::Normal,
                     );
                 } else if ctx_mgr.active() == ContextId::RemoteBranches {
                     let rb_selected = ctx_mgr.selected(ContextId::RemoteBranches);
@@ -818,6 +824,7 @@ pub fn render(
                         ContextId::BranchCommits,
                         commit_list_cache,
                         true,
+                        screen_mode != ScreenMode::Normal,
                     );
                 } else {
                     let items = presentation::tags::render_tag_list(model, theme);
@@ -898,6 +905,7 @@ pub fn render(
                         ctx_id,
                         commit_list_cache,
                         false,
+                        screen_mode != ScreenMode::Normal,
                     );
                 }
             }
@@ -1128,73 +1136,19 @@ pub fn render(
         );
     }
 
-    // Render status bar (or search bar if search is active)
-    if let Some((query, match_count, current_match)) = search_state {
-        let match_info = if match_count > 0 {
-            format!(" {}/{}", current_match + 1, match_count)
-        } else if !query.is_empty() {
-            " (no matches)".to_string()
-        } else {
-            String::new()
-        };
-
-        if let Some(ta) = search_textarea {
-            // Render: "/" prefix + textarea + match info
-            // Split the status bar into three parts
-            let prefix_width = 2u16; // " /"
-            let suffix_text = match_info;
-            let suffix_width = suffix_text.len() as u16;
-            let ta_width = fl
-                .status_bar
-                .width
-                .saturating_sub(prefix_width + suffix_width);
-
-            // Prefix " /"
-            let prefix_rect = Rect::new(fl.status_bar.x, fl.status_bar.y, prefix_width, 1);
-            let prefix = Paragraph::new(Span::styled(
-                " /",
-                Style::default().fg(theme.accent_secondary),
-            ));
-            frame.render_widget(prefix, prefix_rect);
-
-            // Textarea
-            let ta_rect = Rect::new(fl.status_bar.x + prefix_width, fl.status_bar.y, ta_width, 1);
-            frame.render_widget(ta, ta_rect);
-
-            // Suffix (match info)
-            if !suffix_text.is_empty() {
-                let suffix_rect = Rect::new(
-                    fl.status_bar.x + prefix_width + ta_width,
-                    fl.status_bar.y,
-                    suffix_width,
-                    1,
-                );
-                let suffix = Paragraph::new(Span::styled(
-                    suffix_text,
-                    Style::default().fg(theme.accent_secondary),
-                ));
-                frame.render_widget(suffix, suffix_rect);
-            }
-        } else {
-            let bar = Paragraph::new(Span::styled(
-                format!(" /{}{}", query, match_info),
-                Style::default().fg(theme.accent_secondary),
-            ));
-            frame.render_widget(bar, fl.status_bar);
-        }
-    } else {
-        render_status_bar(
-            frame,
-            fl.status_bar,
-            ctx_mgr,
-            diff_view,
-            theme,
-            model,
-            diff_focused,
-            !cherry_pick_clipboard.is_empty(),
-            &config.user_config.keybinding,
-        );
-    }
+    render_search_bar_or_status_bar(
+        frame,
+        fl.status_bar,
+        search_state,
+        search_textarea,
+        ctx_mgr,
+        diff_view,
+        theme,
+        model,
+        diff_focused,
+        !cherry_pick_clipboard.is_empty(),
+        &config.user_config.keybinding,
+    );
 
     // Render text selection highlight overlay and tooltip
     render_selection_overlay(frame, diff_view, fl.main_panel, theme);
@@ -2399,6 +2353,7 @@ fn render_commit_list_ctx(
     ctx: ContextId,
     cache: &mut presentation::commits::CommitListCache,
     sub_commits: bool,
+    full: bool,
 ) {
     let total_len = if sub_commits {
         model.sub_commits.len()
@@ -2429,6 +2384,7 @@ fn render_commit_list_ctx(
             theme,
             offset,
             visible_height,
+            full,
             cache,
         )
     } else {
@@ -2438,6 +2394,7 @@ fn render_commit_list_ctx(
             cherry_picked,
             offset,
             visible_height,
+            full,
             cache,
         )
     };
@@ -2766,6 +2723,80 @@ fn format_key_hint(key: &str) -> String {
     }
 }
 
+fn render_search_bar_or_status_bar(
+    frame: &mut Frame,
+    status_bar: Rect,
+    search_state: Option<(&str, usize, usize)>,
+    search_textarea: Option<&tui_textarea::TextArea<'_>>,
+    ctx_mgr: &ContextManager,
+    diff_view: &DiffViewState,
+    theme: &Theme,
+    model: &Model,
+    diff_focused: bool,
+    has_copied_commits: bool,
+    keybindings: &KeybindingConfig,
+) {
+    if let Some((query, match_count, current_match)) = search_state {
+        let match_info = if match_count > 0 {
+            format!(" {}/{}", current_match + 1, match_count)
+        } else if !query.is_empty() {
+            " (no matches)".to_string()
+        } else {
+            String::new()
+        };
+
+        if let Some(ta) = search_textarea {
+            // Render: "/" prefix + textarea + match info
+            let prefix_width = 2u16; // " /"
+            let suffix_text = match_info;
+            let suffix_width = suffix_text.len() as u16;
+            let ta_width = status_bar.width.saturating_sub(prefix_width + suffix_width);
+
+            let prefix_rect = Rect::new(status_bar.x, status_bar.y, prefix_width, 1);
+            let prefix = Paragraph::new(Span::styled(
+                " /",
+                Style::default().fg(theme.accent_secondary),
+            ));
+            frame.render_widget(prefix, prefix_rect);
+
+            let ta_rect = Rect::new(status_bar.x + prefix_width, status_bar.y, ta_width, 1);
+            frame.render_widget(ta, ta_rect);
+
+            if !suffix_text.is_empty() {
+                let suffix_rect = Rect::new(
+                    status_bar.x + prefix_width + ta_width,
+                    status_bar.y,
+                    suffix_width,
+                    1,
+                );
+                let suffix = Paragraph::new(Span::styled(
+                    suffix_text,
+                    Style::default().fg(theme.accent_secondary),
+                ));
+                frame.render_widget(suffix, suffix_rect);
+            }
+        } else {
+            let bar = Paragraph::new(Span::styled(
+                format!(" /{}{}", query, match_info),
+                Style::default().fg(theme.accent_secondary),
+            ));
+            frame.render_widget(bar, status_bar);
+        }
+    } else {
+        render_status_bar(
+            frame,
+            status_bar,
+            ctx_mgr,
+            diff_view,
+            theme,
+            model,
+            diff_focused,
+            has_copied_commits,
+            keybindings,
+        );
+    }
+}
+
 fn render_status_bar(
     frame: &mut Frame,
     rect: Rect,
@@ -2823,7 +2854,8 @@ fn render_status_bar(
                 hints.insert(idx, ("u", "undo revert"));
             }
         } else {
-            if (ctx_mgr.active() == ContextId::Commits || ctx_mgr.active() == ContextId::CommitFiles)
+            if (ctx_mgr.active() == ContextId::Commits
+                || ctx_mgr.active() == ContextId::CommitFiles)
                 && !toggle_head_key.is_empty()
             {
                 hints.push((toggle_head_key.as_str(), "files"));
@@ -3957,8 +3989,8 @@ pub fn render_popup(
         } => {
             // Collect all visible entries (filtered by search) as flat list with section headers
             let search = search_textarea.lines().join("");
-            let search_lower = search.to_lowercase();
-            let has_search = !search_lower.is_empty();
+            let tokens = super::popup::list_picker_search_tokens(&search);
+            let has_search = !tokens.is_empty();
 
             // Build flat display list: (is_header, key, description, executable)
             let mut display: Vec<(bool, String, String, bool)> = Vec::new();
@@ -3968,8 +4000,11 @@ pub fn render_popup(
                         .entries
                         .iter()
                         .filter(|e| {
-                            e.key.to_lowercase().contains(&search_lower)
-                                || e.description.to_lowercase().contains(&search_lower)
+                            super::popup::command_palette_entry_matches(
+                                &e.key,
+                                &e.description,
+                                &tokens,
+                            )
                         })
                         .collect()
                 } else {
@@ -4116,23 +4151,33 @@ pub fn render_popup(
                         if !has_search {
                             return vec![Span::styled(text.to_string(), base)];
                         }
-                        let lower = text.to_lowercase();
-                        if let Some(pos) = lower.find(&search_lower) {
-                            let before = &text[..pos];
-                            let matched = &text[pos..pos + search_lower.len()];
-                            let after = &text[pos + search_lower.len()..];
-                            let mut s = Vec::new();
-                            if !before.is_empty() {
-                                s.push(Span::styled(before.to_string(), base));
-                            }
-                            s.push(Span::styled(matched.to_string(), highlight_style));
-                            if !after.is_empty() {
-                                s.push(Span::styled(after.to_string(), base));
-                            }
-                            s
-                        } else {
-                            vec![Span::styled(text.to_string(), base)]
+                        // Highlight every query token (order-free), mirroring
+                        // the list-picker highlight.
+                        let ranges = super::popup::list_picker_highlight_ranges(text, &tokens);
+                        if ranges.is_empty() {
+                            return vec![Span::styled(text.to_string(), base)];
                         }
+                        let mut s = Vec::new();
+                        let mut cursor = 0usize;
+                        for (start, end) in ranges {
+                            if start > cursor {
+                                if let Some(chunk) = text.get(cursor..start) {
+                                    if !chunk.is_empty() {
+                                        s.push(Span::styled(chunk.to_string(), base));
+                                    }
+                                }
+                            }
+                            if let Some(chunk) = text.get(start..end) {
+                                s.push(Span::styled(chunk.to_string(), highlight_style));
+                            }
+                            cursor = end;
+                        }
+                        if let Some(rest) = text.get(cursor..) {
+                            if !rest.is_empty() {
+                                s.push(Span::styled(rest.to_string(), base));
+                            }
+                        }
+                        s
                     };
 
                     let mut spans = build_spans(&key_display, key_base_style);
@@ -4155,7 +4200,7 @@ pub fn render_popup(
             // Hint bar at bottom
             let hint_area = Rect::new(inner.x, inner.y + inner.height - 1, inner.width, 1);
             let hint = Line::from(vec![
-                Span::styled(" j/k", Style::default().fg(theme.accent_secondary)),
+                Span::styled(" ↑↓", Style::default().fg(theme.accent_secondary)),
                 Span::styled(": navigate  ", Style::default().fg(theme.text_dimmed)),
                 Span::styled("type", Style::default().fg(theme.accent_secondary)),
                 Span::styled(": search  ", Style::default().fg(theme.text_dimmed)),
@@ -4442,31 +4487,38 @@ fn render_list_picker(
                 Style::default().fg(theme.accent_secondary),
             )];
 
-            // Build label spans with search match highlighting
+            // Build label spans with search match highlighting.
+            // Multi-word queries highlight every token in either order,
+            // mirroring `list_picker_matching_indices` (token-AND).
             if !search_lower.is_empty() {
-                let label_lower = label.to_lowercase();
-                if let Some(pos) = label_lower.find(&search_lower) {
-                    let before = &label[..pos];
-                    let matched = &label[pos..pos + search_lower.len()];
-                    let after = &label[pos + search_lower.len()..];
-                    if !before.is_empty() {
-                        spans.push(Span::styled(
-                            before.to_string(),
-                            Style::default().fg(base_fg),
-                        ));
-                    }
+                let tokens = super::popup::list_picker_search_tokens(&search);
+                let ranges = super::popup::list_picker_highlight_ranges(label, &tokens);
+                if ranges.is_empty() {
+                    spans.push(Span::styled(label.clone(), Style::default().fg(base_fg)));
+                } else {
                     let match_style = Style::default()
                         .fg(highlight_fg)
                         .add_modifier(Modifier::BOLD);
-                    spans.push(Span::styled(matched.to_string(), match_style));
-                    if !after.is_empty() {
-                        spans.push(Span::styled(
-                            after.to_string(),
-                            Style::default().fg(base_fg),
-                        ));
+                    let base_style = Style::default().fg(base_fg);
+                    let mut cursor = 0usize;
+                    for (s, e) in ranges {
+                        if s > cursor {
+                            if let Some(chunk) = label.get(cursor..s) {
+                                if !chunk.is_empty() {
+                                    spans.push(Span::styled(chunk.to_string(), base_style));
+                                }
+                            }
+                        }
+                        if let Some(chunk) = label.get(s..e) {
+                            spans.push(Span::styled(chunk.to_string(), match_style));
+                        }
+                        cursor = e;
                     }
-                } else {
-                    spans.push(Span::styled(label.clone(), Style::default().fg(base_fg)));
+                    if let Some(rest) = label.get(cursor..) {
+                        if !rest.is_empty() {
+                            spans.push(Span::styled(rest.to_string(), base_style));
+                        }
+                    }
                 }
             } else {
                 let style = if is_selected {

@@ -3820,6 +3820,20 @@ impl Gui {
         }
 
         // When diff panel is focused, handle diff-specific keys
+        // Ctrl-F stays in the same Files/CommitFiles context: grep dialog
+        // over hunk contents (Enter jumps to the file in the current list).
+        if controller::diff_grep::is_diff_grep_key(key)
+            && !self.diff_view.search_active
+            && matches!(
+                self.context_mgr.active(),
+                crate::gui::context::ContextId::Files
+                    | crate::gui::context::ContextId::CommitFiles
+                    | crate::gui::context::ContextId::StashFiles
+                    | crate::gui::context::ContextId::BranchCommitFiles
+            )
+        {
+            return controller::diff_grep::open_diff_grep_picker(self);
+        }
         if self.diff_focused {
             return self.handle_diff_focused_key(key);
         }
@@ -5918,16 +5932,17 @@ impl Gui {
 
     fn handle_command_palette_key(&mut self, key: KeyEvent) -> Result<()> {
         // Helper: compute display index for a given entry selection
-        fn find_display_idx(sections: &[CommandSection], sel: usize, search_lower: &str) -> usize {
-            let has_search = !search_lower.is_empty();
+        fn find_display_idx(sections: &[CommandSection], sel: usize, search: &str) -> usize {
+            use crate::gui::popup::{command_palette_entry_matches, list_picker_search_tokens};
+            let tokens = list_picker_search_tokens(search);
+            let has_search = !tokens.is_empty();
             let mut ei = 0usize;
             let mut di = 0usize;
             for section in sections {
                 let mut section_has_visible = false;
                 for entry in &section.entries {
                     let matches = !has_search
-                        || entry.key.to_lowercase().contains(search_lower)
-                        || entry.description.to_lowercase().contains(search_lower);
+                        || command_palette_entry_matches(&entry.key, &entry.description, &tokens);
                     if matches {
                         if !section_has_visible {
                             section_has_visible = true;
@@ -5944,8 +5959,10 @@ impl Gui {
             di
         }
 
-        fn count_visible(sections: &[CommandSection], search_lower: &str) -> usize {
-            let has_search = !search_lower.is_empty();
+        fn count_visible(sections: &[CommandSection], search: &str) -> usize {
+            use crate::gui::popup::{command_palette_entry_matches, list_picker_search_tokens};
+            let tokens = list_picker_search_tokens(search);
+            let has_search = !tokens.is_empty();
             sections
                 .iter()
                 .map(|s| {
@@ -5953,8 +5970,7 @@ impl Gui {
                         s.entries
                             .iter()
                             .filter(|e| {
-                                e.key.to_lowercase().contains(search_lower)
-                                    || e.description.to_lowercase().contains(search_lower)
+                                command_palette_entry_matches(&e.key, &e.description, &tokens)
                             })
                             .count()
                     } else {
@@ -5976,6 +5992,7 @@ impl Gui {
             use crossterm::event::KeyModifiers;
             let search = search_textarea.lines().join("");
             let search_lower = search.to_lowercase();
+            // `search_lower` kept for scroll math below; filtering uses tokens.
 
             // Estimate list viewport height from terminal
             let popup_height = (self.layout.height as usize).saturating_sub(4).min(50);
@@ -5989,13 +6006,20 @@ impl Gui {
                     return Ok(());
                 }
                 KeyCode::Enter => {
-                    let has_search = !search_lower.is_empty();
+                    use crate::gui::popup::{
+                        command_palette_entry_matches, list_picker_search_tokens,
+                    };
+                    let tokens = list_picker_search_tokens(&search);
+                    let has_search = !tokens.is_empty();
                     let mut ei = 0usize;
                     'outer: for section in sections.iter() {
                         for entry in &section.entries {
                             let vis = !has_search
-                                || entry.key.to_lowercase().contains(&search_lower)
-                                || entry.description.to_lowercase().contains(&search_lower);
+                                || command_palette_entry_matches(
+                                    &entry.key,
+                                    &entry.description,
+                                    &tokens,
+                                );
                             if vis {
                                 if ei == *selected {
                                     selected_action = Some(entry.action.clone());
@@ -6154,6 +6178,12 @@ impl Gui {
                     return Ok(());
                 }
                 KeyCode::Enter => {
+                    // Empty free-entry category (e.g. diff-grep) confirms real
+                    // matches only: zero matches = no-op instead of jumping to
+                    // a stale selection.
+                    if free_cat.is_empty() && !matching.contains(&core.selected) {
+                        return Ok(());
+                    }
                     let Some(value) = list_picker_confirm_value(core) else {
                         return Ok(());
                     };
@@ -6589,6 +6619,7 @@ impl Gui {
                         kb.universal.undo_revert_block.clone(),
                         "Undo last revert (session)".into(),
                     ),
+                    CommandEntry::keybinding("<c-f>".into(), "Grep diff contents".into()),
                 ],
             },
             ContextId::Worktrees => CommandSection {
@@ -6646,15 +6677,25 @@ impl Gui {
             },
             ContextId::BranchCommits | ContextId::BranchCommitFiles => CommandSection {
                 title: "Branch Commits".into(),
-                entries: vec![
-                    CommandEntry::keybinding("<enter>".into(), "View commit files".into()),
-                    CommandEntry::keybinding("<esc>".into(), "Back to branches".into()),
-                    CommandEntry::keybinding(
-                        kb.universal.toggle_diff_view_layout.clone(),
-                        "Toggle unified / side-by-side view".into(),
-                    ),
-                    CommandEntry::keybinding(".".into(), "Toggle commit details panel".into()),
-                ],
+                entries: {
+                    let mut entries = vec![
+                        CommandEntry::keybinding("<enter>".into(), "View commit files".into()),
+                        CommandEntry::keybinding("<esc>".into(), "Back to branches".into()),
+                        CommandEntry::keybinding(
+                            kb.universal.toggle_diff_view_layout.clone(),
+                            "Toggle unified / side-by-side view".into(),
+                        ),
+                        CommandEntry::keybinding(".".into(), "Toggle commit details panel".into()),
+                    ];
+                    // Grep only applies to the files list, not the commits list.
+                    if active == ContextId::BranchCommitFiles {
+                        entries.push(CommandEntry::keybinding(
+                            "<c-f>".into(),
+                            "Grep diff contents".into(),
+                        ));
+                    }
+                    entries
+                },
             },
             ContextId::Commits => {
                 let mut entries = vec![
@@ -6749,6 +6790,7 @@ impl Gui {
                 entries: vec![
                     CommandEntry::keybinding("<enter>".into(), "Toggle dir / Focus diff".into()),
                     CommandEntry::keybinding("<esc>".into(), "Back to commits".into()),
+                    CommandEntry::keybinding("<c-f>".into(), "Grep diff contents".into()),
                     CommandEntry::keybinding(kb.universal.edit.clone(), "Edit file".into()),
                     CommandEntry::keybinding(kb.universal.open_file.clone(), "Open file".into()),
                     CommandEntry::keybinding(
@@ -6806,6 +6848,7 @@ impl Gui {
                 entries: vec![
                     CommandEntry::keybinding("<enter>".into(), "Toggle dir / Focus diff".into()),
                     CommandEntry::keybinding("<esc>".into(), "Back to stash".into()),
+                    CommandEntry::keybinding("<c-f>".into(), "Grep diff contents".into()),
                     CommandEntry::keybinding(
                         kb.universal.toggle_diff_view_layout.clone(),
                         "Toggle unified / side-by-side view".into(),
@@ -6882,74 +6925,92 @@ impl Gui {
     }
 
     fn show_diff_command_palette(&mut self) {
+        use crate::gui::context::ContextId;
+        let grep_supported = self.diff_mode.active
+            || matches!(
+                self.context_mgr.active(),
+                ContextId::Files
+                    | ContextId::CommitFiles
+                    | ContextId::StashFiles
+                    | ContextId::BranchCommitFiles
+            );
+        let mut entries = vec![
+            CommandEntry::keybinding("j/k".into(), "Scroll down / up".into()),
+            CommandEntry::keybinding("h/l".into(), "Scroll left / right".into()),
+            CommandEntry::keybinding(
+                "{/}".into(),
+                "Cycle prev / next hunk (selects revert block in Files)".into(),
+            ),
+            CommandEntry::keybinding("[".into(), "Toggle old-only view".into()),
+            CommandEntry::keybinding("]".into(), "Toggle new-only view".into()),
+            CommandEntry::keybinding(
+                self.config
+                    .user_config
+                    .keybinding
+                    .universal
+                    .toggle_diff_view_layout
+                    .clone(),
+                "Toggle unified / side-by-side view".into(),
+            ),
+            CommandEntry::keybinding("z".into(), "Toggle line wrap".into()),
+            CommandEntry::keybinding("g/G".into(), "Go to top / bottom".into()),
+            CommandEntry::keybinding("PgUp/PgDn".into(), "Page up / down".into()),
+            CommandEntry::keybinding("/".into(), "Search in diff".into()),
+            CommandEntry::keybinding("n/N".into(), "Next / previous search match".into()),
+        ];
+        if grep_supported {
+            entries.push(CommandEntry::keybinding(
+                "<c-f>".into(),
+                "Grep diff contents".into(),
+            ));
+        }
+        entries.extend([
+            CommandEntry::keybinding(
+                "<enter>".into(),
+                "Open hunk menu on selected block (Files)".into(),
+            ),
+            CommandEntry::keybinding(
+                "click 󰧛".into(),
+                "Click revert icon to revert that block".into(),
+            ),
+            CommandEntry::keybinding(
+                "u".into(),
+                if self.diff_view.revert_undo_stack.is_empty() {
+                    "Undo last revert (nothing to undo)".into()
+                } else {
+                    format!(
+                        "Undo last revert ({}/{})",
+                        self.diff_view.revert_undo_stack.len(),
+                        self.diff_view.revert_undo_high_water,
+                    )
+                },
+            ),
+            CommandEntry::keybinding("e".into(), "Edit file at line".into()),
+            CommandEntry::keybinding("o".into(), "Open file in default program".into()),
+            CommandEntry::keybinding("y".into(), "Copy selected text".into()),
+            CommandEntry::keybinding("c".into(), "Create note on line".into()),
+            CommandEntry::keybinding("t".into(), "Toggle notes visibility".into()),
+            CommandEntry::keybinding("n/N".into(), "Cycle next / previous note".into()),
+            CommandEntry::keybinding("e".into(), "Edit selected note (user notes only)".into()),
+            CommandEntry::keybinding("d".into(), "Delete selected note".into()),
+            CommandEntry::keybinding("S".into(), "Send selected note to AI".into()),
+            CommandEntry::keybinding("r/R".into(), "Reset note status to New".into()),
+            CommandEntry::keybinding("".into(), "Click to add note on a line".into()),
+            CommandEntry::keybinding("q".into(), "Quit".into()),
+            CommandEntry::keybinding("+/_".into(), "Enlarge / shrink panel".into()),
+            CommandEntry::keybinding(";".into(), "Toggle command log".into()),
+            CommandEntry::keybinding("1-5".into(), "Jump to sidebar panel".into()),
+            CommandEntry::keybinding("esc".into(), "Return to sidebar".into()),
+            CommandEntry::keybinding("?".into(), "Show command palette".into()),
+            CommandEntry::action(
+                "".into(),
+                "Color theme...".into(),
+                CommandAction::OpenThemePicker,
+            ),
+        ]);
         let diff_section = CommandSection {
             title: "Diff Viewer".into(),
-            entries: vec![
-                CommandEntry::keybinding("j/k".into(), "Scroll down / up".into()),
-                CommandEntry::keybinding("h/l".into(), "Scroll left / right".into()),
-                CommandEntry::keybinding(
-                    "{/}".into(),
-                    "Cycle prev / next hunk (selects revert block in Files)".into(),
-                ),
-                CommandEntry::keybinding("[".into(), "Toggle old-only view".into()),
-                CommandEntry::keybinding("]".into(), "Toggle new-only view".into()),
-                CommandEntry::keybinding(
-                    self.config
-                        .user_config
-                        .keybinding
-                        .universal
-                        .toggle_diff_view_layout
-                        .clone(),
-                    "Toggle unified / side-by-side view".into(),
-                ),
-                CommandEntry::keybinding("z".into(), "Toggle line wrap".into()),
-                CommandEntry::keybinding("g/G".into(), "Go to top / bottom".into()),
-                CommandEntry::keybinding("PgUp/PgDn".into(), "Page up / down".into()),
-                CommandEntry::keybinding("/".into(), "Search in diff".into()),
-                CommandEntry::keybinding("n/N".into(), "Next / previous search match".into()),
-                CommandEntry::keybinding(
-                    "<enter>".into(),
-                    "Open hunk menu on selected block (Files)".into(),
-                ),
-                CommandEntry::keybinding(
-                    "click 󰧛".into(),
-                    "Click revert icon to revert that block".into(),
-                ),
-                CommandEntry::keybinding(
-                    "u".into(),
-                    if self.diff_view.revert_undo_stack.is_empty() {
-                        "Undo last revert (nothing to undo)".into()
-                    } else {
-                        format!(
-                            "Undo last revert ({}/{})",
-                            self.diff_view.revert_undo_stack.len(),
-                            self.diff_view.revert_undo_high_water,
-                        )
-                    },
-                ),
-                CommandEntry::keybinding("e".into(), "Edit file at line".into()),
-                CommandEntry::keybinding("o".into(), "Open file in default program".into()),
-                CommandEntry::keybinding("y".into(), "Copy selected text".into()),
-                CommandEntry::keybinding("c".into(), "Create note on line".into()),
-                CommandEntry::keybinding("t".into(), "Toggle notes visibility".into()),
-                CommandEntry::keybinding("n/N".into(), "Cycle next / previous note".into()),
-                CommandEntry::keybinding("e".into(), "Edit selected note (user notes only)".into()),
-                CommandEntry::keybinding("d".into(), "Delete selected note".into()),
-                CommandEntry::keybinding("S".into(), "Send selected note to AI".into()),
-                CommandEntry::keybinding("r/R".into(), "Reset note status to New".into()),
-                CommandEntry::keybinding("".into(), "Click to add note on a line".into()),
-                CommandEntry::keybinding("q".into(), "Quit".into()),
-                CommandEntry::keybinding("+/_".into(), "Enlarge / shrink panel".into()),
-                CommandEntry::keybinding(";".into(), "Toggle command log".into()),
-                CommandEntry::keybinding("1-5".into(), "Jump to sidebar panel".into()),
-                CommandEntry::keybinding("esc".into(), "Return to sidebar".into()),
-                CommandEntry::keybinding("?".into(), "Show command palette".into()),
-                CommandEntry::action(
-                    "".into(),
-                    "Color theme...".into(),
-                    CommandAction::OpenThemePicker,
-                ),
-            ],
+            entries,
         };
 
         self.popup = PopupState::CommandPalette {
@@ -11034,7 +11095,11 @@ mod terminal_mouse_tests {
 
         // Test custom keybinding (e.g. <c-t>)
         let mut custom_config = crate::config::AppConfig::default();
-        custom_config.user_config.keybinding.universal.toggle_working_tree_and_head = "<c-t>".into();
+        custom_config
+            .user_config
+            .keybinding
+            .universal
+            .toggle_working_tree_and_head = "<c-t>".into();
         let git2 = crate::git::GitCommands::new(repo.path()).unwrap();
         let mut gui2 = Gui::new(custom_config, git2, false, None, true, None, false).unwrap();
         let ctrl_t = KeyEvent::new(KeyCode::Char('t'), KeyModifiers::CONTROL);
