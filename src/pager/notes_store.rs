@@ -146,10 +146,111 @@ impl LinesEntry {
     }
 }
 
-/// Load `.lines.json` from the repo root. Handles both the new wrapped
-/// format and the legacy flat-array format.
+/// Locate the Git metadata directory for a repository or worktree.
+///
+/// Handles:
+/// 1. Standard git repos (`repo_path/.git` is a directory).
+/// 2. Git worktrees and submodules (`repo_path/.git` is a file containing `gitdir: <path>`).
+pub fn resolve_git_dir(repo_path: &Path) -> Option<std::path::PathBuf> {
+    let dot_git = repo_path.join(".git");
+    if dot_git.is_dir() {
+        return Some(dot_git);
+    }
+    if dot_git.is_file() {
+        if let Ok(content) = std::fs::read_to_string(&dot_git) {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                if let Some(rest) = trimmed.strip_prefix("gitdir:") {
+                    let gitdir_str = rest.trim();
+                    let gitdir_path = std::path::PathBuf::from(gitdir_str);
+                    if gitdir_path.is_absolute() {
+                        if gitdir_path.exists() {
+                            return Some(gitdir_path);
+                        }
+                    } else {
+                        let combined = repo_path.join(gitdir_path);
+                        if combined.exists() {
+                            return Some(combined);
+                        }
+                    }
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Fallback state path under $XDG_STATE_HOME or ~/.local/state/lazygitrs/notes/
+fn resolve_xdg_state_path(repo_path: &Path) -> std::path::PathBuf {
+    use std::collections::hash_map::DefaultHasher;
+    use std::hash::{Hash, Hasher};
+
+    let base = std::env::var("XDG_STATE_HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| {
+            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
+            std::path::PathBuf::from(home).join(".local").join("state")
+        });
+
+    let canonical = repo_path.canonicalize().unwrap_or_else(|_| repo_path.to_path_buf());
+    let mut hasher = DefaultHasher::new();
+    canonical.hash(&mut hasher);
+    let hash = hasher.finish();
+
+    base.join("lazygitrs")
+        .join("notes")
+        .join(format!("{:016x}.json", hash))
+}
+
+/// The canonical path where notes should be saved.
+///
+/// Priority:
+/// 1. `<git_dir>/info/lines.json` (inside the git metadata directory; completely ignored by git).
+/// 2. If not a git repository, fallback to `$XDG_STATE_HOME/lazygitrs/notes/<repo_hash>.json`.
+pub fn canonical_notes_path(repo_path: &Path) -> std::path::PathBuf {
+    if let Some(git_dir) = resolve_git_dir(repo_path) {
+        git_dir.join("info").join("lines.json")
+    } else {
+        resolve_xdg_state_path(repo_path)
+    }
+}
+
+/// The path from which notes should be loaded.
+///
+/// Checks canonical path first, then `<git_dir>/lines.json`, then legacy repo root `.lines.json`,
+/// and finally XDG state fallback.
+pub fn resolve_load_path(repo_path: &Path) -> std::path::PathBuf {
+    if let Some(git_dir) = resolve_git_dir(repo_path) {
+        let canonical = git_dir.join("info").join("lines.json");
+        if canonical.exists() {
+            return canonical;
+        }
+        let alt_git = git_dir.join("lines.json");
+        if alt_git.exists() {
+            return alt_git;
+        }
+    }
+
+    // Check legacy location in repository root
+    let legacy = repo_path.join(".lines.json");
+    if legacy.exists() {
+        return legacy;
+    }
+
+    // Check XDG fallback
+    let xdg = resolve_xdg_state_path(repo_path);
+    if xdg.exists() {
+        return xdg;
+    }
+
+    // Default to canonical target
+    canonical_notes_path(repo_path)
+}
+
+/// Load `lines.json` from the repository's git metadata directory or legacy root.
+/// Handles both the new wrapped format and the legacy flat-array format.
 pub fn load(repo_path: &Path) -> LinesFile {
-    let target = repo_path.join(".lines.json");
+    let target = resolve_load_path(repo_path);
     if !target.exists() {
         let mut lf = LinesFile::default();
         lf.workspace_path = Some(repo_path.to_string_lossy().to_string());
@@ -190,13 +291,123 @@ pub fn load(repo_path: &Path) -> LinesFile {
     lf
 }
 
-/// Save `.lines.json` in the new wrapped format, incrementing the revision
-/// counter so AI agents can poll for changes.
+/// Save `lines.json` in the canonical git metadata location (`.git/info/lines.json` or worktree),
+/// incrementing the revision counter so AI agents can poll for changes.
+///
+/// Automatically removes any legacy `.lines.json` file in the repository root to keep `git status` clean.
 pub fn save(repo_path: &Path, mut file: LinesFile) {
     file.version = 1;
     file.revision = file.revision.wrapping_add(1);
-    let target = repo_path.join(".lines.json");
+    let target = canonical_notes_path(repo_path);
+    if let Some(parent) = target.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
     if let Ok(json) = serde_json::to_string_pretty(&file) {
-        let _ = std::fs::write(target, json);
+        if std::fs::write(&target, json).is_ok() {
+            // Clean up legacy .lines.json in repository working tree to avoid untracked git status pollution
+            let legacy = repo_path.join(".lines.json");
+            if legacy.exists() && legacy != target {
+                let _ = std::fs::remove_file(legacy);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    struct TempDir {
+        path: std::path::PathBuf,
+    }
+
+    impl TempDir {
+        fn new(prefix: &str) -> Self {
+            let unique = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .expect("system time before unix epoch")
+                .as_nanos();
+            let path = std::env::temp_dir().join(format!(
+                "lazygitrs-test-{prefix}-{unique}-{}",
+                std::process::id()
+            ));
+            std::fs::create_dir_all(&path).expect("create temp dir");
+            Self { path }
+        }
+
+        fn path(&self) -> &std::path::Path {
+            &self.path
+        }
+    }
+
+    impl Drop for TempDir {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.path);
+        }
+    }
+
+    #[test]
+    fn test_resolve_git_dir_standard() {
+        let tmp = TempDir::new("notes-std");
+        let dot_git = tmp.path().join(".git");
+        std::fs::create_dir_all(&dot_git).unwrap();
+
+        let resolved = resolve_git_dir(tmp.path());
+        assert_eq!(resolved, Some(dot_git));
+        let canonical = canonical_notes_path(tmp.path());
+        assert_eq!(canonical, tmp.path().join(".git/info/lines.json"));
+    }
+
+    #[test]
+    fn test_resolve_git_dir_worktree() {
+        let tmp = TempDir::new("notes-wt");
+        let worktree_gitdir = tmp.path().join("bare/worktrees/feat");
+        std::fs::create_dir_all(&worktree_gitdir).unwrap();
+
+        let wt_root = tmp.path().join("feat");
+        std::fs::create_dir_all(&wt_root).unwrap();
+
+        let dot_git_file = wt_root.join(".git");
+        std::fs::write(&dot_git_file, format!("gitdir: {}\n", worktree_gitdir.display())).unwrap();
+
+        let resolved = resolve_git_dir(&wt_root);
+        assert_eq!(resolved, Some(worktree_gitdir.clone()));
+        let canonical = canonical_notes_path(&wt_root);
+        assert_eq!(canonical, worktree_gitdir.join("info/lines.json"));
+    }
+
+    #[test]
+    fn test_legacy_migration_on_save() {
+        let tmp = TempDir::new("notes-mig");
+        let dot_git = tmp.path().join(".git");
+        std::fs::create_dir_all(&dot_git).unwrap();
+
+        // Create legacy .lines.json in root
+        let legacy = tmp.path().join(".lines.json");
+        std::fs::write(&legacy, r#"{"version":1,"revision":0,"notes":[]}"#).unwrap();
+        assert!(legacy.exists());
+
+        // Load loads from legacy
+        let mut lf = load(tmp.path());
+        assert_eq!(lf.revision, 0);
+
+        // Save writes to .git/info/lines.json and removes legacy file
+        lf.notes.push(LinesEntry::new_user(
+            "1".to_string(),
+            "foo.rs".to_string(),
+            10,
+            "New",
+            "test".to_string(),
+        ));
+        save(tmp.path(), lf);
+
+        let canonical = tmp.path().join(".git/info/lines.json");
+        assert!(canonical.exists());
+        assert!(!legacy.exists(), "Legacy .lines.json in root must be removed on save");
+
+        let reloaded = load(tmp.path());
+        assert_eq!(reloaded.notes.len(), 1);
+        assert_eq!(reloaded.notes[0].comment, "test");
     }
 }

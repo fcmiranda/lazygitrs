@@ -9742,19 +9742,13 @@ impl Gui {
 
         // Load existing note text if editing.
         if !editing_id.is_empty() {
-            let target_path = self.git.repo_path().join(".lines.json");
-            if target_path.exists() {
-                if let Ok(content) = std::fs::read_to_string(&target_path) {
-                    let existing: Vec<serde_json::Value> =
-                        serde_json::from_str(&content).unwrap_or_default();
-                    if let Some(note) = existing
-                        .iter()
-                        .find(|c| c["id"].as_str() == Some(&editing_id))
-                        .and_then(|c| c["comment"].as_str())
-                    {
-                        textarea.insert_str(note);
-                    }
-                }
+            let lines_file = crate::pager::notes_store::load(self.git.repo_path());
+            if let Some(note) = lines_file
+                .notes
+                .iter()
+                .find(|c| c.id == editing_id)
+            {
+                textarea.insert_str(&note.comment);
             }
         }
 
