@@ -36,15 +36,16 @@ pub fn open_in_tmux_session(path: &str) -> Result<()> {
         .map(|n| n.to_string_lossy().to_string())
         .unwrap_or_else(|| "worktree".to_string());
 
-    // 1. Try sesh connect if sesh is available
-    let sesh_status = std::process::Command::new("sesh")
-        .arg("connect")
-        .arg(&target_path)
-        .status();
-
-    if let Ok(status) = sesh_status {
-        if status.success() {
-            return Ok(());
+    // 1. Try wm connect or sesh connect if available
+    for cmd in ["wm", "sesh"] {
+        if let Ok(status) = std::process::Command::new(cmd)
+            .arg("connect")
+            .arg(&target_path)
+            .status()
+        {
+            if status.success() {
+                return Ok(());
+            }
         }
     }
 
