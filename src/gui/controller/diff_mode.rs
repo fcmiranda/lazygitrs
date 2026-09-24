@@ -4,7 +4,7 @@ use std::sync::atomic::Ordering;
 use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::config::keybindings::{matches_key, parse_key};
+use crate::config::keybindings::matches_key;
 use crate::gui::modes::diff_mode::{DiffModeFocus, DiffModeSelector};
 use crate::gui::popup::{CommandEntry, CommandSection, MenuItem, PopupState};
 use crate::gui::{DiffPayload, Gui, textarea_input};

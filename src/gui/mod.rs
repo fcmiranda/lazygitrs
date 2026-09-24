@@ -9,7 +9,7 @@ pub mod scroll;
 pub mod views;
 
 use std::collections::{HashMap, HashSet, VecDeque};
-use std::io::{self, Stdout, Write};
+use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, mpsc};
@@ -22,7 +22,7 @@ use crossterm::{Command, cursor, execute};
 use ratatui::Terminal;
 use ratatui::backend::CrosstermBackend;
 
-use crate::config::keybindings::{matches_key, parse_key};
+use crate::config::keybindings::matches_key;
 use crate::config::{AppConfig, AppState};
 use crate::git::{DEFAULT_COMMIT_LIMIT, GitCommands, MODEL_PART_COUNT, ModelPart};
 use crate::model::Model;

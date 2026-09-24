@@ -2,7 +2,7 @@ use anyhow::Result;
 use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::config::KeybindingConfig;
-use crate::config::keybindings::{matches_key, parse_key};
+use crate::config::keybindings::matches_key;
 use crate::gui::Gui;
 use crate::gui::context::ContextId;
 use crate::gui::popup::{MenuItem, PopupState};

@@ -5,11 +5,11 @@ use anyhow::Result;
 use crossterm::event::KeyEvent;
 
 use crate::config::KeybindingConfig;
-use crate::config::keybindings::{matches_key, parse_key};
+use crate::config::keybindings::matches_key;
 use crate::git::rebase::RebaseAction;
 use crate::gui::Gui;
 use crate::gui::popup::{
-    BodySoftWrap, ChecklistItem, CommitInputFocus, CommitInputKind, ListPickerItem, MenuItem,
+    BodySoftWrap, ChecklistItem, CommitInputFocus, CommitInputKind, MenuItem,
     MessageKind, PopupState, make_textarea,
 };
 use crate::model::Branch;
