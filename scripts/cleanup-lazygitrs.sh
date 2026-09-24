@@ -34,22 +34,25 @@ echo "Cleaning up global active session file..."
 rm -f "$HOME/.lazygitrs_active_session.json"
 
 # 6. Optional: Reset local lines.json notes
-if [ -f ".lines.json" ]; then
-    echo "Resetting .lines.json notes list..."
-    # Reset notes array to empty while preserving session info if possible
-    node -e '
-        const fs = require("fs");
-        try {
-            const data = JSON.parse(fs.readFileSync(".lines.json", "utf8"));
-            data.notes = [];
-            data.revision = 0;
-            fs.writeFileSync(".lines.json", JSON.stringify(data, null, 2));
-            console.log("Successfully reset .lines.json notes.");
-        } catch (e) {
-            console.log("Could not reset .lines.json: " + e.message);
-        }
-    '
-fi
+for candidate in ".git/info/lines.json" ".lines.json"; do
+    if [ -f "$candidate" ]; then
+        echo "Resetting $candidate notes list..."
+        # Reset notes array to empty while preserving session info if possible
+        node -e '
+            const fs = require("fs");
+            const target = process.argv[1];
+            try {
+                const data = JSON.parse(fs.readFileSync(target, "utf8"));
+                data.notes = [];
+                data.revision = 0;
+                fs.writeFileSync(target, JSON.stringify(data, null, 2));
+                console.log("Successfully reset " + target + " notes.");
+            } catch (e) {
+                console.log("Could not reset " + target + ": " + e.message);
+            }
+        ' "$candidate"
+    fi
+done
 
 # 7. Clear logs
 echo "Clearing temporary log files..."

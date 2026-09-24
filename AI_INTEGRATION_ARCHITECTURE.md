@@ -27,15 +27,17 @@ When `agy` starts, it triggers a lifecycle hook. This Node.js script:
 - Sends an HTTP `POST` to `/session-api` registering the `sessionId` and a custom `notifyCommand`.
 - **Crucially**, it does *not* spawn any background SSE listeners. 
 
-### 2. The `notifyCommand` Persistence (`.lines.json`)
-When the main `lazygitrs` GUI receives the registration request, it persists the `notifyCommand` into the repository's `.lines.json` file. 
+### 2. The `notifyCommand` Persistence (`lines.json`)
+When the main `lazygitrs` GUI receives the registration request, it persists the `notifyCommand` into the repository's native Git metadata file (`<git_dir>/info/lines.json`, or `$XDG_STATE_HOME/lazygitrs/notes/<hash>.json` for non-git workspaces). 
+
+Because it is saved inside `.git/info/`, it is **completely ignored by Git by definition**, keeping user working trees pristine without untracked file pollution.
 
 The payload looks like this:
 ```bash
-/home/fecavmi/.dotfiles/main/antigravity/.gemini/hooks/lazygit-tmux-injector.sh "<workspace>" {{prompt}}
+"${TERMINAL_AI_INJECTOR:-$HOME/.local/share/terminal-ai-cockpit/scripts/lazygit-tmux-injector.sh}" "{{workspace_path}}" {{prompt}}
 ```
 
-Because it is saved to `.lines.json`, **any subsequent popup instance** of `lazygitrs` spawned in that repository will automatically inherit this configuration on startup.
+Because it is saved to `lines.json`, **any subsequent popup instance** of `lazygitrs` spawned in that repository will automatically inherit this configuration on startup.
 
 ### 3. The Tmux Injector Script (`lazygit-tmux-injector.sh`)
 When a user presses `S` on a note inside a popup, `lazygitrs` detects that it has `0` SSE clients. It immediately triggers its native fallback mechanism, executing the `notifyCommand`.
@@ -55,11 +57,11 @@ The injector script executes the following logic:
 4. **Tmux Injection**: The script flattens the JSON/Markdown prompt into a single line and injects it into the active `agy` conversation running in `tmux`.
 5. **AI Processing**: The LLM reads the prompt, fetches all pending notes via a `GET` request to the main GUI's HTTP server (`$PORT`), and reasons about the codebase.
 6. **AI Response**: The LLM pushes its review back to the TUI via an `AgentContext` JSON `POST` request to the main GUI's `/session-api`.
-7. **Resolution**: The main GUI updates the shared `.lines.json` and broadcasts the state change. The popup detects the file change and instantly renders the AI's response inline.
+7. **Resolution**: The main GUI updates the shared `lines.json` and broadcasts the state change. The popup detects the file change and instantly renders the AI's response inline.
 
 ## Why This is Superior
 
 - **No Zombie Processes**: There are no background `while` loops, `curl` listeners, or fragile bash daemons running on the host machine.
 - **Perfect Popup Support**: Popups act as stateless clients. They don't need to fight for HTTP ports or maintain network connections.
 - **Structure-Preserving Injection**: Bracketed `paste-buffer` delivers multi-line prompts atomically (no PTY tearing race) while keeping markdown structure intact, with single-line flattening retained as a fallback.
-- **Portable Registration**: the `notifyCommand` uses a `{{workspace_path}}` placeholder substituted by lazygitrs at spawn time, so the persisted `.lines.json` survives repo renames/moves without the pane tracker going stale.
+- **Portable Registration**: the `notifyCommand` uses a `{{workspace_path}}` placeholder substituted by lazygitrs at spawn time, so the persisted `lines.json` survives repo renames/moves without the pane tracker going stale.
